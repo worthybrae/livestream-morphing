@@ -1,4 +1,8 @@
 import requests
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 def temperature_to_color(temperature):
     """ Map temperature to a color. Colder temperatures are more blue, warmer are more red. """
@@ -20,7 +24,7 @@ def get_current_temperature():
     url = "http://api.openweathermap.org/data/2.5/weather"
     params = {
         'q': 'London,UK',
-        'appid': '489d3d33334f891c0aa0fe78bbed9e80',
+        'appid': os.getenv('OPEN_WEATHER_APP_ID'),
         'units': 'metric'  # Temperature in Celsius
     }
 
