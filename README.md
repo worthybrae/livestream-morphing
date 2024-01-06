@@ -1,6 +1,30 @@
 # Livestream Morphing
 
+## Summary
+
+```
+├── research/
+│   ├── app.py - an intitial try at a celery app file
+│   ├── first_iteration.py - uses async requests to process frames
+│   ├── process_frame.py - code used to process many frames concurrently
+│   ├── process_sketch.drawio - draw.io file used to visualize process
+│   ├── redis-test.py - code used to test out a redis implimentation
+│   ├── scripts.py - consolidated and final scripts
+│   ├── second_iteration.py - uses async requests dynamic storage to process and view frames
+│   ├── temperature_helpers.py - code used to identify the temperature in a target location
+│   └── third-iteration.py - final version of code that was used for the scripts.py file
+├── templates/
+│   └── main.html - the first template file used to style the livestream webpage
+├── .gitignore
+├── api.py - fastapi app used for visualizing the processed frames
+├── app.py - celery app implimentation with final version of tasks
+├── ReadMe.md
+└── requirements.txt
+```
+
 ## Setup Instructions
+
+### Setting up Virtual Enviornment
 
 ```
 python3 -m venv venv
@@ -8,23 +32,17 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## first_iteration.py
+### Starting up the Celery Backend
 
-This was the first attempt at conducting livestream morphing. It processes three segments at a time and doesnt use background segment fetching. Due to this, there is significant lag introduced while waiting to process the three segments.
+```
+celery -A app beat --loglevel=info
+celery -A app worker --loglevel=info --concurrency=5 -Q download_queue
+celery -A app worker --loglevel=info --concurrency=5 -Q process_queue
+celery -A app flower
+```
 
-## second_iteration.py
+### Starting up the FastAPI
 
-This was the second attempt at conducting livestream morphing. It runs two processes in parallel:
-
-1. Fetches up to 7 segments asynchronously and uses background fetching to constantly check if new segments are available.
-2. Processes each of the frames from each segment asynchronously and saves them locally.
-
-When displaying the frames, the video player can simply run through all the processed frames locally saved in the frames sub-folder.
-
-## api.py
-
-This is the main fastapi file that is responsible for delivering the processed frames via an api endpoint. While not operational now, this will be once the morphing process is finalized.
-
-## temperature_helpers.py
-
-This is a small python file that explores using the current temperature in a specified location to modify frame tint.
+```
+uvicorn api:app --reload
+```

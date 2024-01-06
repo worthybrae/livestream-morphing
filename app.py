@@ -19,9 +19,14 @@ app = Celery('test_app',
 
 app.conf.beat_schedule = {
     'fetch-new-segments-every-2-seconds': {
-        'task': 'tapp.fetch_new_segments_task',
+        'task': 'app.fetch_new_segments_task',
         'schedule': timedelta(seconds=2),
     },
+}
+
+app.conf.task_routes = {
+    'app.download_segment': {'queue': 'download_queue'},
+    'app.process_segment': {'queue': 'process_queue'},
 }
 
 @app.task
