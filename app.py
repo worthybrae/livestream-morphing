@@ -25,6 +25,7 @@ app.conf.beat_schedule = {
 }
 
 app.conf.task_routes = {
+    'app.fetch_new_segments_task': {'queue': 'new_segments_queue'},
     'app.download_segment': {'queue': 'download_queue'},
     'app.process_segment': {'queue': 'process_queue'},
 }

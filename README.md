@@ -36,6 +36,7 @@ pip install -r requirements.txt
 
 ```
 celery -A app beat --loglevel=info
+celery -A app worker --loglevel=info --concurrency=1 -Q new_segments_queue
 celery -A app worker --loglevel=info --concurrency=5 -Q download_queue
 celery -A app worker --loglevel=info --concurrency=5 -Q process_queue
 celery -A app flower
