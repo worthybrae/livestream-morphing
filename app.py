@@ -171,33 +171,77 @@ def adjust_contrast_and_hue(frame, hour, minute):
     return adjusted
 
 def process_frame(frame_data):
-    segment_number = frame_data[0]
-    frame_number = frame_data[1]
-    frame = frame_data[2]
-    edge_color = frame_data[3] 
-    background_color = frame_data[4]  
-    lth = frame_data[5]
-    ltm = frame_data[6]
-    frame = adjust_contrast_and_hue(frame, lth, ltm)
-    blurred_array = cv2.GaussianBlur(frame, (11, 11), 0)
+    # Unpack frame data
+    segment_number, frame_number, frame, edge_color, background_color, lty, ltmnth, ltd, lth, ltm = frame_data
+
+    # Adjust contrast and hue
+    adjusted = adjust_contrast_and_hue(frame, lth, ltm)
+
+    # Apply Gaussian blur
+    blurred = cv2.GaussianBlur(adjusted, (15, 15), 0)
 
     # Convert to grayscale
-    gray = cv2.cvtColor(blurred_array, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
 
     # Edge detection
-    edges = cv2.Canny(gray, 100, 200, apertureSize=5)
+    edges = cv2.Canny(gray, 300, 400, apertureSize=5)
+
+    # Optional: Smooth edges
+    kernel = np.ones((2, 2), np.uint8)  # Adjust kernel size as needed
+    smoothed_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
     # Create a background and apply edge color
     background = np.full_like(frame, background_color)
-    background[edges > 0] = edge_color
-    cv2.imwrite(f"frames/{segment_number}/{frame_number}.jpg", background)
+    background[smoothed_edges > 0] = edge_color
+
+    original_height, original_width = frame.shape[:2]
+
+    aspect_ratio = original_width / original_height
+
+    # Reduce frame size by 10%
+    scale_factor = 0.90
+    new_width = int(original_width * scale_factor)
+    new_height = int(original_height * scale_factor)
+    resized_frame = cv2.resize(background, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+    # Calculate border sizes
+    border_top = border_bottom = (original_height - new_height) // 2
+    border_left = border_right = (original_width - new_width) // 2
+
+    # Additional space for text
+    text_space = 60  # Pixels
+    border_bottom += text_space
+
+    # Adjust left and right borders to maintain aspect ratio
+    additional_width = text_space / 2 * aspect_ratio
+    border_left += int(additional_width / 2)
+    border_right += int(additional_width / 2)
+
+    # Add border
+    frame_with_border = cv2.copyMakeBorder(resized_frame, border_top, border_bottom, border_left, border_right, cv2.BORDER_CONSTANT, value=background_color)
+
+    # Add text
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1
+    line_type = 2
+    
+
+    # Current time
+    current_time = datetime.datetime(year=lty, month=ltmnth, day=ltd, hour=lth, minute=ltm).strftime("%I:%M %p")
+    (text_width, text_height), _ = cv2.getTextSize(current_time, font, font_scale, line_type)
+
+    cv2.putText(frame_with_border, 'Abbey Road', (border_left, frame_with_border.shape[0] - int(text_space / 2) - int(text_height / 2)), font, font_scale, edge_color, line_type)
+    cv2.putText(frame_with_border, current_time, (frame_with_border.shape[1] - text_width - border_right, frame_with_border.shape[0] - int(text_space / 2) - int(text_height / 2)), font, font_scale, edge_color, line_type)
+
+    # Save the processed frame
+    cv2.imwrite(f"frames/{segment_number}/{frame_number}.jpg", frame_with_border)
 
 @app.task
 def process_segment(segment):
     london_time = datetime.datetime.now(pytz.timezone('Europe/London'))
     edge_color, background_color = get_colors(london_time.hour, london_time.minute)
     container = av.open(f"segments/{segment}/{segment}.ts")
-    frame_data = [(segment, frame_number, frame.to_ndarray(format='bgr24'), edge_color, background_color, london_time.hour, london_time.minute) for frame_number, frame in enumerate(container.decode(container.streams.video[0]))]
+    frame_data = [(segment, frame_number, frame.to_ndarray(format='bgr24'), edge_color, background_color, london_time.year, london_time.month, london_time.day, london_time.hour, london_time.minute) for frame_number, frame in enumerate(container.decode(container.streams.video[0]))]
     with ThreadPoolExecutor() as executor:
         results = list(executor.map(process_frame, frame_data))
     container.close()

@@ -29,11 +29,14 @@ class FrameFetcher:
             self.frame = 0
         else:
             self.frame += 1
-        
         return True
     
-    def _check_status(self, cutoff_time):
-        return True
+    def _check_status(self):
+        total_space = 5 * 180
+        segs = [int(x) for x in os.listdir('segments')]
+        segs.sort()
+        pos = (((segs.index(self.segment)) * 180 + self.frame + 1) / total_space) * 2
+        return pos
 
 frame_fetcher = FrameFetcher()
 
@@ -46,7 +49,8 @@ def stream_frames():
     frame_fetcher._get_current_segment()
     def generate():
         while True:
-            cutoff = datetime.datetime.now() + datetime.timedelta(milliseconds=ms_interval_step)
+            pos = frame_fetcher._check_status()
+            cutoff = datetime.datetime.now() + datetime.timedelta(milliseconds=ms_interval_step * pos)
             if frame_fetcher._check_if_frame_exists():
                 with open(f'frames/{frame_fetcher.segment}/{frame_fetcher.frame}.jpg', "rb") as f:
                     yield (b'--frame\r\n'
@@ -54,7 +58,7 @@ def stream_frames():
             while datetime.datetime.now() < cutoff:
                 pass
             frame_fetcher._get_next_frame()
-            print(f"Segment: {frame_fetcher.segment} Frame: {frame_fetcher.frame}")
+            print(f"Segment: {frame_fetcher.segment} Frame: {frame_fetcher.frame} Position: {pos:.2f}%")
 
 
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
