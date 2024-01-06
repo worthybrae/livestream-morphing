@@ -7,6 +7,9 @@ __pycache__/
 *.jpg
 *.ts
 *.csv
+*.bkp
+*.db
+*.drawio
 
 # Miscelaneous file
 .DS_Store
