@@ -17,19 +17,22 @@ class FrameFetcher:
         # Get and sort segment directories
         segments = [d for d in os.listdir('segments')]
         segments.sort(reverse=True)
-        self.segment = int(segments[1])
+        self.segment = int(segments[2])
         return True
 
     def _check_if_frame_exists(self):
         return os.path.isfile(f"frames/{self.segment}/{self.frame}.jpg")
 
-    def get_next_frame(self):
+    def _get_next_frame(self):
         if self.frame == max([int(x.split('.')[0]) for x in os.listdir(f'frames/{self.segment}')]):
             self.segment += 1
             self.frame = 0
         else:
             self.frame += 1
         
+        return True
+    
+    def _check_status(self, cutoff_time):
         return True
 
 frame_fetcher = FrameFetcher()
@@ -39,23 +42,20 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/stream")
 def stream_frames():
-    frame_interval = 1.0 / 33.33 # Approximately 33.33 milliseconds for 30 FPS
+    ms_interval_step = round(1.0 / 29.997 * 1000, 0)
     frame_fetcher._get_current_segment()
     def generate():
         while True:
-            start_time = time.time()
-            frame_fetcher.get_next_frame()
-            print(f"Segment: {frame_fetcher.segment} Frame: {frame_fetcher.frame}")
+            cutoff = datetime.datetime.now() + datetime.timedelta(milliseconds=ms_interval_step)
             if frame_fetcher._check_if_frame_exists():
                 with open(f'frames/{frame_fetcher.segment}/{frame_fetcher.frame}.jpg', "rb") as f:
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + f.read() + b'\r\n')
+            while datetime.datetime.now() < cutoff:
+                pass
+            frame_fetcher._get_next_frame()
+            print(f"Segment: {frame_fetcher.segment} Frame: {frame_fetcher.frame}")
 
-            elapsed_time = time.time() - start_time
-            wait_time = max(frame_interval - elapsed_time, 0)
-            print(f"Segment: {frame_fetcher.segment} Frame: {frame_fetcher.frame} Time: {wait_time}")
-            
-            time.sleep(.03)
 
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
