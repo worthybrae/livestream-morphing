@@ -1,13 +1,17 @@
 from concurrent.futures import ThreadPoolExecutor
 from celery.schedules import timedelta
 from celery import Celery
+import numpy as np
+import lz4.frame
 import datetime
 import requests
+import pickle
 import shutil
-import numpy as np
+import base64
 import m3u8
 import time
 import pytz
+import json
 import cv2
 import os
 import av
@@ -16,6 +20,12 @@ import av
 app = Celery('test_app',
              broker='redis://localhost:6379/0',
              backend='redis://localhost:6379/0')
+
+app.conf.update(
+    task_serializer='pickle',
+    accept_content=['pickle'],
+    result_serializer='pickle',
+)
 
 app.conf.beat_schedule = {
     'fetch-new-segments-every-2-seconds': {
@@ -27,7 +37,8 @@ app.conf.beat_schedule = {
 app.conf.task_routes = {
     'app.fetch_new_segments_task': {'queue': 'new_segments_queue'},
     'app.download_segment': {'queue': 'download_queue'},
-    'app.process_segment': {'queue': 'process_queue'},
+    'app.process_segment': {'queue': 'process_segment_queue'},
+    'app.process_frame': {'queue': 'process_frame_queue'},
 }
 
 @app.task
@@ -52,13 +63,16 @@ def fetch_new_segments_task():
     if playlist.segments:
         max_segment_number = max(int(segment.uri.split('_')[-1].split('.')[0]) for segment in playlist.segments)
         min_segment_number = max(max_segment_number - buffer_size, 0)
-        existing_segments = [x for x in os.listdir('segments')]
+        existing_segments = [int(x) for x in os.listdir('segments') if x != '.DS_Store']
         existing_segments.sort(reverse=True)
+        existing_fsegments = [int(x) for x in os.listdir('frames') if x != '.DS_Store']
+        existing_fsegments.sort(reverse=True)
         new_segments = [i for i in range(min_segment_number, max_segment_number) if i not in existing_segments]
         for ns in new_segments:
             download_segment.delay(ns)
         for inc in existing_segments[5:]:
             shutil.rmtree(f"segments/{inc}")
+        for inc in existing_fsegments[5:]:
             shutil.rmtree(f"frames/{inc}")
         return new_segments
     
@@ -113,6 +127,21 @@ def download_segment(segment, max_retries=3, delay=.5):
         print('another worker is already downloading this segment...')
         return False
     
+@app.task
+def process_segment(segment):
+    london_time = datetime.datetime.now(pytz.timezone('Europe/London'))
+    edge_color, background_color = get_colors(london_time.hour, london_time.minute)
+    container = av.open(f"segments/{segment}/{segment}.ts")
+    for frame_number, frame in enumerate(container.decode(container.streams.video[0])):
+        f = frame.to_ndarray(format='gray').tolist()
+
+        # Manually serializing with Pickle
+        serialized_frame = pickle.dumps(f)
+
+        print(len(f), f[:5])
+        process_frame.delay((int(segment), int(frame_number), serialized_frame, edge_color, background_color, london_time.year, london_time.month, london_time.day, london_time.hour, london_time.minute))
+    container.close()
+
 def get_grey_level(hour, minute):
     """ Interpolates grey level based on hour and minute. 
         Noon (12:00) is lightest grey, and midnight (00:00) is darkest grey.
@@ -138,111 +167,106 @@ def get_colors(hour, minute):
         edge_color = (255, 255, 255)
     return edge_color, background_color
 
-def adjust_contrast_and_hue(frame, hour, minute):
+def adjust_contrast(frame, hour, minute):
     """
-    Adjusts the contrast and hue of the frame based on the time of day.
-    The adjustments are linearly scaled: minimal around noon and maximal around midnight.
+    Adjusts the contrast of the frame based on the time of day.
+    The adjustment is linearly scaled: minimal around noon and maximal around midnight.
     """
     total_minutes = hour * 60 + minute
     if total_minutes > 720:  # Normalize for 24-hour cycle
         total_minutes = 1440 - total_minutes
 
-    # Scale factors for contrast and hue
+    # Scale factor for contrast
     contrast_scale = total_minutes / 720.0  # Ranges from 0 (noon) to 1 (midnight)
-    hue_scale = total_minutes / 720.0  # Same range
 
-    # Base values for contrast and hue adjustments
+    # Base value for contrast adjustment
     base_contrast = 50  # Maximal contrast adjustment
-    base_hue = 10  # Maximal hue shift
 
-    # Calculate actual contrast and hue adjustments
+    # Calculate actual contrast adjustment
     contrast_adjustment = int(base_contrast * contrast_scale)
-    hue_adjustment = int(base_hue * hue_scale)
 
     # Adjust contrast
     f = 259 * (contrast_adjustment + 255) / (255 * (259 - contrast_adjustment))
     adjusted = cv2.convertScaleAbs(frame, alpha=f, beta=-128*f + 128)
 
-    # Convert to HSV and shift hue
-    hsv = cv2.cvtColor(adjusted, cv2.COLOR_BGR2HSV)
-    hsv[..., 0] = (hsv[..., 0] + hue_adjustment) % 180  # Adding hue shift
-    adjusted = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-
     return adjusted
 
-def process_frame(frame_data):
-    # Unpack frame data
-    segment_number, frame_number, frame, edge_color, background_color, lty, ltmnth, ltd, lth, ltm = frame_data
-
-    # Adjust contrast and hue
-    adjusted = adjust_contrast_and_hue(frame, lth, ltm)
-
-    # Apply Gaussian blur
-    blurred = cv2.GaussianBlur(adjusted, (15, 15), 0)
-
-    # Convert to grayscale
-    gray = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
-
-    # Edge detection
-    edges = cv2.Canny(gray, 300, 400, apertureSize=5)
-
-    # Optional: Smooth edges
-    kernel = np.ones((2, 2), np.uint8)  # Adjust kernel size as needed
-    smoothed_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-
-    # Create a background and apply edge color
-    background = np.full_like(frame, background_color)
-    background[smoothed_edges > 0] = edge_color
-
-    original_height, original_width = frame.shape[:2]
-
-    aspect_ratio = original_width / original_height
-
-    # Reduce frame size by 10%
-    scale_factor = 0.90
-    new_width = int(original_width * scale_factor)
-    new_height = int(original_height * scale_factor)
-    resized_frame = cv2.resize(background, (new_width, new_height), interpolation=cv2.INTER_AREA)
-
-    # Calculate border sizes
-    border_top = border_bottom = (original_height - new_height) // 2
-    border_left = border_right = (original_width - new_width) // 2
-
-    # Additional space for text
-    text_space = 60  # Pixels
-    border_bottom += text_space
-
-    # Adjust left and right borders to maintain aspect ratio
-    additional_width = text_space / 2 * aspect_ratio
-    border_left += int(additional_width / 2)
-    border_right += int(additional_width / 2)
-
-    # Add border
-    frame_with_border = cv2.copyMakeBorder(resized_frame, border_top, border_bottom, border_left, border_right, cv2.BORDER_CONSTANT, value=background_color)
-
-    # Add text
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 1
-    line_type = 2
-    
-
-    # Current time
-    current_time = datetime.datetime(year=lty, month=ltmnth, day=ltd, hour=lth, minute=ltm).strftime("%I:%M %p")
-    (text_width, text_height), _ = cv2.getTextSize(current_time, font, font_scale, line_type)
-
-    cv2.putText(frame_with_border, 'Abbey Road', (border_left, frame_with_border.shape[0] - int(text_space / 2) - int(text_height / 2)), font, font_scale, edge_color, line_type)
-    cv2.putText(frame_with_border, current_time, (frame_with_border.shape[1] - text_width - border_right, frame_with_border.shape[0] - int(text_space / 2) - int(text_height / 2)), font, font_scale, edge_color, line_type)
-
-    # Save the processed frame
-    cv2.imwrite(f"frames/{segment_number}/{frame_number}.jpg", frame_with_border)
 
 @app.task
-def process_segment(segment):
-    london_time = datetime.datetime.now(pytz.timezone('Europe/London'))
-    edge_color, background_color = get_colors(london_time.hour, london_time.minute)
-    container = av.open(f"segments/{segment}/{segment}.ts")
-    frame_data = [(segment, frame_number, frame.to_ndarray(format='bgr24'), edge_color, background_color, london_time.year, london_time.month, london_time.day, london_time.hour, london_time.minute) for frame_number, frame in enumerate(container.decode(container.streams.video[0]))]
-    with ThreadPoolExecutor() as executor:
-        results = list(executor.map(process_frame, frame_data))
-    container.close()
-    return results
+def process_frame(frame_data):
+    # Unpack frame data
+    try:
+        segment_number = frame_data[0]
+        frame_number = frame_data[1]
+        frame = frame_data[2]
+        edge_color = frame_data[3]
+        background_color = frame_data[4]
+        lty = frame_data[5]
+        ltmnth = frame_data[6]
+        ltd = frame_data[7]
+        lth = frame_data[8]
+        ltm = frame_data[9]
+        f = pickle.loads(frame)
+        print(len(f), f[:5])
+        frame = np.array(f)
+
+        adjusted = adjust_contrast(frame, lth, ltm)
+
+        # Apply Gaussian blur
+        blurred = cv2.GaussianBlur(adjusted, (15, 15), 0)
+
+        # Edge detection
+        edges = cv2.Canny(blurred, 300, 400, apertureSize=5)
+
+        # Optional: Smooth edges
+        kernel = np.ones((2, 2), np.uint8)  # Adjust kernel size as needed
+        smoothed_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+
+        # Create a background and apply edge color
+        background = np.full_like(frame, background_color)
+        background[smoothed_edges > 0] = edge_color
+
+        original_height, original_width = frame.shape[:2]
+
+        aspect_ratio = original_width / original_height
+
+        # Reduce frame size by 10%
+        scale_factor = 0.90
+        new_width = int(original_width * scale_factor)
+        new_height = int(original_height * scale_factor)
+        resized_frame = cv2.resize(background, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+        # Calculate border sizes
+        border_top = border_bottom = (original_height - new_height) // 2
+        border_left = border_right = (original_width - new_width) // 2
+
+        # Additional space for text
+        text_space = 60  # Pixels
+        border_bottom += text_space
+
+        # Adjust left and right borders to maintain aspect ratio
+        additional_width = text_space / 2 * aspect_ratio
+        border_left += int(additional_width / 2)
+        border_right += int(additional_width / 2)
+
+        # Add border
+        frame_with_border = cv2.copyMakeBorder(resized_frame, border_top, border_bottom, border_left, border_right, cv2.BORDER_CONSTANT, value=background_color)
+
+        # Add text
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1
+        line_type = 2
+
+        # Current time
+        current_time = datetime.datetime(year=lty, month=ltmnth, day=ltd, hour=lth, minute=ltm).strftime("%I:%M %p")
+        (text_width, text_height), _ = cv2.getTextSize(current_time, font, font_scale, line_type)
+
+        cv2.putText(frame_with_border, 'Abbey Road', (border_left, frame_with_border.shape[0] - int(text_space / 2) - int(text_height / 2)), font, font_scale, edge_color, line_type)
+        cv2.putText(frame_with_border, current_time, (frame_with_border.shape[1] - text_width - border_right, frame_with_border.shape[0] - int(text_space / 2) - int(text_height / 2)), font, font_scale, edge_color, line_type)
+
+        # Save the processed frame
+        cv2.imwrite(f"frames/{segment_number}/{frame_number}.jpg", frame_with_border)
+        return True
+    except Exception as e:
+        return e
+

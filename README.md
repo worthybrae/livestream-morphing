@@ -17,7 +17,8 @@
 │   └── main.html - the first template file used to style the livestream webpage
 ├── .gitignore
 ├── api.py - fastapi app used for visualizing the processed frames
-├── app.py - celery app implimentation with final version of tasks
+├── tasks.py - celery app implimentation with final version of tasks
+├── celery_config.py - configuration of celery app
 ├── ReadMe.md
 └── requirements.txt
 ```
@@ -35,11 +36,11 @@ pip install -r requirements.txt
 ### Starting up the Celery Backend
 
 ```
-celery -A app beat --loglevel=info
-celery -A app worker --loglevel=info --concurrency=1 -Q new_segments_queue
-celery -A app worker --loglevel=info --concurrency=5 -Q download_queue
-celery -A app worker --loglevel=info --concurrency=5 -Q process_queue
-celery -A app flower
+celery -A tasks beat --loglevel=info
+celery -A tasks worker --loglevel=info --concurrency=1 -Q fns
+celery -A tasks worker --loglevel=info --concurrency=4 -Q ds
+celery -A tasks worker --loglevel=info --concurrency=5 -Q ps
+celery -A tasks flower
 ```
 
 ### Starting up the FastAPI

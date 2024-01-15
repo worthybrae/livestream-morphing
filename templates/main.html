@@ -7,61 +7,20 @@
             margin: 0;
             padding: 0;
             height: 100%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            overflow: hidden; /* Hide any scroll bars */
         }
-        #video-container {
-            width: calc(100% - 100px); /* 50px padding on each side */
-            margin: 50px;
-        }
-        #video-container img {
-            width: 100%;
-            height: auto;
-        }
-        .overlay-text {
-            width: calc(100% - 100px);
-            text-align: center;
-            color: white;
-            font-size: 20px;
-            margin-bottom: 10px;
+        img {
+            width: 100vw; /* Viewport Width: Makes the image full width */
+            height: auto; /* Maintain aspect ratio */
+            position: absolute; /* Position absolutely will take it out of normal flow */
+            bottom: 0; /* Align to the bottom of the viewport */
         }
     </style>
-    <script>
-        function getGreyLevel() {
-            // Get the current time in London
-            const londonTime = new Date().toLocaleString("en-US", {timeZone: "Europe/London"});
-            const hours = new Date(londonTime).getHours();
-            const minutes = new Date(londonTime).getMinutes();
-
-            // Calculate total minutes and normalize for 24-hour cycle
-            let totalMinutes = hours * 60 + minutes;
-            if (totalMinutes > 720) {
-                totalMinutes = 1440 - totalMinutes;
-            }
-
-            // Interpolate grey level
-            const lightestGrey = 175;
-            const darkestGrey = 25;
-            const greyLevel = Math.round(darkestGrey + (lightestGrey - darkestGrey) * (totalMinutes / 720));
-            return `rgb(${greyLevel}, ${greyLevel}, ${greyLevel})`;
-        }
-
-        function updateBackgroundColor() {
-            const bgColor = getGreyLevel();
-            document.body.style.backgroundColor = bgColor;
-        }
-
-        // Update the background color every minute
-        setInterval(updateBackgroundColor, 60000);
-        updateBackgroundColor(); // Update immediately on page load
-    </script>
 </head>
 <body>
     <div id="video-container">
         <img src="/stream" />
     </div>
-    <div class="overlay-text">Abbey Road - {{ current_time }}</div>
-    <div class="overlay-text">worthy</div>
 </body>
 </html>
+
