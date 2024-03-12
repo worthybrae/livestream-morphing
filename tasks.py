@@ -12,6 +12,7 @@ import cv2
 import av
 import random
 
+
 app = Celery('tasks')
 app.config_from_object('celery_config')
 
@@ -51,7 +52,7 @@ def fetch_new_segments():
         return new_segments
     
 @app.task
-def download_segment(segment, max_retries=3, delay=.5):
+def download_segment(segment, max_retries=3, delay=.2):
     try:
         os.mkdir(f"segments/{segment}")
         flag = True
@@ -110,9 +111,9 @@ def process_segment(segment):
     container = av.open(f"segments/{segment}/{segment}.ts")
     frame_data = [(segment, frame_number, frame.to_ndarray(format='bgr24'), edge_color, background_color, london_time.year, london_time.month, london_time.day, london_time.hour, london_time.minute) for frame_number, frame in enumerate(container.decode(container.streams.video[0]))]
     with ThreadPoolExecutor() as executor:
-        results = list(executor.map(process_frame, frame_data))
+        executor.map(process_frame, frame_data)
     container.close()
-    return results
+    return segment
 
 def get_grey_level(hour, minute):
     """ Interpolates grey level based on hour and minute. 

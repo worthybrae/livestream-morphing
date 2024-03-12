@@ -1,0 +1,9 @@
+**/__pycache__
+**/.git
+**/.gitignore
+.env
+venv
+*.md
+research/
+*.jpg
+*.ts
