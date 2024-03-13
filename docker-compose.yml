@@ -22,7 +22,7 @@ services:
   worker_ds:
     build: .
     working_dir: /app
-    command: celery -A tasks worker --loglevel=info --concurrency=4 -Q ds
+    command: celery -A tasks worker --loglevel=info --concurrency=2 -Q ds
     volumes:
       - .:/app
 
@@ -45,8 +45,9 @@ services:
   visualizer:
     build: .
     working_dir: /app
-    command: python visualize.py
+    command: uvicorn api:app --reload
+    ports:
+      - "8000:8000"
     volumes:
       - .:/app
-    ports:
-      - "5000:5000"  # Map host port to container port
+

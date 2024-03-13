@@ -16,10 +16,6 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
 && rm -rf /var/lib/apt/lists/*
 
-# Expose visualization port
-EXPOSE 5000
-EXPOSE 5555
-
 # Create a user and switch to it
 RUN adduser --disabled-password --gecos '' abbeyroad
 USER abbeyroad
