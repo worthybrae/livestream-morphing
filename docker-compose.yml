@@ -1,38 +1,44 @@
-version: '3'
+version: "3"
 
 services:
-  
   redis:
     image: "redis:alpine"
-  
+
   beat:
     build: .
     working_dir: /app
     command: celery -A tasks beat --loglevel=info
     volumes:
       - .:/app
-  
+
   worker_fns:
     build: .
     working_dir: /app
     command: celery -A tasks worker --loglevel=info --concurrency=1 -Q fns
     volumes:
       - .:/app
-  
+
   worker_ds:
     build: .
     working_dir: /app
-    command: celery -A tasks worker --loglevel=info --concurrency=2 -Q ds
+    command: celery -A tasks worker --loglevel=info --concurrency=3 -Q ds
     volumes:
       - .:/app
 
   worker_ps:
     build: .
     working_dir: /app
-    command: celery -A tasks worker --loglevel=info --concurrency=5 -Q ps
+    command: celery -A tasks worker --loglevel=info --concurrency=3 -Q ps
     volumes:
       - .:/app
-  
+
+  worker_gm:
+    build: .
+    working_dir: /app
+    command: celery -A tasks worker --loglevel=info --concurrency=1 -Q gm
+    volumes:
+      - .:/app
+
   flower:
     build: .
     working_dir: /app
@@ -50,4 +56,3 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
-

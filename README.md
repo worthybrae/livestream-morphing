@@ -38,8 +38,10 @@ pip install -r requirements.txt
 ```
 celery -A tasks beat --loglevel=info
 celery -A tasks worker --loglevel=info --concurrency=1 -Q fns
-celery -A tasks worker --loglevel=info --concurrency=4 -Q ds
-celery -A tasks worker --loglevel=info --concurrency=5 -Q ps
+celery -A tasks worker --loglevel=info --concurrency=2 -Q ds
+celery -A tasks worker --loglevel=info --concurrency=3 -Q ps
+celery -A tasks worker --loglevel=info --concurrency=1 -Q gm
+celery -A tasks worker --loglevel=info --concurrency=1 -Q fc
 celery -A tasks flower
 ```
 
