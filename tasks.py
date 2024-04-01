@@ -134,6 +134,7 @@ def download_segment(segment, max_retries=3, delay=.2):
     
 @app.task
 def process_segment(segment):
+    redis_client = Redis.from_url('redis://127.0.0.1:6379/0')
     london_time = datetime.datetime.now(pytz.timezone('Europe/London'))
     rounded_seconds = round_seconds(london_time.second)
     
@@ -158,40 +159,33 @@ def process_segment(segment):
     upload_to_s3(
         BytesIO(out),
         f"segments/{london_time.hour}/{london_time.minute}/{rounded_seconds}.ts"
-    )        
-    print(rounded_seconds)
-    if rounded_seconds == 60:
-        generate_m3u8_file.apply_async(args=[london_time.hour, london_time.minute], expires=30, queue='gm')
+    )  
+
+    ready_segment_count = len(redis_client.lrange('ready_segments', 0, -1)) 
+    if ready_segment_count >= 10:
+        redis_client.rpop('ready_segments')
+    redis_client.lpush('ready_segments', f"{london_time.hour}-{london_time.minute}-{rounded_seconds}")
+    generate_m3u8_file.apply_async(args=[], expires=30, queue='gm')
 
 @app.task
-def generate_m3u8_file(hr, min):
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=os.getenv('AWS_PUB_KEY'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_KEY'),
-        region_name='us-east-1'
-    )
-
+def generate_m3u8_file():
+    redis_client = Redis.from_url('redis://127.0.0.1:6379/0')
     bucket_name = 'abbey-road'
-    prefix = f'segments/{hr}/{min}'
 
      # Construct the M3U8 content with signed URLs
     m3u8_content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n"
-
-    # List objects within a specified bucket and prefix
-    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
+    ready_segments = redis_client.lrange('ready_segments', 0, -1)
+    ready_segments = [s.decode('utf-8') for s in ready_segments]
     # Iterate over the objects and print the keys
-    if 'Contents' in response:
-        for item in response['Contents']:
-            alt_path = f"https://{bucket_name}.s3.amazonaws.com/{item['Key']}"
-            m3u8_content += f"#EXTINF:6,\n{alt_path}\n"
-        m3u8_content += "#EXT-X-ENDLIST"
-        bytes_file = BytesIO(m3u8_content.encode('utf-8'))
-        upload_to_s3(bytes_file, f"current_playlist.m3u8") 
-        print('uploaded')
-    else:
-        print("No items found.")
+    for segment in ready_segments:
+        alt_path = f"https://{bucket_name}.s3.amazonaws.com/segments/{segment.split('-')[0]}/{segment.split('-')[1]}/{segment.split('-')[2]}.ts"
+        m3u8_content += f"#EXTINF:6,\n{alt_path}\n"
+    m3u8_content += "#EXT-X-ENDLIST"
+    bytes_file = BytesIO(m3u8_content.encode('utf-8'))
+    
+    upload_to_s3(bytes_file, f"current_playlist.m3u8") 
+    return True
+    
 
 def get_grey_level(hour, minute):
     """ Interpolates grey level based on hour and minute. 
@@ -370,6 +364,7 @@ def clear_folder_contents(folder_path):
 def setup():
     redis_client = Redis.from_url('redis://127.0.0.1:6379/0')
     redis_client.delete('recent_segments')
+    redis_client.delete('ready_segments')
     clear_folder_contents('frames')
     clear_folder_contents('segments')
     clear_folder_contents('modified_segments')
