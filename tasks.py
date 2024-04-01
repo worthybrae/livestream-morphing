@@ -136,35 +136,32 @@ def download_segment(segment, max_retries=3, delay=.2):
 def process_segment(segment):
     london_time = datetime.datetime.now(pytz.timezone('Europe/London'))
     rounded_seconds = round_seconds(london_time.second)
-    if not os.path.exists(f"modified_segments/{london_time.hour}/{london_time.minute}/{rounded_seconds}"):
-        os.makedirs(f"modified_segments/{london_time.hour}/{london_time.minute}/{rounded_seconds}", exist_ok=True)
-        
-        edge_color, background_color = get_colors(london_time.hour, london_time.minute)
-        # edge_color = get_random_rgb()
-        # background_color = get_random_rgb()
-        container = av.open(f"segments/{segment}/{segment}.ts")
-        frame_data = [(segment, frame_number, frame.to_ndarray(format='bgr24'), edge_color, background_color, london_time.year, london_time.month, london_time.day, london_time.hour, london_time.minute) for frame_number, frame in enumerate(container.decode(container.streams.video[0]))]
-        with ThreadPoolExecutor() as executor:
-            executor.map(process_frame, frame_data)
-        container.close()
-        # Construct the ffmpeg command for creating a .ts file
-        out, _ = (
-            ffmpeg
-            .input(f'frames/{segment}/%d.jpg', r=30, f='image2', s='1972x1140')
-            .output('pipe:', vcodec='libx264', crf=25, pix_fmt='yuv420p', format='mpegts')
-            .run(capture_stdout=True, capture_stderr=True)
-        )
+    
+    os.makedirs(f"modified_segments/{london_time.hour}/{london_time.minute}/{rounded_seconds}", exist_ok=True)
+    
+    edge_color, background_color = get_colors(london_time.hour, london_time.minute)
+    # edge_color = get_random_rgb()
+    # background_color = get_random_rgb()
+    container = av.open(f"segments/{segment}/{segment}.ts")
+    frame_data = [(segment, frame_number, frame.to_ndarray(format='bgr24'), edge_color, background_color, london_time.year, london_time.month, london_time.day, london_time.hour, london_time.minute) for frame_number, frame in enumerate(container.decode(container.streams.video[0]))]
+    with ThreadPoolExecutor() as executor:
+        executor.map(process_frame, frame_data)
+    container.close()
+    # Construct the ffmpeg command for creating a .ts file
+    out, _ = (
+        ffmpeg
+        .input(f'frames/{segment}/%d.jpg', r=30, f='image2', s='1972x1140')
+        .output('pipe:', vcodec='libx264', crf=25, pix_fmt='yuv420p', format='mpegts')
+        .run(capture_stdout=True, capture_stderr=True)
+    )
 
-        upload_to_s3(
-            BytesIO(out),
-            f"segments/{london_time.hour}/{london_time.minute}/{rounded_seconds}.ts"
-        )        
-        print(rounded_seconds)
-        if rounded_seconds == 60:
-            generate_m3u8_file.apply_async(args=[london_time.hour, london_time.minute], expires=30, queue='gm')
-            
-    else:
-        return "Duplicate Process"
+    upload_to_s3(
+        BytesIO(out),
+        f"segments/{london_time.hour}/{london_time.minute}/{rounded_seconds}.ts"
+    )        
+    print(rounded_seconds)
+    if rounded_seconds == 60:
+        generate_m3u8_file.apply_async(args=[london_time.hour, london_time.minute], expires=30, queue='gm')
 
 @app.task
 def generate_m3u8_file(hr, min):
@@ -179,7 +176,7 @@ def generate_m3u8_file(hr, min):
     prefix = f'segments/{hr}/{min}'
 
      # Construct the M3U8 content with signed URLs
-    m3u8_content = "#EXTM3U\n#EXT-X-VERSION:3\n"
+    m3u8_content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n"
 
     # List objects within a specified bucket and prefix
     response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
