@@ -22,33 +22,16 @@ load_dotenv(override=True)
 
 app = Celery('tasks')
 app.config_from_object('celery_config')
-redis_client = Redis.from_url('redis://127.0.0.1:6379/0')
-
-def clear_folder_contents(folder_path):
-    # Check if the given path is an actual directory
-    if not os.path.isdir(folder_path):
-        print("The specified path is not a directory")
-        return
-
-    # List all the contents of the directory
-    for item_name in os.listdir(folder_path):
-        item_path = os.path.join(folder_path, item_name)
-        try:
-            # Check if it's a file or directory
-            if os.path.isfile(item_path) or os.path.islink(item_path):
-                os.unlink(item_path)  # Remove files and links
-            elif os.path.isdir(item_path):
-                shutil.rmtree(item_path)  # Remove directories
-        except Exception as e:
-            print(f"Failed to delete {item_path}. Reason: {e}")
-
-redis_client.delete('recent_segments')
-clear_folder_contents('frames')
-clear_folder_contents('segments')
-clear_folder_contents('modified_segments')
+app.conf.beat_schedule = {
+    'fetch-new-segment-task': {
+        'task': 'tasks.fetch_new_segment',
+        'schedule': 2.0
+    }
+}
 
 @app.task()
-def fetch_new_segments():
+def fetch_new_segment():
+    redis_client = Redis.from_url('redis://127.0.0.1:6379/0')
     headers = {
             'Accept': '*/*',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -70,6 +53,8 @@ def fetch_new_segments():
         # Retrieve the current list of recent segments
         current_segments = redis_client.lrange('recent_segments', 0, -1)
         current_segments = [segment.decode('utf-8') for segment in current_segments]
+        if len(current_segments) == 0:
+            setup()
         new = str(new_segment) not in current_segments
         print(f"New Segment #: {new_segment}\nCurrent Segments: {current_segments}\nNew?: {new}\n")
 
@@ -86,7 +71,12 @@ def fetch_new_segments():
                 removed_segment = redis_client.rpop('recent_segments')
                 if removed_segment:
                     removed_segment = removed_segment.decode('utf-8')
-                    file_cleanup.apply_async(args=[str(removed_segment)], expires=30, queue='fc')
+                    try:
+                        shutil.rmtree(f"frames/{removed_segment}")
+                        shutil.rmtree(f"segments/{removed_segment}")
+                        shutil.rmtree(f"modified_segments/{removed_segment}")
+                    except Exception as e:
+                        print(e)
             return new_segment
         else:
             return current_segments
@@ -205,15 +195,6 @@ def generate_m3u8_file(hr, min):
         print('uploaded')
     else:
         print("No items found.")
-    
-@app.task
-def file_cleanup(removed_segment):
-    try:
-        shutil.rmtree(f"frames/{removed_segment}")
-        shutil.rmtree(f"segments/{removed_segment}")
-        shutil.rmtree(f"modified_segments/{removed_segment}")
-    except Exception as e:
-        print(e)
 
 def get_grey_level(hour, minute):
     """ Interpolates grey level based on hour and minute. 
@@ -370,7 +351,8 @@ def upload_to_s3(file_data, object_name):
         # Output the error if something goes wrong
         print(f"Failed to upload {object_name} to {bucket_name}: {e}")
         return None
-
+    
+def clear_folder_contents(folder_path):
     # Check if the given path is an actual directory
     if not os.path.isdir(folder_path):
         print("The specified path is not a directory")
@@ -387,3 +369,10 @@ def upload_to_s3(file_data, object_name):
                 shutil.rmtree(item_path)  # Remove directories
         except Exception as e:
             print(f"Failed to delete {item_path}. Reason: {e}")
+
+def setup():
+    redis_client = Redis.from_url('redis://127.0.0.1:6379/0')
+    redis_client.delete('recent_segments')
+    clear_folder_contents('frames')
+    clear_folder_contents('segments')
+    clear_folder_contents('modified_segments')
