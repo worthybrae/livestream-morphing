@@ -136,9 +136,6 @@ def download_segment(segment, max_retries=3, delay=.2):
 def process_segment(segment):
     redis_client = Redis.from_url('redis://127.0.0.1:6379/0')
     london_time = datetime.datetime.now(pytz.timezone('Europe/London'))
-    rounded_seconds = round_seconds(london_time.second)
-    
-    os.makedirs(f"modified_segments/{london_time.hour}/{london_time.minute}/{rounded_seconds}", exist_ok=True)
     
     edge_color, background_color = get_colors(london_time.hour, london_time.minute)
     # edge_color = get_random_rgb()
@@ -149,22 +146,23 @@ def process_segment(segment):
         executor.map(process_frame, frame_data)
     container.close()
     # Construct the ffmpeg command for creating a .ts file
-    out, _ = (
+    out, err = (
         ffmpeg
         .input(f'frames/{segment}/%d.jpg', r=30, f='image2', s='1972x1140')
         .output('pipe:', vcodec='libx264', crf=25, pix_fmt='yuv420p', format='mpegts')
         .run(capture_stdout=True, capture_stderr=True)
     )
+    print("FFmpeg stderr:", err.decode('utf-8'))
 
     upload_to_s3(
         BytesIO(out),
-        f"segments/{london_time.hour}/{london_time.minute}/{rounded_seconds}.ts"
+        f"segments/{segment}.ts"
     )  
 
     ready_segment_count = len(redis_client.lrange('ready_segments', 0, -1)) 
     if ready_segment_count >= 10:
         redis_client.rpop('ready_segments')
-    redis_client.lpush('ready_segments', f"{london_time.hour}-{london_time.minute}-{rounded_seconds}")
+    redis_client.lpush('ready_segments', f"{segment}")
     generate_m3u8_file.apply_async(args=[], expires=30, queue='gm')
 
 @app.task
@@ -175,12 +173,11 @@ def generate_m3u8_file():
      # Construct the M3U8 content with signed URLs
     m3u8_content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n"
     ready_segments = redis_client.lrange('ready_segments', 0, -1)
-    ready_segments = [s.decode('utf-8') for s in ready_segments]
+    ready_segments = sorted([int(s.decode('utf-8')) for s in ready_segments])
     # Iterate over the objects and print the keys
     for segment in ready_segments:
-        alt_path = f"https://{bucket_name}.s3.amazonaws.com/segments/{segment.split('-')[0]}/{segment.split('-')[1]}/{segment.split('-')[2]}.ts"
+        alt_path = f"https://{bucket_name}.s3.amazonaws.com/segments/{segment}.ts"
         m3u8_content += f"#EXTINF:6,\n{alt_path}\n"
-    m3u8_content += "#EXT-X-ENDLIST"
     bytes_file = BytesIO(m3u8_content.encode('utf-8'))
     
     upload_to_s3(bytes_file, f"current_playlist.m3u8") 
