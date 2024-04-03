@@ -19,7 +19,8 @@
 </head>
 <body>
 
-<video id="video" controls autoplay></video>
+<!-- Removed the "controls" attribute and ensured "autoplay" is present -->
+<video id="video" autoplay playsinline muted></video>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <script>
@@ -44,6 +45,3 @@
 
 </body>
 </html>
-
-
-
