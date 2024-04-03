@@ -169,11 +169,17 @@ def process_segment(segment):
 def generate_m3u8_file():
     redis_client = Redis.from_url('redis://127.0.0.1:6379/0')
     bucket_name = 'abbey-road'
+    
+    ready_segments = redis_client.lrange('ready_segments', 0, -1)
+    ready_segments = sorted([int(s.decode('utf-8')) for s in ready_segments])[:3]
 
      # Construct the M3U8 content with signed URLs
-    m3u8_content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n"
-    ready_segments = redis_client.lrange('ready_segments', 0, -1)
-    ready_segments = sorted([int(s.decode('utf-8')) for s in ready_segments])
+    m3u8_content = (
+        f"#EXTM3U\n"
+        f"#EXT-X-VERSION:3\n"
+        f"#EXT-X-TARGETDURATION:6\n"
+        f"#EXT-X-MEDIA-SEQUENCE:{ready_segments[0]}\n"
+    )
     # Iterate over the objects and print the keys
     for segment in ready_segments:
         alt_path = f"https://{bucket_name}.s3.amazonaws.com/segments/{segment}.ts"
