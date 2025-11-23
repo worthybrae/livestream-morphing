@@ -5,6 +5,7 @@ __pycache__/
 
 # Image and data files
 *.jpg
+*.png
 *.ts
 *.csv
 *.bkp
@@ -13,6 +14,26 @@ __pycache__/
 
 # Miscelaneous file
 .DS_Store
+
+# Runtime data directories (new monorepo structure)
+data/
+frames/
+segments/
+modified_segments/
+public/assets/
+
+# Config files with secrets
+backend/core/config.json
+
+# Node modules and build artifacts
+node_modules/
+frontend/dist/
+frontend/build/
+admin/dist/
+admin/build/
+*.log
+package-lock.json
+yarn.lock
 
 # C extensions
 *.so

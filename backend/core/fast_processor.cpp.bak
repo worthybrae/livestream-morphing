@@ -1,0 +1,163 @@
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+#include <opencv2/opencv.hpp>
+#include <cmath>
+
+namespace py = pybind11;
+
+// Fast psychedelic distortion in C++
+cv::Mat apply_distortion_cpp(cv::Mat& image, int frame_number, float amplitude, float frequency, int total_frames) {
+    // Calculate time parameter
+    float time = (frame_number % total_frames) * (2.0f * M_PI / total_frames);
+
+    int height = image.rows;
+    int width = image.cols;
+
+    // Pre-calculate distortion maps
+    cv::Mat map_x(height, width, CV_32FC1);
+    cv::Mat map_y(height, width, CV_32FC1);
+
+    float width_amp = width * amplitude;
+    float height_amp = height * amplitude;
+    float width_freq = frequency / width;
+    float height_freq = frequency / height;
+
+    // Vectorized calculation of distortion
+    for (int y = 0; y < height; y++) {
+        float* ptr_x = map_x.ptr<float>(y);
+        float* ptr_y = map_y.ptr<float>(y);
+        float y_dist = std::sin(time + y * height_freq) * height_amp;
+
+        for (int x = 0; x < width; x++) {
+            float x_dist = std::sin(time + x * width_freq) * width_amp;
+            ptr_x[x] = x + x_dist;
+            ptr_y[x] = y + y_dist;
+        }
+    }
+
+    cv::Mat result;
+    cv::remap(image, result, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+    return result;
+}
+
+// Fast blob processing in C++ - combines multiple operations
+py::array_t<uint8_t> process_frame_cpp(
+    py::array_t<uint8_t> input_frame,
+    int frame_number,
+    float psychedelic_amplitude,
+    float psychedelic_frequency,
+    int psychedelic_total_frames,
+    int gaussian_blur_1,
+    int gaussian_blur_2,
+    int quantization_levels,
+    float edge_blend_factor,
+    int downsample_factor
+) {
+    // Get input buffer info
+    py::buffer_info buf = input_frame.request();
+
+    if (buf.ndim != 3) {
+        throw std::runtime_error("Input should be 3-dimensional (H, W, C)");
+    }
+
+    int original_height = buf.shape[0];
+    int original_width = buf.shape[1];
+
+    // Create OpenCV Mat from numpy array (no copy)
+    cv::Mat frame(original_height, original_width, CV_8UC3, (uint8_t*)buf.ptr);
+
+    // Downsample if requested
+    cv::Mat working_frame;
+    int work_width = original_width / downsample_factor;
+    int work_height = original_height / downsample_factor;
+
+    if (downsample_factor > 1) {
+        cv::resize(frame, working_frame, cv::Size(work_width, work_height), 0, 0, cv::INTER_AREA);
+    } else {
+        working_frame = frame;
+    }
+
+    // Apply psychedelic distortion
+    cv::Mat distorted = apply_distortion_cpp(
+        working_frame,
+        frame_number,
+        psychedelic_amplitude,
+        psychedelic_frequency,
+        psychedelic_total_frames
+    );
+
+    // Convert to grayscale
+    cv::Mat gray;
+    cv::cvtColor(distorted, gray, cv::COLOR_BGR2GRAY);
+
+    // Fast Gaussian blurs
+    cv::Mat smooth;
+    cv::GaussianBlur(gray, smooth, cv::Size(gaussian_blur_1, gaussian_blur_1), 0);
+    cv::GaussianBlur(smooth, smooth, cv::Size(gaussian_blur_2, gaussian_blur_2), 0);
+
+    // Color quantization (posterization)
+    float level_step = 255.0f / (quantization_levels - 1);
+    cv::Mat quantized = cv::Mat::zeros(smooth.size(), CV_8U);
+
+    for (int y = 0; y < smooth.rows; y++) {
+        uint8_t* smooth_ptr = smooth.ptr<uint8_t>(y);
+        uint8_t* quant_ptr = quantized.ptr<uint8_t>(y);
+
+        for (int x = 0; x < smooth.cols; x++) {
+            float normalized = smooth_ptr[x] / level_step + 0.5f;
+            float quantized_val = std::floor(normalized) * level_step;
+            quant_ptr[x] = cv::saturate_cast<uint8_t>(quantized_val);
+        }
+    }
+
+    // Morphological closing
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+    cv::morphologyEx(quantized, quantized, cv::MORPH_CLOSE, kernel);
+
+    // Edge enhancement
+    cv::Mat edges;
+    cv::Canny(quantized, edges, 30, 100);
+    cv::dilate(edges, edges, kernel, cv::Point(-1, -1), 1);
+
+    // Blend edges
+    cv::Mat edges_scaled;
+    edges.convertTo(edges_scaled, CV_32F, edge_blend_factor);
+    edges_scaled.convertTo(edges_scaled, CV_8U);
+    cv::add(quantized, edges_scaled, quantized);
+
+    // Upsample back to original size if needed
+    if (downsample_factor > 1) {
+        cv::resize(quantized, quantized, cv::Size(original_width, original_height), 0, 0, cv::INTER_NEAREST);
+    }
+
+    // Convert grayscale to BGR
+    cv::Mat result;
+    cv::cvtColor(quantized, result, cv::COLOR_GRAY2BGR);
+
+    // Create output numpy array
+    auto result_array = py::array_t<uint8_t>({original_height, original_width, 3});
+    py::buffer_info result_buf = result_array.request();
+
+    // Copy data
+    std::memcpy(result_buf.ptr, result.data, original_height * original_width * 3);
+
+    return result_array;
+}
+
+PYBIND11_MODULE(fast_processor, m) {
+    m.doc() = "Fast C++ image processing for video effects";
+
+    m.def("process_frame", &process_frame_cpp,
+          "Process a single frame with blob effects",
+          py::arg("input_frame"),
+          py::arg("frame_number"),
+          py::arg("psychedelic_amplitude") = 0.01f,
+          py::arg("psychedelic_frequency") = 10.0f,
+          py::arg("psychedelic_total_frames") = 180,
+          py::arg("gaussian_blur_1") = 3,
+          py::arg("gaussian_blur_2") = 5,
+          py::arg("quantization_levels") = 8,
+          py::arg("edge_blend_factor") = 0.4f,
+          py::arg("downsample_factor") = 2
+    );
+}

@@ -1,0 +1,259 @@
+import cv2
+import numpy as np
+import os
+import math
+import shutil
+
+# Try to import the fast C++ processor
+try:
+    import fast_processor
+    USE_CPP = True
+    print("✨ Using fast C++ processor")
+except ImportError:
+    USE_CPP = False
+    fast_processor = None  # Set to None if not available
+    print("⚠️  C++ processor not available, using Python implementation")
+
+def get_grey_level(hour, minute):
+    """
+    Interpolates grey level based on hour and minute.
+    Noon (12:00) is lightest grey, and midnight (00:00) is darkest grey.
+    """
+    total_minutes = hour * 60 + minute
+    if total_minutes > 720:  # Normalize for 24-hour cycle
+        total_minutes = 1440 - total_minutes
+
+    # Linear interpolation between lightest and darkest grey
+    lightest_grey = 175
+    darkest_grey = 25
+    grey_level = int(darkest_grey + (lightest_grey - darkest_grey) * (total_minutes / 720.0))
+    return grey_level
+
+def get_colors(hour, minute):
+    """
+    Determines background and edge colors based on time of day.
+    """
+    # Get grey level for background
+    grey_level = get_grey_level(hour, minute)
+    background_color = (grey_level, grey_level, grey_level)
+
+    # Determine the most contrasting edge color
+    if grey_level > 127:  # If background is light
+        edge_color = (0, 0, 0)  # Use black
+    else:  # If background is dark or mid-tone
+        edge_color = (255, 255, 255)  # Use white
+
+    return edge_color, background_color
+
+def apply_psychedelic_distortion(image, frame_number, amplitude=0.02, frequency=30.0, total_frames=180):
+    """
+    Apply a psychedelic distortion effect to an image using a sine wave distortion
+    """
+    # Create normalized time variable (0.0 to 2π) for full cycle
+    time = (frame_number % total_frames) * (2 * math.pi / total_frames)
+
+    # Get image dimensions
+    height, width = image.shape[:2]
+
+    # Create meshgrid for pixel coordinates
+    y_coords, x_coords = np.mgrid[0:height, 0:width]
+
+    # Convert to float32 for OpenCV remap function
+    x_coords = x_coords.astype(np.float32)
+    y_coords = y_coords.astype(np.float32)
+
+    # Apply sine wave distortion (similar to the shader code)
+    x_distorted = x_coords + np.sin(time + x_coords * frequency / width) * (width * amplitude)
+    y_distorted = y_coords + np.sin(time + y_coords * frequency / height) * (height * amplitude)
+
+    # Remap the image using the distorted coordinates
+    distorted_image = cv2.remap(image, x_distorted, y_distorted, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+    return distorted_image
+
+def process_frame_fast_blobs(frame_data):
+    """
+    Creates a blobby, highly quantized effect with less detail and more prominent blobs
+
+    All processing parameters can be edited directly in this function!
+    """
+    # ========== EDITABLE PARAMETERS - DALI SURREALIST WATERCOLOR ==========
+    # Performance optimization
+    downsample_factor = 1            # Downsample by this factor (2=4x faster, 3=9x faster, 4=16x faster)
+
+    # ENHANCED PSYCHEDELIC DISTORTION - Dali-esque melting/flowing
+    psychedelic_amplitude = 0.025    # INCREASED for more surreal warping (0.02-0.04)
+    psychedelic_frequency = 15.0     # More ripples for dreamlike quality (12-20)
+    psychedelic_total_frames = 180   # Animation cycle length
+
+    # WATERCOLOR BASE: Balanced smoothing that keeps some detail
+    bilateral_d = 9                  # Bilateral filter diameter
+    bilateral_sigma_color = 60       # REDUCED to keep more color variation (40-80)
+    bilateral_sigma_space = 60       # REDUCED to preserve more texture
+    gaussian_blur_1 = 5              # LIGHTER blur to keep detail (5, 7)
+    gaussian_blur_2 = 7              # Moderate smoothing (7, 9)
+
+    # Color quantization - more levels for richer palette
+    quantization_levels = 12         # INCREASED for more tonal variation (10-16)
+
+    # ARTISTIC EDGES: Visible but stylized like ink on watercolor
+    canny_threshold_1 = 40           # LOWER to capture more detail (30-50)
+    canny_threshold_2 = 120          # Moderate selectivity (100-150)
+    edge_blend_factor = 0.25         # INCREASED for visible artistic lines (0.2-0.4)
+    edge_dilation_iterations = 1     # Thin, delicate lines
+
+    # Morphological - minimal, preserve organic texture
+    morph_kernel_size = 3            # SMALLER to keep texture (3)
+    apply_opening = True             # Remove only tiny speckles
+    apply_closing_iterations = 1     # REDUCED - light smoothing only
+
+    # NEW: Edge softening for watercolor effect
+    apply_edge_blur = True           # Blur edges before blending for softer look
+    edge_blur_amount = 3             # Blur kernel size (3, 5)
+
+    # Frame processing optimization
+    process_every_nth_frame = 1      # Process every Nth frame (1=all, higher=faster)
+    # =====================================================================
+
+    # Unpack frame data
+    segment_number, frame_number, frame, edge_color, background_color, lty, ltmnth, ltd, lth, ltm = frame_data
+
+    try:
+        # Convert segment_number to int if it's a string
+        if isinstance(segment_number, str):
+            segment_number = int(segment_number)
+
+        # Only process every Nth frame for performance
+        if frame_number % process_every_nth_frame != 0:
+            base_frame = (frame_number // process_every_nth_frame) * process_every_nth_frame
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            frames_dir = os.path.join(base_dir, "data", "frames", str(segment_number))
+            base_path = os.path.join(frames_dir, f"{base_frame}.jpg")
+            dest_path = os.path.join(frames_dir, f"{frame_number}.jpg")
+
+            # Wait a bit for base frame to be created if needed
+            import time
+            max_wait = 5  # seconds
+            wait_count = 0
+            while not os.path.exists(base_path) and wait_count < max_wait * 10:
+                time.sleep(0.1)
+                wait_count += 1
+
+            if os.path.exists(base_path):
+                shutil.copy2(base_path, dest_path)
+                return True
+            else:
+                # Base frame doesn't exist, skip this frame
+                return False
+
+        # Use C++ implementation if available (much faster!)
+        if USE_CPP:
+            carbonized_bgr = fast_processor.process_frame(
+                frame,
+                frame_number,
+                psychedelic_amplitude,
+                psychedelic_frequency,
+                psychedelic_total_frames,
+                bilateral_d,
+                bilateral_sigma_color,
+                bilateral_sigma_space,
+                gaussian_blur_1,
+                gaussian_blur_2,
+                quantization_levels,
+                edge_blend_factor,
+                downsample_factor,
+                canny_threshold_1,
+                canny_threshold_2,
+                edge_dilation_iterations,
+                morph_kernel_size,
+                apply_opening,
+                apply_closing_iterations,
+                apply_edge_blur,
+                edge_blur_amount
+            )
+        else:
+            # Python fallback implementation
+            # Store original dimensions
+            original_height, original_width = frame.shape[:2]
+
+            # Downsample for faster processing
+            if downsample_factor > 1:
+                small_width = original_width // downsample_factor
+                small_height = original_height // downsample_factor
+                frame_small = cv2.resize(frame, (small_width, small_height), interpolation=cv2.INTER_AREA)
+            else:
+                frame_small = frame
+
+            # Apply time-based psychedelic distortion on smaller image
+            distorted_frame = apply_psychedelic_distortion(
+                frame_small, frame_number,
+                amplitude=psychedelic_amplitude,
+                frequency=psychedelic_frequency,
+                total_frames=psychedelic_total_frames
+            )
+
+            # Convert to grayscale
+            gray = cv2.cvtColor(distorted_frame, cv2.COLOR_BGR2GRAY)
+
+            # WATERCOLOR STYLE: Bilateral filter preserves edges while smoothing
+            # This creates the "painterly" look by grouping similar colors
+            smooth = cv2.bilateralFilter(gray, bilateral_d, bilateral_sigma_color, bilateral_sigma_space)
+
+            # Follow up with Gaussian blurs for extra smoothness
+            smooth = cv2.GaussianBlur(smooth, (gaussian_blur_1, gaussian_blur_1), 0)
+            smooth = cv2.GaussianBlur(smooth, (gaussian_blur_2, gaussian_blur_2), 0)
+
+            # Apply color quantization (posterization effect)
+            level_step = 255.0 / (quantization_levels - 1)
+            quantized = np.floor(smooth / level_step + 0.5) * level_step
+            quantized = quantized.astype(np.uint8)
+
+            # WATERCOLOR STYLE: Aggressive morphological operations
+            kernel = np.ones((morph_kernel_size, morph_kernel_size), np.uint8)
+
+            # First: Remove small speckles and noise
+            if apply_opening:
+                quantized = cv2.morphologyEx(quantized, cv2.MORPH_OPEN, kernel)
+
+            # Second: Multiple closing passes to merge regions and smooth boundaries
+            for _ in range(apply_closing_iterations):
+                quantized = cv2.morphologyEx(quantized, cv2.MORPH_CLOSE, kernel)
+
+            # Selective edge enhancement - artistic edges like ink on watercolor
+            edges = cv2.Canny(quantized, canny_threshold_1, canny_threshold_2)
+
+            # Soften edges for watercolor effect
+            if apply_edge_blur:
+                edges = cv2.GaussianBlur(edges, (edge_blur_amount, edge_blur_amount), 0)
+
+            edges = cv2.dilate(edges, kernel, iterations=edge_dilation_iterations)
+
+            # Blend edges back with artistic visibility
+            edges_scaled = (edges * edge_blend_factor).astype(np.uint8)
+            quantized = cv2.add(quantized, edges_scaled)
+
+            # Upsample back to original size if we downsampled
+            if downsample_factor > 1:
+                quantized = cv2.resize(quantized, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
+
+            # Create output frame - pure blobs without edge overlays
+            carbonized_bgr = np.zeros((original_height, original_width, 3), dtype=np.uint8)
+            carbonized_bgr[:, :, 0] = quantized
+            carbonized_bgr[:, :, 1] = quantized
+            carbonized_bgr[:, :, 2] = quantized
+
+        # Save the processed frame
+        # Use absolute path from BASE_DIR
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        frames_dir = os.path.join(base_dir, "data", "frames", str(segment_number))
+        os.makedirs(frames_dir, exist_ok=True)
+        frame_path = os.path.join(frames_dir, f"{frame_number}.jpg")
+
+        cv2.imwrite(frame_path, carbonized_bgr)
+
+        return True
+    except Exception as e:
+        print(f"Error processing fast blob frame: {e}")
+        import traceback
+        traceback.print_exc()
+        return e

@@ -1,0 +1,30 @@
+# Neural Style Transfer Dependencies
+
+# Core deep learning
+torch>=2.0.0
+torchvision>=0.15.0
+pillow>=10.0.0
+
+# Jupyter environment
+jupyter>=1.0.0
+notebook>=7.0.0
+ipywidgets>=8.0.0
+
+# Image processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+
+# Model export and optimization
+onnx>=1.14.0
+onnxruntime>=1.15.0
+
+# Optional: TensorRT (requires NVIDIA GPU and separate installation)
+# nvidia-tensorrt
+
+# Utilities
+tqdm>=4.65.0
+requests>=2.31.0
+
+# For downloading datasets
+gdown>=4.7.0

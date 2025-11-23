@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live Stream Player</title>
+    <style>
+        body, html {
+            margin: 0;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+
+        video {
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover; /* This ensures the video covers the full screen */
+        }
+    </style>
+</head>
+<body>
+
+<!-- Removed the "controls" attribute and ensured "autoplay" is present -->
+<video id="video" autoplay playsinline muted></video>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+    var video = document.getElementById('video');
+    if (Hls.isSupported()) {
+        var hls = new Hls();
+        // Replace this with your actual M3U8 URL
+        hls.loadSource('https://abbey-road.s3.amazonaws.com/current_playlist.m3u8');
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+            video.play();
+        });
+    }
+    // Fallback for browsers that support HLS natively in the video element
+    else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = 'https://abbey-road.s3.amazonaws.com/current_playlist.m3u8';
+        video.addEventListener('canplay', function() {
+            video.play();
+        });
+    }
+</script>
+
+</body>
+</html>

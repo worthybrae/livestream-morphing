@@ -69,8 +69,8 @@ def fetch_new_segment():
 
             download_segment.apply_async(args=[str(new_segment)], expires=30, queue='ds')
 
-            # If the list exceeds 10 elements, remove the oldest one
-            if len(current_segments) >= 10:
+            # If the list exceeds 20 elements, remove the oldest one
+            if len(current_segments) >= 20:
                 removed_segment = redis_client.rpop('recent_segments')
                 if removed_segment:
                     removed_segment = removed_segment.decode('utf-8')
@@ -191,7 +191,7 @@ def process_segment(segment):
 
     # Update the ready_segments queue
     ready_segment_count = len(redis_client.lrange('ready_segments', 0, -1))
-    if ready_segment_count >= 10:
+    if ready_segment_count >= 20:
         redis_client.rpop('ready_segments')
     redis_client.lpush('ready_segments', f"{segment}")
 
