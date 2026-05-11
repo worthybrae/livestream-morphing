@@ -17,7 +17,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/api/stream", get(stream_playlist))
-        .route("/api/segments/{segment_id}.ts", get(get_segment))
+        .route("/api/segments/{segment_id}", get(get_segment))
         .route("/health", get(health))
         .layer(cors)
         .with_state(state)
@@ -51,14 +51,17 @@ async fn get_segment(
     if segment_id.len() > 64
         || !segment_id
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
+    // Strip .ts extension — the playlist generates URLs like /api/segments/12345.ts
+    let id = segment_id.strip_suffix(".ts").unwrap_or(&segment_id);
+
     let data = {
         let buf = state.hls_buffer.read().await;
-        buf.get_segment(&segment_id).map(|d| d.to_vec())
+        buf.get_segment(id).map(|d| d.to_vec())
     };
 
     match data {
