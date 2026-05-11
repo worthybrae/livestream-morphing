@@ -123,45 +123,44 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     return Err("No frames decoded".into());
                 }
 
-                // Sample every 6th frame → ~30 frames from 180
-                // Encode at 5fps → 30 frames / 5fps = 6 second segment
-                let sample_step = 6;
-                let output_fps = 5u32;
-
-                let sampled: Vec<_> = all_frames
+                // Downsample all frames to 540p
+                let mut half_frames: Vec<_> = all_frames
                     .iter()
-                    .step_by(sample_step)
                     .map(|f| downsample_2x(f))
                     .collect();
-                let t_sample = t0.elapsed();
+                let t_downsample = t0.elapsed();
 
-                let half_w = sampled[0].width;
-                let half_h = sampled[0].height;
-                let out_frames = sampled.len() as i64;
+                let half_w = half_frames[0].width;
+                let half_h = half_frames[0].height;
+                let out_frames = half_frames.len() as i64;
 
-                // Process all sampled frames
+                // Process every 3rd frame, clone to neighbors
                 let mut processor = FrameProcessor::new(half_w, half_h);
                 let (edge_color, _bg) = crate::time_color::get_colors_now();
                 processor.edge_darkness = if edge_color == (0, 0, 0) { 100 } else { 40 };
 
-                let mut sampled = sampled;
-                for (i, frame) in sampled.iter_mut().enumerate() {
-                    processor.process_frame(frame, i as u32);
+                for i in (0..half_frames.len()).step_by(3) {
+                    processor.process_frame(&mut half_frames[i], i as u32);
+                    let processed_data = half_frames[i].data.clone();
+                    for j in 1..3 {
+                        if i + j < half_frames.len() {
+                            half_frames[i + j].data = processed_data.clone();
+                        }
+                    }
                 }
                 let t_effects = t0.elapsed();
 
-                // Encode sampled frames at reduced fps
-                let encoded = codec::encode_segment(&sampled, output_fps, pts_offset)?;
+                // Encode all frames at 30fps, 540p
+                let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
                 let t_encode = t0.elapsed();
 
                 tracing::info!(
                     decode_ms = t_decode.as_millis() as u64,
-                    sample_ms = (t_sample - t_decode).as_millis() as u64,
-                    effects_ms = (t_effects - t_sample).as_millis() as u64,
+                    downsample_ms = (t_downsample - t_decode).as_millis() as u64,
+                    effects_ms = (t_effects - t_downsample).as_millis() as u64,
                     encode_ms = (t_encode - t_effects).as_millis() as u64,
                     total_ms = t_encode.as_millis() as u64,
-                    input_frames = all_frames.len(),
-                    output_frames = out_frames,
+                    frames = out_frames,
                     "Pipeline timing"
                 );
 
