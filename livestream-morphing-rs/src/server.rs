@@ -8,17 +8,20 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use crate::api;
 use crate::pipeline::AppState;
 
 pub fn router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::any())
-        .allow_methods([Method::GET]);
+        .allow_methods([Method::GET, Method::PUT, Method::PATCH, Method::POST, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE]);
 
     Router::new()
         .route("/api/stream", get(stream_playlist))
         .route("/api/segments/{segment_id}", get(get_segment))
         .route("/health", get(health))
+        .merge(api::api_router())
         .layer(cors)
         .with_state(state)
 }
