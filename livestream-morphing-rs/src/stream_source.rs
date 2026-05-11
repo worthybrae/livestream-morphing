@@ -16,12 +16,13 @@ fn earthcam_headers() -> reqwest::header::HeaderMap {
     headers
 }
 
-/// Extract the segment ID from the first .ts URI in an M3U8 playlist.
+/// Extract the segment ID from the latest .ts URI in an M3U8 playlist.
 /// URI format: `media_w{timestamp}_{segment_id}.ts`
 pub fn extract_segment_id(m3u8_text: &str) -> Option<String> {
     m3u8_text
         .lines()
-        .find(|line| line.ends_with(".ts"))
+        .filter(|line| line.ends_with(".ts"))
+        .last()
         .and_then(|line| {
             let name = line.trim();
             let without_ext = name.strip_suffix(".ts")?;
@@ -60,6 +61,11 @@ impl StreamSource {
             .send()
             .await
             .ok()?;
+
+        if !resp.status().is_success() {
+            tracing::warn!(status = %resp.status(), "Playlist fetch failed");
+            return None;
+        }
 
         let text = resp.text().await.ok()?;
         let id = extract_segment_id(&text)?;

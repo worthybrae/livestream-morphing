@@ -63,8 +63,8 @@ impl HlsBuffer {
     }
 
     pub fn clear(&mut self) {
+        self.sequence += self.segments.len() as u64;
         self.segments.clear();
-        self.sequence = 0;
     }
 }
 
