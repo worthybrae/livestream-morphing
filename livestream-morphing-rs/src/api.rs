@@ -61,8 +61,9 @@ async fn put_pipeline(
         .map(|e| (e.effect_id, e.params, e.enabled))
         .collect();
 
-    match state.pipeline.lock().unwrap().replace(tuples) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    let mut pipeline = state.pipeline.lock().unwrap();
+    match pipeline.replace(tuples) {
+        Ok(()) => Json(pipeline.view()).into_response(),
         Err(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
     }
 }
@@ -85,18 +86,16 @@ async fn patch_slot(
     if let Some(enabled) = body.enabled {
         pipeline.set_enabled(&slot_id, enabled);
     }
-    StatusCode::NO_CONTENT
+    Json(pipeline.view())
 }
 
 async fn add_effect(
     State(state): State<Arc<AppState>>,
     Path(effect_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.pipeline.lock().unwrap().add_effect(&effect_id) {
-        Ok(slot_id) => {
-            let body = serde_json::json!({ "slot_id": slot_id });
-            (StatusCode::CREATED, Json(body)).into_response()
-        }
+    let mut pipeline = state.pipeline.lock().unwrap();
+    match pipeline.add_effect(&effect_id) {
+        Ok(_slot_id) => Json(pipeline.view()).into_response(),
         Err(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
     }
 }
@@ -105,8 +104,9 @@ async fn delete_slot(
     State(state): State<Arc<AppState>>,
     Path(slot_id): Path<String>,
 ) -> impl IntoResponse {
-    state.pipeline.lock().unwrap().remove_slot(&slot_id);
-    StatusCode::NO_CONTENT
+    let mut pipeline = state.pipeline.lock().unwrap();
+    pipeline.remove_slot(&slot_id);
+    Json(pipeline.view())
 }
 
 // ---------------------------------------------------------------------------
@@ -248,8 +248,9 @@ async fn apply_preset(
         .map(|e| (e.effect_id, e.params, e.enabled))
         .collect();
 
-    match state.pipeline.lock().unwrap().replace(entries) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    let mut pipeline = state.pipeline.lock().unwrap();
+    match pipeline.replace(entries) {
+        Ok(()) => Json(pipeline.view()).into_response(),
         Err(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
     }
 }
@@ -267,6 +268,29 @@ async fn delete_preset(Path(id): Path<String>) -> impl IntoResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Stream source
+// ---------------------------------------------------------------------------
+
+async fn get_source(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let url = state.stream_url.read().await.clone();
+    Json(serde_json::json!({ "url": url }))
+}
+
+#[derive(Deserialize)]
+struct SetSourceBody {
+    url: String,
+}
+
+async fn put_source(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SetSourceBody>,
+) -> impl IntoResponse {
+    let mut stream_url = state.stream_url.write().await;
+    *stream_url = body.url.clone();
+    Json(serde_json::json!({ "url": body.url }))
+}
+
+// ---------------------------------------------------------------------------
 // Router factory
 // ---------------------------------------------------------------------------
 
@@ -280,6 +304,9 @@ pub fn api_router() -> Router<Arc<AppState>> {
         .route("/api/pipeline/{slot_id}", patch(patch_slot))
         .route("/api/pipeline/add/{effect_id}", post(add_effect))
         .route("/api/pipeline/{slot_id}", delete(delete_slot))
+        // Stream source
+        .route("/api/source", get(get_source))
+        .route("/api/source", put(put_source))
         // Presets
         .route("/api/presets", get(list_presets))
         .route("/api/presets", post(save_preset))

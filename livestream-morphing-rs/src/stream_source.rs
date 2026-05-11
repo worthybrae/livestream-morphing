@@ -1,6 +1,6 @@
 use reqwest::Client;
 
-const STREAM_BASE_URL: &str =
+const DEFAULT_STREAM_URL: &str =
     "https://videos-3.earthcam.com/fecnetwork/AbbeyRoadHD1.flv/chunklist_w";
 
 fn earthcam_headers() -> reqwest::header::HeaderMap {
@@ -33,15 +33,22 @@ pub fn extract_segment_id(m3u8_text: &str) -> Option<String> {
 
 pub struct StreamSource {
     client: Client,
+    base_url: String,
     recent_ids: Vec<String>,
 }
 
 impl StreamSource {
-    pub fn new() -> Self {
+    pub fn new(base_url: String) -> Self {
         Self {
             client: Client::new(),
+            base_url,
             recent_ids: Vec::new(),
         }
+    }
+
+    pub fn default_url() -> String {
+        std::env::var("STREAM_URL")
+            .unwrap_or_else(|_| DEFAULT_STREAM_URL.to_string())
     }
 
     /// Fetch the latest segment ID from the Abbey Road stream.
@@ -51,7 +58,7 @@ impl StreamSource {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let url = format!("{STREAM_BASE_URL}{timestamp}.m3u8");
+        let url = format!("{}{timestamp}.m3u8", self.base_url);
 
         let resp = self
             .client
@@ -84,7 +91,7 @@ impl StreamSource {
 
     /// Download a .ts segment by ID. Retries up to 3 times.
     pub async fn download_segment(&self, segment_id: &str) -> Option<Vec<u8>> {
-        let base_url = STREAM_BASE_URL.replace("/chunklist_w", "/media_w");
+        let base_url = self.base_url.replace("/chunklist_w", "/media_w");
 
         for attempt in 0..3 {
             let timestamp = std::time::SystemTime::now()

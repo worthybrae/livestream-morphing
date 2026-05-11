@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useEffects } from './hooks/useEffects'
 import { usePipeline } from './hooks/usePipeline'
 import { usePresets } from './hooks/usePresets'
@@ -13,6 +13,23 @@ function App() {
   const { slots, addEffect, removeSlot, updateParam, setEnabled, reorder, refresh } = usePipeline()
   const { presets, savePreset, applyPreset, deletePreset } = usePresets()
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null)
+  const [sourceUrl, setSourceUrl] = useState('')
+
+  useEffect(() => {
+    fetch('/api/source')
+      .then((r) => r.json())
+      .then((data) => setSourceUrl(data.url))
+      .catch(() => {})
+  }, [])
+
+  const handleSourceUrlChange = useCallback((url: string) => {
+    setSourceUrl(url)
+    fetch('/api/source', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    }).catch(() => {})
+  }, [])
 
   const selectedSlot = slots.find((s) => s.slot_id === selectedSlotId) ?? null
 
@@ -29,6 +46,8 @@ function App() {
         onSave={savePreset}
         onApply={handleApplyPreset}
         onDelete={deletePreset}
+        sourceUrl={sourceUrl}
+        onSourceUrlChange={handleSourceUrlChange}
       />
 
       <div className="flex flex-1 min-h-0">

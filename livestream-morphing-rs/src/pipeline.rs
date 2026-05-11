@@ -166,6 +166,7 @@ pub struct AppState {
     pub pipeline_active: watch::Sender<bool>,
     pub last_client_request: std::sync::atomic::AtomicU64,
     pub pipeline: Mutex<Pipeline>,
+    pub stream_url: RwLock<String>,
 }
 
 impl AppState {
@@ -183,6 +184,7 @@ impl AppState {
             pipeline_active: tx,
             last_client_request: std::sync::atomic::AtomicU64::new(0),
             pipeline: Mutex::new(p),
+            stream_url: RwLock::new(StreamSource::default_url()),
         });
         (state, rx)
     }
@@ -229,7 +231,8 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
     }
 
     tracing::info!("Pipeline activated!");
-    let mut source = StreamSource::new();
+    let url = state.stream_url.read().await.clone();
+    let mut source = StreamSource::new(url);
     let mut frame_counter: i64 = 0;
     let idle_timeout = std::time::Duration::from_secs(300); // 5 minutes
 
@@ -250,7 +253,8 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 }
             }
             tracing::info!("Pipeline reactivated!");
-            source = StreamSource::new();
+            let url = state.stream_url.read().await.clone();
+            source = StreamSource::new(url);
             frame_counter = 0;
         }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { PresetSummary } from '../types'
 
 interface PresetBarProps {
@@ -6,11 +6,24 @@ interface PresetBarProps {
   onSave: (name: string) => void
   onApply: (id: string) => void
   onDelete: (id: string) => void
+  sourceUrl: string
+  onSourceUrlChange: (url: string) => void
 }
 
-export function PresetBar({ presets, onSave, onApply, onDelete }: PresetBarProps) {
+export function PresetBar({ presets, onSave, onApply, onDelete, sourceUrl, onSourceUrlChange }: PresetBarProps) {
   const [showSave, setShowSave] = useState(false)
   const [name, setName] = useState('')
+  const [localUrl, setLocalUrl] = useState(sourceUrl)
+
+  useEffect(() => {
+    setLocalUrl(sourceUrl)
+  }, [sourceUrl])
+
+  const handleUrlSubmit = () => {
+    if (localUrl.trim() && localUrl !== sourceUrl) {
+      onSourceUrlChange(localUrl.trim())
+    }
+  }
 
   const handleSave = () => {
     if (name.trim()) {
@@ -23,6 +36,15 @@ export function PresetBar({ presets, onSave, onApply, onDelete }: PresetBarProps
   return (
     <div className="bg-gray-900/80 border-b border-gray-800 px-4 py-2 flex items-center gap-3">
       <span className="text-amber-500 font-bold text-sm">Morph Studio</span>
+
+      <input
+        value={localUrl}
+        onChange={(e) => setLocalUrl(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
+        onBlur={handleUrlSubmit}
+        placeholder="Stream URL..."
+        className="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded border border-gray-700 focus:border-amber-500 outline-none w-80"
+      />
 
       <div className="flex-1" />
 
