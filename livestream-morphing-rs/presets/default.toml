@@ -1,0 +1,32 @@
+name = "Default"
+
+[[effects]]
+effect_id = "distortion"
+enabled = true
+
+[effects.params]
+amplitude = 0.02
+frequency = 12.0
+cycle_length = 180.0
+
+[[effects]]
+effect_id = "quantize"
+enabled = true
+
+[effects.params]
+levels = 10.0
+
+[[effects]]
+effect_id = "edges"
+enabled = true
+
+[effects.params]
+threshold = 30.0
+darkness = 80.0
+
+[[effects]]
+effect_id = "canvas_texture"
+enabled = true
+
+[effects.params]
+strength = 0.15
