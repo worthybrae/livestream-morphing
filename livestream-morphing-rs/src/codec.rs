@@ -125,7 +125,8 @@ pub fn encode_segment(
     encoder.set_height(height);
     encoder.set_format(Pixel::YUV420P);
     encoder.set_frame_rate(Some(ffmpeg::Rational(fps as i32, 1)));
-    encoder.set_time_base(ffmpeg::Rational(1, fps as i32));
+    // Use 90kHz time_base to match MPEG-TS native clock
+    encoder.set_time_base(ffmpeg::Rational(1, 90000));
 
     if needs_global_header {
         encoder.set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
@@ -166,7 +167,9 @@ pub fn encode_segment(
 
         let mut yuv = Video::empty();
         scaler.run(&rgb, &mut yuv)?;
-        yuv.set_pts(Some(pts_offset + i as i64));
+        // PTS in 90kHz ticks: each frame = 90000/fps ticks apart
+        let ticks_per_frame = 90000i64 / fps as i64;
+        yuv.set_pts(Some((pts_offset + i as i64) * ticks_per_frame));
 
         encoder.send_frame(&yuv)?;
 
