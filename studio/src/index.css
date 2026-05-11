@@ -1,1 +1,78 @@
 @import "tailwindcss";
+
+/* === Ember Glow Animations === */
+@keyframes glow-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.6); }
+  50% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.9); }
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+.animate-live-pulse {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+/* === Custom Range Slider === */
+input[type="range"].ember-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 20px;
+}
+
+input[type="range"].ember-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+input[type="range"].ember-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+input[type="range"].ember-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  margin-top: -4.5px;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.3);
+  transition: box-shadow 0.15s ease;
+}
+
+input[type="range"].ember-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  border: none;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.3);
+  transition: box-shadow 0.15s ease;
+}
+
+input[type="range"].ember-slider:hover::-webkit-slider-thumb {
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+}
+
+input[type="range"].ember-slider:hover::-moz-range-thumb {
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+}
+
+/* Gradient fill trick: use a linear-gradient on the track and clip via range progress */
+input[type="range"].ember-slider::-moz-range-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+}
