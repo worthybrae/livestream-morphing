@@ -2,6 +2,7 @@ mod codec;
 mod effects;
 mod hls;
 mod pipeline;
+mod registry;
 mod server;
 mod stream_source;
 mod time_color;
