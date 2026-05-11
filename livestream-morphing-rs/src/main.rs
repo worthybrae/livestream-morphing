@@ -26,7 +26,7 @@ async fn main() {
 
     // Start pipeline in background
     let pipeline_state = state.clone();
-    tokio::spawn(async move {
+    let pipeline_handle = tokio::spawn(async move {
         pipeline::run(pipeline_state, active_rx).await;
     });
 
@@ -39,6 +39,20 @@ async fn main() {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     tracing::info!(%addr, "Server starting");
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap_or_else(|e| {
+        tracing::error!(%addr, error = %e, "Failed to bind TCP listener");
+        std::process::exit(1);
+    });
+
+    // Race server and pipeline — if either exits, shut down
+    tokio::select! {
+        res = axum::serve(listener, app) => {
+            if let Err(e) = res {
+                tracing::error!(error = %e, "Server error");
+            }
+        }
+        _ = pipeline_handle => {
+            tracing::error!("Pipeline exited unexpectedly — shutting down");
+        }
+    }
 }
