@@ -194,6 +194,76 @@ pub fn upsample_2x(src: &RawFrame, dst_w: u32, dst_h: u32) -> RawFrame {
     dst
 }
 
+/// Pre-allocated processor that applies all 4 effect passes.
+pub struct FrameProcessor {
+    width: u32,
+    height: u32,
+    scratch: RawFrame,
+    grayscale: Vec<u8>,
+    edges: Vec<u8>,
+    texture: Vec<u8>,
+    // Tunable parameters
+    pub quantize_levels: u8,
+    pub distortion_amplitude: f32,
+    pub distortion_frequency: f32,
+    pub distortion_cycle: u32,
+    pub edge_threshold: u8,
+    pub edge_darkness: u8,
+    pub texture_strength: f32,
+}
+
+impl FrameProcessor {
+    pub fn new(width: u32, height: u32) -> Self {
+        let pixel_count = (width * height) as usize;
+        Self {
+            width,
+            height,
+            scratch: RawFrame::new(width, height),
+            grayscale: vec![0u8; pixel_count],
+            edges: vec![0u8; pixel_count],
+            texture: generate_canvas_texture(width, height),
+            quantize_levels: 10,
+            distortion_amplitude: 0.02,
+            distortion_frequency: 12.0,
+            distortion_cycle: 180,
+            edge_threshold: 30,
+            edge_darkness: 80,
+            texture_strength: 0.15,
+        }
+    }
+
+    /// Apply all 4 effect passes to a frame in-place.
+    pub fn process_frame(&mut self, frame: &mut RawFrame, frame_number: u32) {
+        // Pass 1: Psychedelic distortion (src → scratch, then swap)
+        apply_distortion(
+            frame,
+            &mut self.scratch,
+            frame_number,
+            self.distortion_amplitude,
+            self.distortion_frequency,
+            self.distortion_cycle,
+        );
+        std::mem::swap(&mut frame.data, &mut self.scratch.data);
+
+        // Pass 2: Color quantization
+        quantize(frame, self.quantize_levels);
+
+        // Pass 3: Edge detection + overlay
+        detect_and_overlay_edges(
+            frame,
+            &mut self.grayscale,
+            &mut self.edges,
+            self.width,
+            self.height,
+            self.edge_threshold,
+            self.edge_darkness,
+        );
+
+        // Pass 4: Canvas texture blend
+        blend_texture(frame, &self.texture, self.texture_strength);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +372,22 @@ mod tests {
         assert_eq!(dst.width, 8);
         assert_eq!(dst.height, 6);
         assert_eq!(dst.data[0], 50);
+    }
+
+    #[test]
+    fn frame_processor_changes_frame() {
+        let mut processor = FrameProcessor::new(8, 8);
+        let mut frame = RawFrame::new(8, 8);
+        for y in 0..8u32 {
+            for x in 0..8u32 {
+                let idx = ((y * 8 + x) * 3) as usize;
+                frame.data[idx] = (x * 32) as u8;
+                frame.data[idx + 1] = (y * 32) as u8;
+                frame.data[idx + 2] = 128;
+            }
+        }
+        let original = frame.data.clone();
+        processor.process_frame(&mut frame, 0);
+        assert_ne!(frame.data, original, "Processing should change the frame");
     }
 }
