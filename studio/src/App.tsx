@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useEffects } from './hooks/useEffects'
 import { usePipeline } from './hooks/usePipeline'
 import { usePresets } from './hooks/usePresets'
@@ -18,6 +18,18 @@ function App() {
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null)
   const [sourceUrl, setSourceUrl] = useState('')
   const [activeTab, setActiveTab] = useState<Tab>('pipeline')
+  const [toast, setToast] = useState<{ message: string; phase: 'enter' | 'exit' } | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>(null)
+
+  const showToast = useCallback((message: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast({ message, phase: 'enter' })
+  }, [])
+
+  const dismissToast = useCallback(() => {
+    setToast((prev) => prev ? { ...prev, phase: 'exit' } : null)
+    toastTimer.current = setTimeout(() => setToast(null), 300)
+  }, [])
 
   useEffect(() => {
     fetch('/api/source')
@@ -39,6 +51,7 @@ function App() {
 
   const handleRandomize = useCallback(async () => {
     if (effects.length === 0) return
+    showToast('Randomizing pipeline...')
 
     const count = 4 + Math.floor(Math.random() * 5)
     const entries: PipelineEntry[] = []
@@ -62,12 +75,18 @@ function App() {
     })
     refresh()
     setSelectedSlotId(null)
-  }, [effects, refresh])
+    setActiveTab('pipeline')
+    dismissToast()
+  }, [effects, refresh, showToast, dismissToast])
 
   const handleApplyPreset = async (id: string) => {
+    const preset = presets.find((p) => p.id === id)
+    showToast(`Applying "${preset?.name ?? 'preset'}"...`)
     await applyPreset(id)
     refresh()
     setSelectedSlotId(null)
+    setActiveTab('pipeline')
+    dismissToast()
   }
 
   const handleAddEffect = useCallback((effectId: string) => {
@@ -135,6 +154,31 @@ function App() {
       </div>
 
       <StatusBar />
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed inset-0 pointer-events-none flex items-start justify-center z-50" style={{ paddingTop: '72px' }}>
+          <div
+            className={`pointer-events-auto px-4 py-2.5 rounded-lg text-[12px] font-medium text-[#e7e5e4] ${
+              toast.phase === 'enter' ? 'toast-enter' : 'toast-exit'
+            }`}
+            style={{
+              background: 'rgba(12,10,9,0.9)',
+              border: '1px solid rgba(245,158,11,0.15)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.5), 0 0 15px rgba(245,158,11,0.05)',
+              backdropFilter: 'blur(12px)',
+            }}
+          >
+            <div className="flex items-center gap-2.5">
+              <div
+                className="w-1.5 h-1.5 rounded-full animate-glow-pulse"
+                style={{ background: '#f59e0b', boxShadow: '0 0 6px rgba(245,158,11,0.5)' }}
+              />
+              {toast.message}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
