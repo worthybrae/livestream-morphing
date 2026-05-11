@@ -41,27 +41,52 @@ function SortableSlot({
   return (
     <div
       ref={setNodeRef}
-      style={style}
-      className={`flex items-center gap-2 mb-1 px-2 py-1.5 rounded text-sm cursor-pointer transition-colors ${
-        isSelected ? 'bg-indigo-900/50 border-l-[3px] border-indigo-500' : 'bg-gray-800 border-l-[3px] border-green-400'
-      } ${!slot.enabled ? 'opacity-50' : ''}`}
+      style={{
+        ...style,
+        background: isSelected ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)',
+        border: `1px solid ${isSelected ? 'rgba(245,158,11,0.12)' : 'rgba(255,255,255,0.04)'}`,
+      }}
+      className={`flex items-center gap-2 mb-1 px-2 py-[7px] rounded-lg text-[11px] cursor-pointer transition-all duration-150 ${
+        !slot.enabled ? 'opacity-50' : ''
+      }`}
       onClick={onSelect}
     >
       <span
         {...attributes}
         {...listeners}
-        className="text-gray-500 cursor-grab text-[10px] select-none"
+        className="text-[#44403c] cursor-grab text-[10px] select-none"
       >
         ⠿
       </span>
-      <span className={`flex-1 ${!slot.enabled ? 'line-through text-gray-500' : 'text-gray-200'}`}>
-        {index + 1}. {effectName}
+      {/* Number badge */}
+      <span
+        className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center text-[9px] font-semibold text-white shrink-0"
+        style={{
+          background: slot.enabled
+            ? 'linear-gradient(135deg, #f59e0b, #f97316)'
+            : 'rgba(255,255,255,0.06)',
+          color: slot.enabled ? 'white' : '#78716c',
+        }}
+      >
+        {index + 1}
       </span>
+      <span className={`flex-1 ${!slot.enabled ? 'line-through text-[#57534e]' : 'text-[#a8a29e]'} ${isSelected ? 'text-[#e7e5e4]' : ''}`}>
+        {effectName}
+      </span>
+      {/* Toggle dot */}
       <button
         onClick={(e) => { e.stopPropagation(); onToggle() }}
-        className={`text-[10px] ${slot.enabled ? 'text-green-400' : 'text-red-400'}`}
+        className="transition-all duration-150"
       >
-        ●
+        <div
+          className="w-[5px] h-[5px] rounded-full"
+          style={{
+            background: slot.enabled ? '#22c55e' : '#ef4444',
+            boxShadow: slot.enabled
+              ? '0 0 6px rgba(34,197,94,0.4)'
+              : '0 0 6px rgba(239,68,68,0.4)',
+          }}
+        />
       </button>
     </div>
   )
@@ -85,10 +110,17 @@ export function PipelineEditor({
     onReorder(newSlots)
   }
 
+  const activeCount = slots.filter((s) => s.enabled).length
+
   return (
-    <div className="p-3">
-      <div className="text-xs uppercase tracking-wider text-gray-400 mb-3">
-        Pipeline Order
+    <div className="p-4">
+      <div className="flex justify-between items-center mb-3">
+        <span className="text-[10px] uppercase tracking-[1.5px] text-[#57534e] font-semibold">
+          Pipeline
+        </span>
+        <span className="text-[10px] text-[#44403c]">
+          {activeCount} active
+        </span>
       </div>
       <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={slots.map((s) => s.slot_id)} strategy={verticalListSortingStrategy}>
@@ -106,11 +138,10 @@ export function PipelineEditor({
         </SortableContext>
       </DndContext>
       {slots.length === 0 && (
-        <div className="text-sm text-gray-500 italic">No effects — add from library</div>
+        <div className="text-[11px] text-[#57534e] italic">
+          No effects — add from the Effects tab
+        </div>
       )}
-      <div className="text-[10px] text-gray-500 mt-2">
-        drag to reorder · click dot to toggle
-      </div>
     </div>
   )
 }

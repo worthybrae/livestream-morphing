@@ -11,8 +11,8 @@ interface ParamPanelProps {
 export function ParamPanel({ slot, effects, onUpdateParam, onRemove }: ParamPanelProps) {
   if (!slot) {
     return (
-      <div className="p-3 text-sm text-gray-500 italic">
-        Select an effect in the pipeline to edit its parameters
+      <div className="p-4 text-[11px] text-[#57534e] italic">
+        Select an effect to edit parameters
       </div>
     )
   }
@@ -21,8 +21,8 @@ export function ParamPanel({ slot, effects, onUpdateParam, onRemove }: ParamPane
   if (!effectDef) return null
 
   return (
-    <div className="p-3">
-      <div className="text-xs uppercase tracking-wider text-gray-400 mb-3">
+    <div className="p-4" style={{ borderTop: '1px solid rgba(245,158,11,0.06)' }}>
+      <div className="text-[10px] uppercase tracking-[1.5px] text-[#57534e] font-semibold mb-3">
         {effectDef.name} — Parameters
       </div>
       {effectDef.params.map((param) => (
@@ -33,10 +33,14 @@ export function ParamPanel({ slot, effects, onUpdateParam, onRemove }: ParamPane
           onChange={(v) => onUpdateParam(slot.slot_id, param.id, v)}
         />
       ))}
-      <div className="mt-5 pt-3 border-t border-gray-800">
+      <div className="mt-4 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
         <button
           onClick={() => onRemove(slot.slot_id)}
-          className="w-full py-2 text-sm text-red-300 bg-red-950 rounded hover:bg-red-900 transition-colors"
+          className="w-full py-2 text-[11px] text-red-300/70 rounded-lg transition-all duration-150 hover:text-red-300"
+          style={{
+            background: 'rgba(239,68,68,0.06)',
+            border: '1px solid rgba(239,68,68,0.1)',
+          }}
         >
           Remove from Pipeline
         </button>

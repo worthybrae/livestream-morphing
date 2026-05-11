@@ -7,20 +7,36 @@ interface EffectLibraryProps {
 
 export function EffectLibrary({ effects, onAdd }: EffectLibraryProps) {
   return (
-    <div className="p-3">
-      <div className="text-xs uppercase tracking-wider text-gray-400 mb-3">
-        Effect Library
+    <div className="p-4 flex flex-col gap-3">
+      <div className="text-[10px] uppercase tracking-[1.5px] text-[#57534e] font-semibold">
+        Effects
       </div>
-      {effects.map((effect) => (
-        <button
-          key={effect.id}
-          onClick={() => onAdd(effect.id)}
-          className="w-full text-left px-3 py-2 mb-1 text-sm text-gray-200 bg-gray-800 rounded border-l-2 border-indigo-500 hover:bg-gray-700 transition-colors"
-        >
-          {effect.name}
-        </button>
-      ))}
-      <div className="mt-2 text-[11px] text-gray-500 text-center">
+      <div className="flex flex-col gap-1">
+        {effects.map((effect) => (
+          <button
+            key={effect.id}
+            onClick={() => onAdd(effect.id)}
+            className="w-full text-left px-3 py-[9px] text-[11px] text-[#a8a29e] rounded-lg transition-all duration-150"
+            style={{
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid rgba(255,255,255,0.04)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(245,158,11,0.04)'
+              e.currentTarget.style.borderColor = 'rgba(245,158,11,0.1)'
+              e.currentTarget.style.color = '#e7e5e4'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'rgba(255,255,255,0.02)'
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)'
+              e.currentTarget.style.color = '#a8a29e'
+            }}
+          >
+            {effect.name}
+          </button>
+        ))}
+      </div>
+      <div className="text-[9px] text-[#44403c] text-center mt-1">
         click to add to pipeline
       </div>
     </div>

@@ -38,8 +38,14 @@ export function VideoPlayer() {
         muted
         playsInline
       />
-      <div className="absolute top-2 left-2 bg-red-600 text-white text-[10px] px-2 py-0.5 rounded font-bold">
-        LIVE
+      <div className="absolute top-3 left-3.5 flex items-center gap-1.5">
+        <div
+          className="w-1.5 h-1.5 rounded-full animate-live-pulse"
+          style={{ background: '#ef4444' }}
+        />
+        <span className="text-[10px] text-white/50 font-semibold tracking-wide">
+          LIVE
+        </span>
       </div>
     </div>
   )

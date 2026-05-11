@@ -7,11 +7,16 @@ interface SliderProps {
 }
 
 export function Slider({ param, value, onChange }: SliderProps) {
+  const pct = ((value - param.min) / (param.max - param.min)) * 100
+
   return (
     <div className="mb-4">
-      <div className="flex justify-between mb-1">
-        <span className="text-sm text-gray-300">{param.name}</span>
-        <span className="text-sm font-bold text-indigo-400">
+      <div className="flex justify-between mb-1.5">
+        <span className="text-[11px] text-[#a8a29e]">{param.name}</span>
+        <span
+          className="text-[11px] font-semibold text-[#f59e0b]"
+          style={{ fontVariantNumeric: 'tabular-nums' }}
+        >
           {param.step >= 1 ? Math.round(value) : value.toFixed(2)}
         </span>
       </div>
@@ -22,11 +27,20 @@ export function Slider({ param, value, onChange }: SliderProps) {
         step={param.step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+        className="w-full ember-slider"
+        style={{
+          background: `linear-gradient(90deg, #f59e0b 0%, #f97316 ${pct}%, rgba(255,255,255,0.06) ${pct}%)`,
+          height: '3px',
+          borderRadius: '2px',
+        }}
       />
-      <div className="flex justify-between mt-0.5">
-        <span className="text-[10px] text-gray-500">{param.min}</span>
-        <span className="text-[10px] text-gray-500">{param.max}</span>
+      <div className="flex justify-between mt-1">
+        <span className="text-[9px] text-[#44403c]" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {param.min}
+        </span>
+        <span className="text-[9px] text-[#44403c]" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {param.max}
+        </span>
       </div>
     </div>
   )
