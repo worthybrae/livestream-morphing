@@ -1,26 +1,188 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{watch, RwLock};
+use serde::{Deserialize, Serialize};
 
 use crate::codec;
-use crate::effects::{downsample_2x, upsample_2x, RawFrame};
+use crate::effects::{downsample_2x, RawFrame};
 use crate::hls::HlsBuffer;
-use crate::registry::Effect;
+use crate::registry::{self, default_params, Effect, FrameCtx, ParamValues};
 use crate::stream_source::StreamSource;
+
+/// A single slot in the pipeline — one effect instance with its params.
+pub struct PipelineSlot {
+    pub slot_id: String,
+    pub effect_id: String,
+    pub effect: Box<dyn Effect>,
+    pub params: ParamValues,
+    pub enabled: bool,
+}
+
+/// Serializable view of a slot for API responses.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PipelineSlotView {
+    pub slot_id: String,
+    pub effect_id: String,
+    pub params: ParamValues,
+    pub enabled: bool,
+}
+
+/// The dynamic effect pipeline.
+pub struct Pipeline {
+    slots: Vec<PipelineSlot>,
+    dimensions: Option<(u32, u32)>,
+}
+
+impl Pipeline {
+    /// Create an empty pipeline.
+    pub fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            dimensions: None,
+        }
+    }
+
+    /// Store dimensions and call init() on all existing effects.
+    pub fn set_dimensions(&mut self, width: u32, height: u32) {
+        self.dimensions = Some((width, height));
+        for slot in self.slots.iter_mut() {
+            slot.effect.init(width, height);
+        }
+    }
+
+    /// Create a fresh effect instance from the registry, assign a UUID slot_id,
+    /// call init if dimensions are known, and return the slot_id.
+    pub fn add_effect(&mut self, effect_id: &str) -> Result<String, String> {
+        let mut all = registry::all_effects();
+        let pos = all.iter().position(|e| e.id() == effect_id);
+        let effect = match pos {
+            Some(i) => all.remove(i),
+            None => return Err(format!("Unknown effect: {}", effect_id)),
+        };
+        let params = default_params(&effect.params());
+        let slot_id = uuid::Uuid::new_v4().to_string();
+        let mut slot = PipelineSlot {
+            slot_id: slot_id.clone(),
+            effect_id: effect_id.to_string(),
+            effect,
+            params,
+            enabled: true,
+        };
+        if let Some((w, h)) = self.dimensions {
+            slot.effect.init(w, h);
+        }
+        self.slots.push(slot);
+        Ok(slot_id)
+    }
+
+    /// Remove the slot with the given slot_id.
+    pub fn remove_slot(&mut self, slot_id: &str) {
+        self.slots.retain(|s| s.slot_id != slot_id);
+    }
+
+    /// Enable or disable a slot by slot_id.
+    pub fn set_enabled(&mut self, slot_id: &str, enabled: bool) {
+        if let Some(slot) = self.slots.iter_mut().find(|s| s.slot_id == slot_id) {
+            slot.enabled = enabled;
+        }
+    }
+
+    /// Merge new_params into the slot's existing params.
+    pub fn update_params(&mut self, slot_id: &str, new_params: &ParamValues) {
+        if let Some(slot) = self.slots.iter_mut().find(|s| s.slot_id == slot_id) {
+            for (k, v) in new_params {
+                slot.params.insert(k.clone(), *v);
+            }
+        }
+    }
+
+    /// Replace the entire pipeline with a new set of (effect_id, params, enabled) entries.
+    /// Generates new slot_ids for all entries.
+    pub fn replace(&mut self, entries: Vec<(String, ParamValues, bool)>) -> Result<(), String> {
+        let mut new_slots = Vec::new();
+        for (effect_id, params, enabled) in entries {
+            let mut all = registry::all_effects();
+            let pos = all.iter().position(|e| e.id() == effect_id.as_str());
+            let mut effect = match pos {
+                Some(i) => all.remove(i),
+                None => return Err(format!("Unknown effect: {}", effect_id)),
+            };
+            // Merge provided params over defaults
+            let mut merged = default_params(&effect.params());
+            for (k, v) in &params {
+                merged.insert(k.clone(), *v);
+            }
+            let slot_id = uuid::Uuid::new_v4().to_string();
+            if let Some((w, h)) = self.dimensions {
+                effect.init(w, h);
+            }
+            new_slots.push(PipelineSlot {
+                slot_id,
+                effect_id,
+                effect,
+                params: merged,
+                enabled,
+            });
+        }
+        self.slots = new_slots;
+        Ok(())
+    }
+
+    /// Return a serializable snapshot of the pipeline.
+    pub fn view(&self) -> Vec<PipelineSlotView> {
+        self.slots
+            .iter()
+            .map(|s| PipelineSlotView {
+                slot_id: s.slot_id.clone(),
+                effect_id: s.effect_id.clone(),
+                params: s.params.clone(),
+                enabled: s.enabled,
+            })
+            .collect()
+    }
+
+    /// Number of slots in the pipeline.
+    pub fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Apply all enabled slots to a frame in order.
+    pub fn process_frame(&mut self, frame: &mut RawFrame, frame_number: u32) {
+        let (width, height) = match self.dimensions {
+            Some(d) => d,
+            None => (frame.width, frame.height),
+        };
+        let ctx = FrameCtx { frame_number, width, height };
+        for slot in self.slots.iter_mut() {
+            if slot.enabled {
+                slot.effect.apply(frame, &slot.params, &ctx);
+            }
+        }
+    }
+}
 
 /// Shared state between the pipeline and HTTP server.
 pub struct AppState {
     pub hls_buffer: RwLock<HlsBuffer>,
     pub pipeline_active: watch::Sender<bool>,
     pub last_client_request: std::sync::atomic::AtomicU64,
+    pub pipeline: Mutex<Pipeline>,
 }
 
 impl AppState {
     pub fn new() -> (Arc<Self>, watch::Receiver<bool>) {
         let (tx, rx) = watch::channel(false);
+
+        let mut p = Pipeline::new();
+        p.add_effect("distortion").expect("distortion registered");
+        p.add_effect("quantize").expect("quantize registered");
+        p.add_effect("edges").expect("edges registered");
+        p.add_effect("canvas_texture").expect("canvas_texture registered");
+
         let state = Arc::new(Self {
             hls_buffer: RwLock::new(HlsBuffer::new(10)),
             pipeline_active: tx,
             last_client_request: std::sync::atomic::AtomicU64::new(0),
+            pipeline: Mutex::new(p),
         });
         (state, rx)
     }
@@ -110,6 +272,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
 
         // Spawn CPU-bound processing on blocking thread
         let pts_offset = frame_counter;
+        let state_clone = state.clone();
         let process_handle = tokio::task::spawn_blocking(
             move || -> Result<(Vec<u8>, i64), Box<dyn std::error::Error + Send + Sync>> {
                 let t0 = std::time::Instant::now();
@@ -131,33 +294,26 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 let half_h = half_frames[0].height;
                 let out_frames = half_frames.len() as i64;
 
-                use crate::effects::{canvas_texture, distortion, edges, quantize};
-                use crate::registry::{default_params, FrameCtx};
+                {
+                    let mut pipeline = state_clone.pipeline.lock().unwrap();
+                    pipeline.set_dimensions(half_w, half_h);
 
-                let mut quant = quantize::Quantize::default();
-                let mut dist = distortion::Distortion::default();
-                dist.init(half_w, half_h);
-                let mut edge = edges::EdgeDetect::default();
-                edge.init(half_w, half_h);
-                let mut tex = canvas_texture::CanvasTexture::default();
-                tex.init(half_w, half_h);
+                    // Time-of-day edge darkness
+                    let (edge_color, _bg) = crate::time_color::get_colors_now();
+                    let edge_darkness = if edge_color == (0, 0, 0) { 100.0 } else { 40.0 };
+                    for slot in pipeline.view().iter() {
+                        if slot.effect_id == "edges" {
+                            let mut params = std::collections::HashMap::new();
+                            params.insert("darkness".to_string(), edge_darkness);
+                            pipeline.update_params(&slot.slot_id, &params);
+                        }
+                    }
 
-                let (edge_color, _bg) = crate::time_color::get_colors_now();
-                let edge_darkness = if edge_color == (0, 0, 0) { 100.0 } else { 40.0 };
-
-                let dist_params = default_params(&dist.params());
-                let quant_params = default_params(&quant.params());
-                let mut edge_params = default_params(&edge.params());
-                edge_params.insert("darkness".into(), edge_darkness);
-                let tex_params = default_params(&tex.params());
-
-                for (i, frame) in half_frames.iter_mut().enumerate() {
-                    let ctx = FrameCtx { frame_number: i as u32, width: half_w, height: half_h };
-                    dist.apply(frame, &dist_params, &ctx);
-                    quant.apply(frame, &quant_params, &ctx);
-                    edge.apply(frame, &edge_params, &ctx);
-                    tex.apply(frame, &tex_params, &ctx);
+                    for (i, frame) in half_frames.iter_mut().enumerate() {
+                        pipeline.process_frame(frame, i as u32);
+                    }
                 }
+
                 let t_effects = t0.elapsed();
 
                 let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
@@ -212,6 +368,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         // If we prefetched the next segment, process it immediately
         if let (Some(next_seg_id), Some(next_ts)) = (next_id, next_bytes) {
             let pts_offset = frame_counter;
+            let state_clone = state.clone();
             let processed = tokio::task::spawn_blocking(
                 move || -> Result<(Vec<u8>, i64), Box<dyn std::error::Error + Send + Sync>> {
                     let all_frames = codec::decode_segment(&next_ts)?;
@@ -226,33 +383,26 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     let half_h = half_frames[0].height;
                     let out_frames = half_frames.len() as i64;
 
-                    use crate::effects::{canvas_texture, distortion, edges, quantize};
-                    use crate::registry::{default_params, FrameCtx};
+                    {
+                        let mut pipeline = state_clone.pipeline.lock().unwrap();
+                        pipeline.set_dimensions(half_w, half_h);
 
-                    let mut quant = quantize::Quantize::default();
-                    let mut dist = distortion::Distortion::default();
-                    dist.init(half_w, half_h);
-                    let mut edge = edges::EdgeDetect::default();
-                    edge.init(half_w, half_h);
-                    let mut tex = canvas_texture::CanvasTexture::default();
-                    tex.init(half_w, half_h);
+                        // Time-of-day edge darkness
+                        let (edge_color, _bg) = crate::time_color::get_colors_now();
+                        let edge_darkness = if edge_color == (0, 0, 0) { 100.0 } else { 40.0 };
+                        for slot in pipeline.view().iter() {
+                            if slot.effect_id == "edges" {
+                                let mut params = std::collections::HashMap::new();
+                                params.insert("darkness".to_string(), edge_darkness);
+                                pipeline.update_params(&slot.slot_id, &params);
+                            }
+                        }
 
-                    let (edge_color, _bg) = crate::time_color::get_colors_now();
-                    let edge_darkness = if edge_color == (0, 0, 0) { 100.0 } else { 40.0 };
-
-                    let dist_params = default_params(&dist.params());
-                    let quant_params = default_params(&quant.params());
-                    let mut edge_params = default_params(&edge.params());
-                    edge_params.insert("darkness".into(), edge_darkness);
-                    let tex_params = default_params(&tex.params());
-
-                    for (i, frame) in half_frames.iter_mut().enumerate() {
-                        let ctx = FrameCtx { frame_number: i as u32, width: half_w, height: half_h };
-                        dist.apply(frame, &dist_params, &ctx);
-                        quant.apply(frame, &quant_params, &ctx);
-                        edge.apply(frame, &edge_params, &ctx);
-                        tex.apply(frame, &tex_params, &ctx);
+                        for (i, frame) in half_frames.iter_mut().enumerate() {
+                            pipeline.process_frame(frame, i as u32);
+                        }
                     }
+
                     let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
                     Ok((encoded, out_frames))
                 },
@@ -281,5 +431,54 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::effects::RawFrame;
+
+    #[test]
+    fn pipeline_processes_frame() {
+        let mut pipeline = Pipeline::new();
+        pipeline.add_effect("quantize").unwrap();
+        pipeline.set_dimensions(8, 8);
+
+        let mut frame = RawFrame::new(8, 8);
+        for i in 0..frame.data.len() {
+            frame.data[i] = (i % 256) as u8;
+        }
+        let original = frame.data.clone();
+        pipeline.process_frame(&mut frame, 0);
+        assert_ne!(frame.data, original, "Pipeline should modify frame");
+    }
+
+    #[test]
+    fn disabled_effect_skipped() {
+        let mut pipeline = Pipeline::new();
+        let slot_id = pipeline.add_effect("quantize").unwrap();
+        pipeline.set_dimensions(4, 4);
+        pipeline.set_enabled(&slot_id, false);
+
+        let mut frame = RawFrame::filled(4, 4, 100, 100, 100);
+        let original = frame.data.clone();
+        pipeline.process_frame(&mut frame, 0);
+        assert_eq!(frame.data, original, "Disabled effect should not modify frame");
+    }
+
+    #[test]
+    fn add_unknown_effect_fails() {
+        let mut pipeline = Pipeline::new();
+        assert!(pipeline.add_effect("nonexistent").is_err());
+    }
+
+    #[test]
+    fn remove_effect() {
+        let mut pipeline = Pipeline::new();
+        let slot_id = pipeline.add_effect("quantize").unwrap();
+        assert_eq!(pipeline.slot_count(), 1);
+        pipeline.remove_slot(&slot_id);
+        assert_eq!(pipeline.slot_count(), 0);
     }
 }
