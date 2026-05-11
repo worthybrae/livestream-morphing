@@ -111,7 +111,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         let seg_id = segment_id.clone();
         let processed = tokio::task::spawn_blocking(
             move || -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-                let mut frames = codec::decode_segment(&ts_bytes)?;
+                let frames = codec::decode_segment(&ts_bytes)?;
 
                 if frames.is_empty() {
                     return Err("No frames decoded".into());

@@ -105,6 +105,12 @@ pub fn encode_segment(
     let codec = ffmpeg::encoder::find(ffmpeg::codec::Id::H264)
         .ok_or("H264 encoder not found — install libx264")?;
 
+    // Check format flags before add_stream borrows octx mutably
+    let needs_global_header = octx
+        .format()
+        .flags()
+        .contains(ffmpeg::format::Flags::GLOBAL_HEADER);
+
     let mut ost = octx.add_stream(codec)?;
 
     // Configure encoder
@@ -118,11 +124,7 @@ pub fn encode_segment(
     encoder.set_frame_rate(Some(ffmpeg::Rational(fps as i32, 1)));
     encoder.set_time_base(ffmpeg::Rational(1, fps as i32));
 
-    if octx
-        .format()
-        .flags()
-        .contains(ffmpeg::format::Flags::GLOBAL_HEADER)
-    {
+    if needs_global_header {
         encoder.set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
     }
 
