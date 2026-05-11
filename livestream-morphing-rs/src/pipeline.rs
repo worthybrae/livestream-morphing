@@ -91,7 +91,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
             frame_counter = 0;
         }
 
-        // Fetch latest segment
+        // Fetch and download first segment
         let segment_id = match source.fetch_latest_segment_id().await {
             Some(id) => id,
             None => {
@@ -99,8 +99,6 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 continue;
             }
         };
-
-        // Download
         let ts_bytes = match source.download_segment(&segment_id).await {
             Some(bytes) => bytes,
             None => {
@@ -109,10 +107,9 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
             }
         };
 
-        // Process in blocking thread (CPU-bound)
-        let seg_id = segment_id.clone();
+        // Spawn CPU-bound processing on blocking thread
         let pts_offset = frame_counter;
-        let processed = tokio::task::spawn_blocking(
+        let process_handle = tokio::task::spawn_blocking(
             move || -> Result<(Vec<u8>, i64), Box<dyn std::error::Error + Send + Sync>> {
                 let t0 = std::time::Instant::now();
 
@@ -123,7 +120,6 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     return Err("No frames decoded".into());
                 }
 
-                // Downsample all frames to 540p
                 let mut half_frames: Vec<_> = all_frames
                     .iter()
                     .map(|f| downsample_2x(f))
@@ -134,7 +130,6 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 let half_h = half_frames[0].height;
                 let out_frames = half_frames.len() as i64;
 
-                // Process every frame for smooth motion
                 let mut processor = FrameProcessor::new(half_w, half_h);
                 let (edge_color, _bg) = crate::time_color::get_colors_now();
                 processor.edge_darkness = if edge_color == (0, 0, 0) { 100 } else { 40 };
@@ -144,7 +139,6 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 }
                 let t_effects = t0.elapsed();
 
-                // Encode all frames at 30fps, 540p
                 let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
                 let t_encode = t0.elapsed();
 
@@ -160,9 +154,18 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
 
                 Ok((encoded, out_frames))
             },
-        )
-        .await;
+        );
 
+        // While processing runs on blocking thread, prefetch next segment
+        let next_id = source.fetch_latest_segment_id().await;
+        let next_bytes = if let Some(ref id) = next_id {
+            source.download_segment(id).await
+        } else {
+            None
+        };
+
+        // Now await processing result
+        let processed = process_handle.await;
         match processed {
             Ok(Ok((encoded, num_frames))) => {
                 tracing::info!(
@@ -178,12 +181,63 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     .push_segment(segment_id, encoded);
             }
             Ok(Err(e)) => {
-                tracing::error!(segment_id = seg_id, error = %e, "Processing failed");
+                tracing::error!(error = %e, "Processing failed");
             }
             Err(e) => {
-                tracing::error!(segment_id = seg_id, error = %e, "Task panicked");
+                tracing::error!(error = %e, "Task panicked");
             }
         }
-        // No sleep on success — fetch next segment immediately
+
+        // If we prefetched the next segment, process it immediately
+        if let (Some(next_seg_id), Some(next_ts)) = (next_id, next_bytes) {
+            let pts_offset = frame_counter;
+            let processed = tokio::task::spawn_blocking(
+                move || -> Result<(Vec<u8>, i64), Box<dyn std::error::Error + Send + Sync>> {
+                    let all_frames = codec::decode_segment(&next_ts)?;
+                    if all_frames.is_empty() {
+                        return Err("No frames decoded".into());
+                    }
+                    let mut half_frames: Vec<_> = all_frames
+                        .iter()
+                        .map(|f| downsample_2x(f))
+                        .collect();
+                    let half_w = half_frames[0].width;
+                    let half_h = half_frames[0].height;
+                    let out_frames = half_frames.len() as i64;
+
+                    let mut processor = FrameProcessor::new(half_w, half_h);
+                    let (edge_color, _bg) = crate::time_color::get_colors_now();
+                    processor.edge_darkness = if edge_color == (0, 0, 0) { 100 } else { 40 };
+                    for (i, frame) in half_frames.iter_mut().enumerate() {
+                        processor.process_frame(frame, i as u32);
+                    }
+                    let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
+                    Ok((encoded, out_frames))
+                },
+            )
+            .await;
+
+            match processed {
+                Ok(Ok((encoded, num_frames))) => {
+                    tracing::info!(
+                        segment_id = next_seg_id,
+                        size_kb = encoded.len() / 1024,
+                        "Segment processed (prefetched)"
+                    );
+                    frame_counter += num_frames;
+                    state
+                        .hls_buffer
+                        .write()
+                        .await
+                        .push_segment(next_seg_id, encoded);
+                }
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "Processing failed (prefetched)");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Task panicked (prefetched)");
+                }
+            }
+        }
     }
 }
