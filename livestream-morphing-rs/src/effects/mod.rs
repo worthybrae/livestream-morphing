@@ -13,6 +13,12 @@ pub mod solarize;
 pub mod threshold;
 pub mod vignette;
 
+pub mod chromatic_aberration;
+pub mod denoise;
+pub mod gradient_map;
+pub mod halftone;
+pub mod mirror;
+
 /// RGB24 pixel buffer.
 #[derive(Clone)]
 pub struct RawFrame {
