@@ -5,7 +5,13 @@ pub mod canvas_texture;
 pub mod color_shift;
 pub mod distortion;
 pub mod edges;
+pub mod levels;
+pub mod pixelate;
 pub mod quantize;
+pub mod sharpen;
+pub mod solarize;
+pub mod threshold;
+pub mod vignette;
 
 /// RGB24 pixel buffer.
 #[derive(Clone)]
