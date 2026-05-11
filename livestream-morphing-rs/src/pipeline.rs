@@ -134,19 +134,13 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 let half_h = half_frames[0].height;
                 let out_frames = half_frames.len() as i64;
 
-                // Process every 3rd frame, clone to neighbors
+                // Process every frame for smooth motion
                 let mut processor = FrameProcessor::new(half_w, half_h);
                 let (edge_color, _bg) = crate::time_color::get_colors_now();
                 processor.edge_darkness = if edge_color == (0, 0, 0) { 100 } else { 40 };
 
-                for i in (0..half_frames.len()).step_by(3) {
-                    processor.process_frame(&mut half_frames[i], i as u32);
-                    let processed_data = half_frames[i].data.clone();
-                    for j in 1..3 {
-                        if i + j < half_frames.len() {
-                            half_frames[i + j].data = processed_data.clone();
-                        }
-                    }
+                for (i, frame) in half_frames.iter_mut().enumerate() {
+                    processor.process_frame(frame, i as u32);
                 }
                 let t_effects = t0.elapsed();
 
