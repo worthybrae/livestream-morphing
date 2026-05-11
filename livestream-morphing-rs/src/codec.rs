@@ -84,9 +84,12 @@ pub fn decode_segment(
 }
 
 /// Encode RGB24 frames into an H.264 MPEG-TS segment.
+/// `pts_offset` is the starting PTS for this segment (in frame units) to ensure
+/// continuous timestamps across segments for seamless HLS playback.
 pub fn encode_segment(
     frames: &[RawFrame],
     fps: u32,
+    pts_offset: i64,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if frames.is_empty() {
         return Err("No frames to encode".into());
@@ -163,7 +166,7 @@ pub fn encode_segment(
 
         let mut yuv = Video::empty();
         scaler.run(&rgb, &mut yuv)?;
-        yuv.set_pts(Some(i as i64));
+        yuv.set_pts(Some(pts_offset + i as i64));
 
         encoder.send_frame(&yuv)?;
 
@@ -211,7 +214,7 @@ mod tests {
             .collect();
 
         // Encode
-        let ts_bytes = encode_segment(&frames, 30).expect("encode failed");
+        let ts_bytes = encode_segment(&frames, 30, 0).expect("encode failed");
         assert!(!ts_bytes.is_empty(), "Encoded bytes should not be empty");
 
         // Decode

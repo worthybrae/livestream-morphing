@@ -67,6 +67,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
 
     tracing::info!("Pipeline activated!");
     let mut source = StreamSource::new();
+    let mut frame_counter: i64 = 0;
     let idle_timeout = std::time::Duration::from_secs(300); // 5 minutes
 
     loop {
@@ -87,6 +88,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
             }
             tracing::info!("Pipeline reactivated!");
             source = StreamSource::new();
+            frame_counter = 0;
         }
 
         // Fetch latest segment
@@ -109,14 +111,16 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
 
         // Process in blocking thread (CPU-bound)
         let seg_id = segment_id.clone();
+        let pts_offset = frame_counter;
         let processed = tokio::task::spawn_blocking(
-            move || -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+            move || -> Result<(Vec<u8>, i64), Box<dyn std::error::Error + Send + Sync>> {
                 let frames = codec::decode_segment(&ts_bytes)?;
 
                 if frames.is_empty() {
                     return Err("No frames decoded".into());
                 }
 
+                let num_frames = frames.len() as i64;
                 let orig_w = frames[0].width;
                 let orig_h = frames[0].height;
 
@@ -142,20 +146,21 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     .map(|f| upsample_2x(f, orig_w, orig_h))
                     .collect();
 
-                // Encode
-                let encoded = codec::encode_segment(&full_frames, 30)?;
-                Ok(encoded)
+                // Encode with continuous PTS
+                let encoded = codec::encode_segment(&full_frames, 30, pts_offset)?;
+                Ok((encoded, num_frames))
             },
         )
         .await;
 
         match processed {
-            Ok(Ok(encoded)) => {
+            Ok(Ok((encoded, num_frames))) => {
                 tracing::info!(
                     segment_id,
                     size_kb = encoded.len() / 1024,
                     "Segment processed"
                 );
+                frame_counter += num_frames;
                 state
                     .hls_buffer
                     .write()

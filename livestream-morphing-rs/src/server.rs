@@ -34,7 +34,7 @@ async fn stream_playlist(State(state): State<Arc<AppState>>) -> Response {
     (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, "application/x-mpegURL"),
+            (header::CONTENT_TYPE, "application/vnd.apple.mpegurl"),
             (header::CACHE_CONTROL, "no-cache"),
         ],
         playlist,
