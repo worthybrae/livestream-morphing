@@ -7,6 +7,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::api;
 use crate::pipeline::AppState;
@@ -23,6 +24,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/health", get(health))
         .merge(api::api_router())
         .layer(cors)
+        .fallback_service(
+            ServeDir::new("../studio/dist")
+                .not_found_service(ServeFile::new("../studio/dist/index.html")),
+        )
         .with_state(state)
 }
 
