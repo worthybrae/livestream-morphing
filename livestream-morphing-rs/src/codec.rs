@@ -133,8 +133,8 @@ pub fn encode_segment(
     }
 
     let mut x264_opts = ffmpeg::Dictionary::new();
-    x264_opts.set("preset", "ultrafast");
-    x264_opts.set("crf", "25");
+    x264_opts.set("preset", "veryfast");
+    x264_opts.set("crf", "30");
 
     let mut encoder = encoder.open_with(x264_opts)?;
     ost.set_parameters(&encoder);
