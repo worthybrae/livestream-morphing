@@ -2,8 +2,9 @@ use std::sync::Arc;
 use tokio::sync::{watch, RwLock};
 
 use crate::codec;
-use crate::effects::{downsample_2x, upsample_2x, FrameProcessor};
+use crate::effects::{downsample_2x, upsample_2x, RawFrame};
 use crate::hls::HlsBuffer;
+use crate::registry::Effect;
 use crate::stream_source::StreamSource;
 
 /// Shared state between the pipeline and HTTP server.
@@ -130,12 +131,32 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 let half_h = half_frames[0].height;
                 let out_frames = half_frames.len() as i64;
 
-                let mut processor = FrameProcessor::new(half_w, half_h);
+                use crate::effects::{canvas_texture, distortion, edges, quantize};
+                use crate::registry::{default_params, FrameCtx};
+
+                let mut quant = quantize::Quantize::default();
+                let mut dist = distortion::Distortion::default();
+                dist.init(half_w, half_h);
+                let mut edge = edges::EdgeDetect::default();
+                edge.init(half_w, half_h);
+                let mut tex = canvas_texture::CanvasTexture::default();
+                tex.init(half_w, half_h);
+
                 let (edge_color, _bg) = crate::time_color::get_colors_now();
-                processor.edge_darkness = if edge_color == (0, 0, 0) { 100 } else { 40 };
+                let edge_darkness = if edge_color == (0, 0, 0) { 100.0 } else { 40.0 };
+
+                let dist_params = default_params(&dist.params());
+                let quant_params = default_params(&quant.params());
+                let mut edge_params = default_params(&edge.params());
+                edge_params.insert("darkness".into(), edge_darkness);
+                let tex_params = default_params(&tex.params());
 
                 for (i, frame) in half_frames.iter_mut().enumerate() {
-                    processor.process_frame(frame, i as u32);
+                    let ctx = FrameCtx { frame_number: i as u32, width: half_w, height: half_h };
+                    dist.apply(frame, &dist_params, &ctx);
+                    quant.apply(frame, &quant_params, &ctx);
+                    edge.apply(frame, &edge_params, &ctx);
+                    tex.apply(frame, &tex_params, &ctx);
                 }
                 let t_effects = t0.elapsed();
 
@@ -205,11 +226,32 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     let half_h = half_frames[0].height;
                     let out_frames = half_frames.len() as i64;
 
-                    let mut processor = FrameProcessor::new(half_w, half_h);
+                    use crate::effects::{canvas_texture, distortion, edges, quantize};
+                    use crate::registry::{default_params, FrameCtx};
+
+                    let mut quant = quantize::Quantize::default();
+                    let mut dist = distortion::Distortion::default();
+                    dist.init(half_w, half_h);
+                    let mut edge = edges::EdgeDetect::default();
+                    edge.init(half_w, half_h);
+                    let mut tex = canvas_texture::CanvasTexture::default();
+                    tex.init(half_w, half_h);
+
                     let (edge_color, _bg) = crate::time_color::get_colors_now();
-                    processor.edge_darkness = if edge_color == (0, 0, 0) { 100 } else { 40 };
+                    let edge_darkness = if edge_color == (0, 0, 0) { 100.0 } else { 40.0 };
+
+                    let dist_params = default_params(&dist.params());
+                    let quant_params = default_params(&quant.params());
+                    let mut edge_params = default_params(&edge.params());
+                    edge_params.insert("darkness".into(), edge_darkness);
+                    let tex_params = default_params(&tex.params());
+
                     for (i, frame) in half_frames.iter_mut().enumerate() {
-                        processor.process_frame(frame, i as u32);
+                        let ctx = FrameCtx { frame_number: i as u32, width: half_w, height: half_h };
+                        dist.apply(frame, &dist_params, &ctx);
+                        quant.apply(frame, &quant_params, &ctx);
+                        edge.apply(frame, &edge_params, &ctx);
+                        tex.apply(frame, &tex_params, &ctx);
                     }
                     let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
                     Ok((encoded, out_frames))
