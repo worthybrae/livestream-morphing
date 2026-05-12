@@ -23,8 +23,7 @@ export function usePresets() {
   }, [refresh])
 
   const applyPreset = useCallback(async (id: string) => {
-    const res = await fetch(`/api/presets/${id}/apply`, { method: 'PUT' })
-    return res.json()
+    await fetch(`/api/presets/${id}/apply`, { method: 'PUT' })
   }, [])
 
   const deletePreset = useCallback(async (id: string) => {

@@ -291,6 +291,32 @@ async fn put_source(
 }
 
 // ---------------------------------------------------------------------------
+// Processing status
+// ---------------------------------------------------------------------------
+
+async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let stats = state.stats.lock().unwrap().clone();
+    let buf = state.hls_buffer.read().await;
+    let segments: Vec<serde_json::Value> = buf
+        .segment_info()
+        .into_iter()
+        .map(|(id, size)| serde_json::json!({ "id": id, "size_kb": size / 1024 }))
+        .collect();
+    let total_segments = buf.segment_count();
+    let max_segments = 10; // matches HlsBuffer::new(10)
+
+    Json(serde_json::json!({
+        "effects_ms": stats.effects_ms,
+        "total_ms": stats.total_ms,
+        "frames": stats.frames,
+        "segment_completed_at": stats.segment_completed_at,
+        "segments": segments,
+        "buffer_count": total_segments,
+        "buffer_max": max_segments,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Router factory
 // ---------------------------------------------------------------------------
 
@@ -307,6 +333,8 @@ pub fn api_router() -> Router<Arc<AppState>> {
         // Stream source
         .route("/api/source", get(get_source))
         .route("/api/source", put(put_source))
+        // Status
+        .route("/api/status", get(get_status))
         // Presets
         .route("/api/presets", get(list_presets))
         .route("/api/presets", post(save_preset))

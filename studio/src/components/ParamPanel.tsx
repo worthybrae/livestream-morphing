@@ -21,7 +21,7 @@ export function ParamPanel({ slot, effects, onUpdateParam, onRemove }: ParamPane
   if (!effectDef) return null
 
   return (
-    <div className="p-4" style={{ borderTop: '1px solid rgba(245,158,11,0.06)' }}>
+    <div className="p-4" style={{ borderTop: '1px solid rgba(245,158,11,0.06)' }} onClick={(e) => e.stopPropagation()}>
       <div className="text-[10px] uppercase tracking-[1.5px] text-[#57534e] font-semibold mb-3">
         {effectDef.name} — Parameters
       </div>

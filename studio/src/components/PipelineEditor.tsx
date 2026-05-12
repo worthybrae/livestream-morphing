@@ -1,4 +1,4 @@
-import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core'
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { PipelineSlot, EffectDef } from '../types'
@@ -27,13 +27,13 @@ function SortableSlot({
   onSelect: () => void
   onToggle: () => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: slot.slot_id,
   })
 
   const style = {
     transform: CSS.Transform.toString(transform),
-    transition,
+    transition: transition ?? undefined,
   }
 
   const effectName = effects.find((e) => e.id === slot.effect_id)?.name ?? slot.effect_id
@@ -45,11 +45,14 @@ function SortableSlot({
         ...style,
         background: isSelected ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)',
         border: `1px solid ${isSelected ? 'rgba(245,158,11,0.12)' : 'rgba(255,255,255,0.04)'}`,
+        opacity: isDragging ? 0.5 : undefined,
+        zIndex: isDragging ? 10 : undefined,
+        touchAction: 'none',
       }}
-      className={`flex items-center gap-2 mb-1 px-2 py-[7px] rounded-lg text-[11px] cursor-pointer transition-all duration-150 ${
+      className={`flex items-center gap-2 mb-1 px-2 py-[7px] rounded-lg text-[11px] cursor-pointer transition-colors duration-150 ${
         !slot.enabled ? 'opacity-50' : ''
       }`}
-      onClick={onSelect}
+      onClick={(e) => { e.stopPropagation(); onSelect() }}
     >
       <span
         {...attributes}
@@ -100,6 +103,10 @@ export function PipelineEditor({
   onToggle,
   onReorder,
 }: PipelineEditorProps) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  )
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
@@ -122,7 +129,7 @@ export function PipelineEditor({
           {activeCount} active
         </span>
       </div>
-      <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={slots.map((s) => s.slot_id)} strategy={verticalListSortingStrategy}>
           {slots.map((slot, i) => (
             <SortableSlot

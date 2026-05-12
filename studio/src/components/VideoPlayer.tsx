@@ -15,11 +15,25 @@ export function VideoPlayer() {
         liveSyncDurationCount: 2,
         liveMaxLatencyDurationCount: 4,
         enableWorker: true,
+        manifestLoadingRetryDelay: 3000,
+        manifestLoadingMaxRetry: 100,
+        levelLoadingRetryDelay: 3000,
+        levelLoadingMaxRetry: 100,
       })
       hls.loadSource(src)
       hls.attachMedia(video)
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         video.play().catch(() => {})
+      })
+      // Recover from fatal errors by reloading the source
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            setTimeout(() => hls.loadSource(src), 3000)
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError()
+          }
+        }
       })
       return () => hls.destroy()
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {

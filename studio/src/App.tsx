@@ -53,7 +53,7 @@ function App() {
     if (effects.length === 0) return
     showToast('Randomizing pipeline...')
 
-    const count = 4 + Math.floor(Math.random() * 5)
+    const count = 3 + Math.floor(Math.random() * 3) // 3-5 effects
     const entries: PipelineEntry[] = []
 
     for (let i = 0; i < count; i++) {
@@ -115,6 +115,7 @@ function App() {
             background: 'rgba(245,158,11,0.01)',
             borderLeft: '1px solid rgba(245,158,11,0.06)',
           }}
+          onClick={() => setSelectedSlotId(null)}
         >
           {activeTab === 'effects' && (
             <EffectLibrary effects={effects} onAdd={handleAddEffect} />
@@ -130,15 +131,19 @@ function App() {
                 onToggle={setEnabled}
                 onReorder={reorder}
               />
-              <ParamPanel
-                slot={selectedSlot}
-                effects={effects}
-                onUpdateParam={updateParam}
-                onRemove={(id) => {
-                  removeSlot(id)
-                  if (selectedSlotId === id) setSelectedSlotId(null)
-                }}
-              />
+              {selectedSlot ? (
+                <ParamPanel
+                  slot={selectedSlot}
+                  effects={effects}
+                  onUpdateParam={updateParam}
+                  onRemove={(id) => {
+                    removeSlot(id)
+                    if (selectedSlotId === id) setSelectedSlotId(null)
+                  }}
+                />
+              ) : (
+                <EffectLibrary effects={effects} onAdd={handleAddEffect} />
+              )}
             </>
           )}
 

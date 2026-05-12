@@ -46,6 +46,10 @@ impl StreamSource {
         }
     }
 
+    pub fn url(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn default_url() -> String {
         std::env::var("STREAM_URL")
             .unwrap_or_else(|_| DEFAULT_STREAM_URL.to_string())

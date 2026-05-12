@@ -62,6 +62,14 @@ impl HlsBuffer {
         self.sequence
     }
 
+    /// Return segment IDs and sizes for the status API.
+    pub fn segment_info(&self) -> Vec<(String, usize)> {
+        self.segments
+            .iter()
+            .map(|s| (s.id.clone(), s.data.len()))
+            .collect()
+    }
+
     pub fn clear(&mut self) {
         self.sequence += self.segments.len() as u64;
         self.segments.clear();

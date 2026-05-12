@@ -160,6 +160,15 @@ impl Pipeline {
     }
 }
 
+/// Processing stats from the last completed segment.
+#[derive(Clone, Default, serde::Serialize)]
+pub struct ProcessingStats {
+    pub effects_ms: u64,
+    pub total_ms: u64,
+    pub frames: u64,
+    pub segment_completed_at: u64, // unix timestamp in millis
+}
+
 /// Shared state between the pipeline and HTTP server.
 pub struct AppState {
     pub hls_buffer: RwLock<HlsBuffer>,
@@ -167,6 +176,7 @@ pub struct AppState {
     pub last_client_request: std::sync::atomic::AtomicU64,
     pub pipeline: Mutex<Pipeline>,
     pub stream_url: RwLock<String>,
+    pub stats: Mutex<ProcessingStats>,
 }
 
 impl AppState {
@@ -185,6 +195,7 @@ impl AppState {
             last_client_request: std::sync::atomic::AtomicU64::new(0),
             pipeline: Mutex::new(p),
             stream_url: RwLock::new(StreamSource::default_url()),
+            stats: Mutex::new(ProcessingStats::default()),
         });
         (state, rx)
     }
@@ -237,6 +248,17 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
     let idle_timeout = std::time::Duration::from_secs(300); // 5 minutes
 
     loop {
+        // Check if stream URL changed
+        {
+            let current_url = state.stream_url.read().await;
+            if source.url() != current_url.as_str() {
+                tracing::info!(new_url = %current_url, "Stream URL changed, reconnecting");
+                source = StreamSource::new(current_url.clone());
+                state.hls_buffer.write().await.clear();
+                frame_counter = 0;
+            }
+        }
+
         // Check idle timeout
         if state.idle_seconds() > idle_timeout.as_secs() {
             tracing::info!("No clients for 5 minutes, pipeline going idle");
@@ -278,7 +300,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         let pts_offset = frame_counter;
         let state_clone = state.clone();
         let process_handle = tokio::task::spawn_blocking(
-            move || -> Result<(Vec<u8>, i64), Box<dyn std::error::Error + Send + Sync>> {
+            move || -> Result<(Vec<u8>, i64, u64, u64), Box<dyn std::error::Error + Send + Sync>> {
                 let t0 = std::time::Instant::now();
 
                 let all_frames = codec::decode_segment(&ts_bytes)?;
@@ -323,17 +345,20 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
                 let t_encode = t0.elapsed();
 
+                let effects_ms = (t_effects - t_downsample).as_millis() as u64;
+                let total_ms = t_encode.as_millis() as u64;
+
                 tracing::info!(
                     decode_ms = t_decode.as_millis() as u64,
                     downsample_ms = (t_downsample - t_decode).as_millis() as u64,
-                    effects_ms = (t_effects - t_downsample).as_millis() as u64,
+                    effects_ms,
                     encode_ms = (t_encode - t_effects).as_millis() as u64,
-                    total_ms = t_encode.as_millis() as u64,
+                    total_ms,
                     frames = out_frames,
                     "Pipeline timing"
                 );
 
-                Ok((encoded, out_frames))
+                Ok((encoded, out_frames, effects_ms, total_ms))
             },
         );
 
@@ -348,13 +373,27 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         // Now await processing result
         let processed = process_handle.await;
         match processed {
-            Ok(Ok((encoded, num_frames))) => {
+            Ok(Ok((encoded, num_frames, effects_ms, total_ms))) => {
                 tracing::info!(
                     segment_id,
                     size_kb = encoded.len() / 1024,
                     "Segment processed"
                 );
                 frame_counter += num_frames;
+
+                // Update processing stats
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                {
+                    let mut stats = state.stats.lock().unwrap();
+                    stats.effects_ms = effects_ms;
+                    stats.total_ms = total_ms;
+                    stats.frames = num_frames as u64;
+                    stats.segment_completed_at = now_ms;
+                }
+
                 state
                     .hls_buffer
                     .write()
@@ -374,7 +413,8 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
             let pts_offset = frame_counter;
             let state_clone = state.clone();
             let processed = tokio::task::spawn_blocking(
-                move || -> Result<(Vec<u8>, i64), Box<dyn std::error::Error + Send + Sync>> {
+                move || -> Result<(Vec<u8>, i64, u64, u64), Box<dyn std::error::Error + Send + Sync>> {
+                    let t0 = std::time::Instant::now();
                     let all_frames = codec::decode_segment(&next_ts)?;
                     if all_frames.is_empty() {
                         return Err("No frames decoded".into());
@@ -386,6 +426,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     let half_w = half_frames[0].width;
                     let half_h = half_frames[0].height;
                     let out_frames = half_frames.len() as i64;
+                    let t_pre = t0.elapsed();
 
                     {
                         let mut pipeline = state_clone.pipeline.lock().unwrap();
@@ -406,21 +447,36 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                             pipeline.process_frame(frame, i as u32);
                         }
                     }
+                    let effects_ms = (t0.elapsed() - t_pre).as_millis() as u64;
 
                     let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
-                    Ok((encoded, out_frames))
+                    let total_ms = t0.elapsed().as_millis() as u64;
+                    Ok((encoded, out_frames, effects_ms, total_ms))
                 },
             )
             .await;
 
             match processed {
-                Ok(Ok((encoded, num_frames))) => {
+                Ok(Ok((encoded, num_frames, effects_ms, total_ms))) => {
                     tracing::info!(
                         segment_id = next_seg_id,
                         size_kb = encoded.len() / 1024,
                         "Segment processed (prefetched)"
                     );
                     frame_counter += num_frames;
+
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+                    {
+                        let mut stats = state.stats.lock().unwrap();
+                        stats.effects_ms = effects_ms;
+                        stats.total_ms = total_ms;
+                        stats.frames = num_frames as u64;
+                        stats.segment_completed_at = now_ms;
+                    }
+
                     state
                         .hls_buffer
                         .write()
