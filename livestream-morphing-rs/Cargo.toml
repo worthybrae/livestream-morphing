@@ -1,0 +1,26 @@
+[package]
+name = "livestream-morphing-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+ffmpeg-next = "8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+chrono = "0.4"
+chrono-tz = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+inventory = "0.3"
+toml = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

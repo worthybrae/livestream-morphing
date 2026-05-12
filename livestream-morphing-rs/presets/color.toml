@@ -1,0 +1,32 @@
+name = "color"
+
+[[effects]]
+effect_id = "quantize"
+enabled = true
+
+[effects.params]
+levels = 27.0
+
+[[effects]]
+effect_id = "edges"
+enabled = true
+
+[effects.params]
+darkness = 40.0
+threshold = 46.0
+
+[[effects]]
+effect_id = "solarize"
+enabled = true
+
+[effects.params]
+threshold = 85.0
+
+[[effects]]
+effect_id = "levels"
+enabled = true
+
+[effects.params]
+black_point = 49.0
+gamma = 1.0
+white_point = 255.0

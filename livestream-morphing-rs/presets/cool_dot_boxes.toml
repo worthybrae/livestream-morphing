@@ -1,0 +1,62 @@
+name = "cool dot boxes"
+
+[[effects]]
+effect_id = "sharpen"
+enabled = true
+
+[effects.params]
+amount = 1.2999999523162842
+
+[[effects]]
+effect_id = "solarize"
+enabled = true
+
+[effects.params]
+threshold = 29.0
+
+[[effects]]
+effect_id = "solarize"
+enabled = true
+
+[effects.params]
+threshold = 14.0
+
+[[effects]]
+effect_id = "vignette"
+enabled = true
+
+[effects.params]
+strength = 0.3499999940395355
+radius = 1.5499999523162842
+
+[[effects]]
+effect_id = "levels"
+enabled = true
+
+[effects.params]
+gamma = 1.350000023841858
+black_point = 9.0
+white_point = 153.0
+
+[[effects]]
+effect_id = "halftone"
+enabled = true
+
+[effects.params]
+dot_size = 15.0
+
+[[effects]]
+effect_id = "halftone"
+enabled = true
+
+[effects.params]
+dot_size = 6.0
+
+[[effects]]
+effect_id = "color_shift"
+enabled = true
+
+[effects.params]
+brightness = 0.44999998807907104
+hue = 76.0
+saturation = 0.20000000298023224
