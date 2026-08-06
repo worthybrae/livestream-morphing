@@ -1,0 +1,150 @@
+<h2>Effects Pipeline: "Live Painting with Texture"</h2>
+<p class="subtitle">Replacing 6 image passes with 3 lean ones for a painterly canvas look</p>
+
+<div class="section">
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">Current: 6-Pass Dalí Pipeline</div>
+      <div class="mockup-body" style="padding: 1.2rem; font-size: 13px;">
+        <ol style="margin: 0; padding-left: 1.2rem; line-height: 2.2;">
+          <li style="color: #e74c3c;">Sine-wave psychedelic distortion <span style="color:#888">(coordinate remap)</span></li>
+          <li style="color: #e74c3c;">Bilateral filter <span style="color:#888">(expensive edge-preserving blur)</span></li>
+          <li>Color quantization <span style="color:#888">(posterize to N levels)</span></li>
+          <li style="color: #e74c3c;">Morphological open/close <span style="color:#888">(shape smoothing)</span></li>
+          <li>Sobel edge detection <span style="color:#888">(find boundaries)</span></li>
+          <li style="color: #e74c3c;">Oil painting region fill <span style="color:#888">(second bilateral + blend)</span></li>
+        </ol>
+        <div style="margin-top: 1rem; padding: 8px 12px; background: rgba(231,76,60,0.1); border-radius: 6px; border: 1px solid rgba(231,76,60,0.2); font-size: 12px;">
+          <span style="color: #e74c3c;">~50-200ms/frame</span> — bilateral filter alone is ~40% of total cost
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">Proposed: 3-Pass Painting Pipeline</div>
+      <div class="mockup-body" style="padding: 1.2rem; font-size: 13px;">
+        <ol style="margin: 0; padding-left: 1.2rem; line-height: 2.2;">
+          <li style="color: #2ecc71;"><strong>Mean-shift quantization</strong> <span style="color:#888">(flat painted regions)</span></li>
+          <li style="color: #2ecc71;"><strong>Sobel edge overlay</strong> <span style="color:#888">(visible brush boundaries)</span></li>
+          <li style="color: #2ecc71;"><strong>Canvas texture blend</strong> <span style="color:#888">(static texture, one-time load)</span></li>
+        </ol>
+        <div style="margin-top: 3.5rem; padding: 8px 12px; background: rgba(46,204,113,0.1); border-radius: 6px; border: 1px solid rgba(46,204,113,0.2); font-size: 12px;">
+          <span style="color: #2ecc71;">~10-30ms/frame</span> — no bilateral filter, no coordinate remap
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>What Each Pass Does</h3>
+
+  <div class="mockup" style="margin-bottom: 1rem;">
+    <div class="mockup-header">Pass 1: Mean-Shift Quantization → "Paint Regions"</div>
+    <div class="mockup-body" style="padding: 1.2rem; font-size: 13px; line-height: 1.8;">
+      <p><strong>Purpose:</strong> Collapse similar colors into flat regions — like paint strokes filling areas of canvas.</p>
+      <p><strong>How:</strong> Downsample to half resolution → quantize each channel to N levels (8-12) → optional small box blur to smooth region edges → upsample back with nearest-neighbor (preserves hard edges).</p>
+      <p><strong>Why not bilateral filter?</strong> Bilateral is O(n × kernel²) per pixel. Quantization is O(n) — just division and rounding. 10-50× cheaper for a similar "flat regions" look.</p>
+      <p><strong>Tunable:</strong> Number of color levels controls how "abstract" vs "realistic" it looks. Fewer levels = more painterly.</p>
+    </div>
+  </div>
+
+  <div class="mockup" style="margin-bottom: 1rem;">
+    <div class="mockup-header">Pass 2: Sobel Edge Overlay → "Brush Boundaries"</div>
+    <div class="mockup-body" style="padding: 1.2rem; font-size: 13px; line-height: 1.8;">
+      <p><strong>Purpose:</strong> Add visible dark outlines where color regions meet — like the edges of brush strokes or charcoal outlines on a painting.</p>
+      <p><strong>How:</strong> Sobel gradient on the quantized grayscale → threshold → blend as dark lines over the color image. Same as current code, already fast.</p>
+      <p><strong>Tunable:</strong> Edge thickness (blur kernel), darkness (blend factor), threshold (how many edges show).</p>
+    </div>
+  </div>
+
+  <div class="mockup" style="margin-bottom: 1rem;">
+    <div class="mockup-header">Pass 3: Canvas Texture Blend → "Painted Surface Feel"</div>
+    <div class="mockup-body" style="padding: 1.2rem; font-size: 13px; line-height: 1.8;">
+      <p><strong>Purpose:</strong> Make it feel like paint on a physical surface. Adds subtle bumps, weave patterns, and imperfections.</p>
+      <p><strong>How:</strong> Load a static canvas/paper texture image once at startup. For each frame, multiply-blend the texture over the processed image at ~10-20% opacity. The texture is tiled to match frame resolution.</p>
+      <p><strong>Cost:</strong> Nearly free — it's just a per-pixel multiply+add on pre-loaded data. ~1-2ms per frame.</p>
+      <p><strong>Tunable:</strong> Texture type (canvas, watercolor paper, linen), blend strength, texture scale.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>Time-of-Day Color Behavior</h3>
+  <div class="mockup">
+    <div class="mockup-header">Preserving the London-time color shift</div>
+    <div class="mockup-body" style="padding: 1.2rem; font-size: 13px; line-height: 1.8;">
+      <p>The current system shifts the color palette based on London time (lighter at noon, darker at midnight). We keep this but apply it differently:</p>
+      <ul style="padding-left: 1.2rem;">
+        <li><strong>Keep color output</strong> (not grayscale) — the quantized colors already create a painted look</li>
+        <li><strong>Warm/cool shift</strong> — instead of just grey level, shift the color temperature: warmer tones during golden hour, cooler blues at night</li>
+        <li><strong>Edge color adapts</strong> — dark outlines during day, light outlines at night (same logic as current)</li>
+      </ul>
+      <p style="color: #888; font-size: 12px; margin-top: 0.5rem;">This is a creative choice you can decide on later — the pipeline supports either grayscale or color output.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>Performance Comparison</h3>
+  <div class="mockup">
+    <div class="mockup-header">Per-frame processing cost at 960×540 (half-res)</div>
+    <div class="mockup-body" style="padding: 1.2rem;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <thead>
+          <tr style="border-bottom: 2px solid rgba(255,255,255,0.15);">
+            <th style="text-align: left; padding: 8px;">Operation</th>
+            <th style="text-align: right; padding: 8px;">Current (C++)</th>
+            <th style="text-align: right; padding: 8px;">Proposed (Rust)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;">Distortion (sine remap)</td>
+            <td style="padding: 8px; text-align: right;">~15ms</td>
+            <td style="padding: 8px; text-align: right; color: #2ecc71;">removed</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;">Bilateral filter</td>
+            <td style="padding: 8px; text-align: right;">~40ms</td>
+            <td style="padding: 8px; text-align: right; color: #2ecc71;">removed</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;">Quantization</td>
+            <td style="padding: 8px; text-align: right;">~8ms</td>
+            <td style="padding: 8px; text-align: right;">~5ms</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;">Morphology</td>
+            <td style="padding: 8px; text-align: right;">~10ms</td>
+            <td style="padding: 8px; text-align: right; color: #2ecc71;">removed</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;">Edge detection + overlay</td>
+            <td style="padding: 8px; text-align: right;">~12ms</td>
+            <td style="padding: 8px; text-align: right;">~8ms</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;">Canvas texture blend</td>
+            <td style="padding: 8px; text-align: right;">—</td>
+            <td style="padding: 8px; text-align: right;">~2ms</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;">Oil painting regions</td>
+            <td style="padding: 8px; text-align: right;">~30ms</td>
+            <td style="padding: 8px; text-align: right; color: #2ecc71;">removed</td>
+          </tr>
+          <tr style="border-top: 2px solid rgba(255,255,255,0.15);">
+            <td style="padding: 8px;"><strong>Total per frame</strong></td>
+            <td style="padding: 8px; text-align: right;"><strong>~115ms</strong></td>
+            <td style="padding: 8px; text-align: right; color: #2ecc71;"><strong>~15ms</strong></td>
+          </tr>
+          <tr style="border-top: 1px solid rgba(255,255,255,0.1);">
+            <td style="padding: 8px;"><strong>30 frames (one segment)</strong></td>
+            <td style="padding: 8px; text-align: right;"><strong>~3.5s</strong></td>
+            <td style="padding: 8px; text-align: right; color: #2ecc71;"><strong>~0.45s</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

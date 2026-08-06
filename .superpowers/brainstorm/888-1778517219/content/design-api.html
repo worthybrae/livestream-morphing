@@ -1,0 +1,128 @@
+<h2>Design — Section 3: REST API + Pipeline Engine</h2>
+<p class="subtitle">How the frontend controls the backend</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">REST API Endpoints</div>
+    <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 1.8;">
+      <div style="color: #94a3b8; margin-bottom: 12px;">── Effect Library ──</div>
+      <div style="color: #e2e8f0;">
+        <span style="color: #22d3ee;">GET</span>&nbsp;&nbsp;&nbsp;/api/effects
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# list all registered effects (id, name, param defs)</span>
+      </div>
+
+      <div style="color: #94a3b8; margin-top: 16px; margin-bottom: 12px;">── Pipeline (the active effect chain) ──</div>
+      <div style="color: #e2e8f0;">
+        <span style="color: #22d3ee;">GET</span>&nbsp;&nbsp;&nbsp;/api/pipeline
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# get current pipeline: ordered list of {slot_id, effect_id, params, enabled}</span><br>
+        <span style="color: #a3e635;">PUT</span>&nbsp;&nbsp;&nbsp;/api/pipeline
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# replace entire pipeline (reorder, add, remove effects)</span><br>
+        <span style="color: #f59e0b;">PATCH</span>&nbsp;/api/pipeline/:slot_id
+        <span style="color: #94a3b8;">&nbsp;&nbsp;# update one slot's params or enabled state</span>
+      </div>
+
+      <div style="color: #94a3b8; margin-top: 16px; margin-bottom: 12px;">── Presets ──</div>
+      <div style="color: #e2e8f0;">
+        <span style="color: #22d3ee;">GET</span>&nbsp;&nbsp;&nbsp;/api/presets
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# list saved presets</span><br>
+        <span style="color: #a3e635;">POST</span>&nbsp;&nbsp;/api/presets
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# save current pipeline as a new preset</span><br>
+        <span style="color: #a3e635;">PUT</span>&nbsp;&nbsp;&nbsp;/api/presets/:id/apply
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;# load a preset into the active pipeline</span><br>
+        <span style="color: #ef4444;">DELETE</span>&nbsp;/api/presets/:id
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# delete a preset</span>
+      </div>
+
+      <div style="color: #94a3b8; margin-top: 16px; margin-bottom: 12px;">── Existing (unchanged) ──</div>
+      <div style="color: #e2e8f0;">
+        <span style="color: #22d3ee;">GET</span>&nbsp;&nbsp;&nbsp;/stream/playlist.m3u8
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;# HLS playlist</span><br>
+        <span style="color: #22d3ee;">GET</span>&nbsp;&nbsp;&nbsp;/stream/segment_N.ts
+        <span style="color: #94a3b8;">&nbsp;&nbsp;&nbsp;# HLS segments</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Pipeline Engine — How It Works</div>
+    <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 1.6;">
+      <div style="color: #94a3b8; margin-bottom: 12px;">// The pipeline is a Vec of slots, each holding an effect instance</div>
+      <div style="color: #e2e8f0;">
+        <span style="color: #c084fc;">struct</span> <span style="color: #f59e0b;">PipelineSlot</span> {<br>
+        &nbsp;&nbsp;slot_id: String,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// unique ID (uuid) for this instance</span><br>
+        &nbsp;&nbsp;effect: Box&lt;dyn Effect&gt;,<br>
+        &nbsp;&nbsp;params: ParamValues,&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// current param values</span><br>
+        &nbsp;&nbsp;enabled: bool,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// toggle on/off without removing</span><br>
+        }<br><br>
+
+        <span style="color: #c084fc;">struct</span> <span style="color: #f59e0b;">Pipeline</span> {<br>
+        &nbsp;&nbsp;slots: Vec&lt;PipelineSlot&gt;,<br>
+        }<br><br>
+
+        <span style="color: #c084fc;">impl</span> Pipeline {<br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">process_frame</span>(&mut self, frame: &mut RawFrame, frame_number: u32) {<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #c084fc;">let</span> ctx = FrameCtx { frame_number, ... };<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #c084fc;">for</span> slot <span style="color: #c084fc;">in</span> &mut self.slots {<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #c084fc;">if</span> slot.enabled {<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;slot.effect.apply(frame, &slot.params, &ctx);<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;}<br>
+        &nbsp;&nbsp;}<br>
+        }
+      </div>
+
+      <div style="margin-top: 20px; border-top: 1px solid #334155; padding-top: 16px;">
+        <div style="color: #94a3b8; margin-bottom: 8px;">// Thread safety: pipeline runs on the processing thread,</div>
+        <div style="color: #94a3b8; margin-bottom: 8px;">// API runs on Axum's async threads.</div>
+        <div style="color: #94a3b8; margin-bottom: 8px;">// Solution: Arc&lt;Mutex&lt;Pipeline&gt;&gt; — lock is held briefly</div>
+        <div style="color: #94a3b8;">// (just to read/write params or swap the slot list).</div>
+        <div style="color: #94a3b8;">// The actual frame processing locks, copies params, then unlocks.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Example: Slider Drag → Frame Update</div>
+    <div class="mockup-body" style="padding: 24px; font-size: 14px; line-height: 2;">
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <div style="background: #312e81; padding: 8px 14px; border-radius: 6px; color: #a5b4fc;">1. Drag slider</div>
+        <div style="color: #475569;">→</div>
+        <div style="background: #312e81; padding: 8px 14px; border-radius: 6px; color: #a5b4fc;">2. Debounce 100ms</div>
+        <div style="color: #475569;">→</div>
+        <div style="background: #312e81; padding: 8px 14px; border-radius: 6px; color: #a5b4fc;">3. PATCH /api/pipeline/:slot</div>
+        <div style="color: #475569;">→</div>
+        <div style="background: #451a03; padding: 8px 14px; border-radius: 6px; color: #fbbf24;">4. Mutex lock, update params</div>
+        <div style="color: #475569;">→</div>
+        <div style="background: #451a03; padding: 8px 14px; border-radius: 6px; color: #fbbf24;">5. Next frame uses new value</div>
+        <div style="color: #475569;">→</div>
+        <div style="background: #14532d; padding: 8px 14px; border-radius: 6px; color: #86efac;">6. Visible in HLS ~2-4s later</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Key Decisions</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Why slot_id, not array index?</h4>
+      <p>Stable IDs survive reordering. If you drag effect #2 to position #4, its slot_id stays the same — the frontend doesn't lose track of which slider belongs to which effect.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Why PUT for full pipeline?</h4>
+      <p>Reordering and add/remove are structural changes to the whole list. A single PUT with the new ordered list is simpler and less error-prone than individual insert/delete/move operations.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Why PATCH for params?</h4>
+      <p>Slider drags are frequent, small updates. PATCH on a single slot is lightweight — just the params that changed, no need to re-send the whole pipeline.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Presets as TOML files</h4>
+      <p>Human-readable, version-controllable, shareable. A preset is just a pipeline snapshot: ordered effect IDs + their param values. Easy to hand-edit or commit to git.</p>
+    </div>
+  </div>
+</div>

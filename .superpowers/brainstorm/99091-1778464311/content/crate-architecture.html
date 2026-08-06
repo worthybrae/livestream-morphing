@@ -1,0 +1,234 @@
+<h2>Rust Crate Architecture & Deployment</h2>
+<p class="subtitle">Single binary, minimal dependencies, Fly.io-ready</p>
+
+<div class="section">
+  <h3>Project Structure</h3>
+  <div class="mockup">
+    <div class="mockup-header">File layout — single crate, module-per-concern</div>
+    <div class="mockup-body" style="padding: 1.5rem; font-family: monospace; font-size: 13px; line-height: 1.9;">
+<pre style="margin: 0; color: #ccc;">livestream-morphing-rs/
+├── Cargo.toml
+├── Dockerfile
+├── fly.toml
+├── textures/
+│   └── canvas.png              <span style="color: #888;"># baked into binary via include_bytes!</span>
+└── src/
+    ├── main.rs                 <span style="color: #888;"># entry point, CLI args, startup</span>
+    ├── server.rs               <span style="color: #888;"># axum HTTP server + routes</span>
+    ├── pipeline.rs             <span style="color: #888;"># orchestrator: fetch → decode → process → encode</span>
+    ├── effects.rs              <span style="color: #888;"># image processing (distortion, quantize, edges, texture)</span>
+    ├── codec.rs                <span style="color: #888;"># ffmpeg-next decode/encode wrappers</span>
+    ├── hls.rs                  <span style="color: #888;"># M3U8 playlist generation, segment ring buffer</span>
+    ├── stream_source.rs        <span style="color: #888;"># Abbey Road HLS fetcher</span>
+    └── time_color.rs           <span style="color: #888;"># London time → color palette mapping</span></pre>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>Key Dependencies</h3>
+  <div class="mockup">
+    <div class="mockup-header">Cargo.toml — lean and focused</div>
+    <div class="mockup-body" style="padding: 1.5rem; font-size: 13px;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+          <tr style="border-bottom: 2px solid rgba(255,255,255,0.15);">
+            <th style="text-align: left; padding: 8px;">Crate</th>
+            <th style="text-align: left; padding: 8px;">Purpose</th>
+            <th style="text-align: left; padding: 8px;">Why this one</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;"><code>axum</code></td>
+            <td style="padding: 8px;">HTTP server</td>
+            <td style="padding: 8px; color: #888;">Lightweight, async, Tower ecosystem. ~2MB binary contribution.</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;"><code>tokio</code></td>
+            <td style="padding: 8px;">Async runtime</td>
+            <td style="padding: 8px; color: #888;">Required by axum. Use <code>rt-multi-thread</code> feature for pipeline parallelism.</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;"><code>ffmpeg-next</code></td>
+            <td style="padding: 8px;">H.264 decode/encode</td>
+            <td style="padding: 8px; color: #888;">Safe Rust bindings to FFmpeg's libav*. Battle-tested codecs.</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;"><code>image</code></td>
+            <td style="padding: 8px;">Pixel buffer ops</td>
+            <td style="padding: 8px; color: #888;">Load canvas texture, pixel format conversions. Pure Rust.</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;"><code>reqwest</code></td>
+            <td style="padding: 8px;">HTTP client</td>
+            <td style="padding: 8px; color: #888;">Fetch .ts segments from EarthCam. Async, TLS built-in.</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;"><code>chrono</code> + <code>chrono-tz</code></td>
+            <td style="padding: 8px;">London time</td>
+            <td style="padding: 8px; color: #888;">Time-of-day color palette calculation.</td>
+          </tr>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px;"><code>tracing</code></td>
+            <td style="padding: 8px;">Logging</td>
+            <td style="padding: 8px; color: #888;">Structured async-aware logging. Replaces Python print statements.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top: 1rem; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 12px; color: #888;">
+        <strong>Not included:</strong> No OpenCV, no numpy, no pybind11, no Python runtime. The effects pipeline is pure Rust operating on raw pixel slices.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>Module Responsibilities</h3>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+    <div class="mockup">
+      <div class="mockup-header">server.rs — HTTP & Lifecycle</div>
+      <div class="mockup-body" style="padding: 1rem; font-size: 12px; line-height: 1.8;">
+        <ul style="padding-left: 1rem; margin: 0;">
+          <li><code>GET /api/stream</code> → M3U8 playlist</li>
+          <li><code>GET /api/segments/{id}.ts</code> → segment bytes</li>
+          <li><code>GET /health</code> → for Fly.io health checks</li>
+          <li>Tracks last client request timestamp</li>
+          <li>Signals pipeline to start/stop based on client activity</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="mockup">
+      <div class="mockup-header">pipeline.rs — Orchestrator</div>
+      <div class="mockup-body" style="padding: 1rem; font-size: 12px; line-height: 1.8;">
+        <ul style="padding-left: 1rem; margin: 0;">
+          <li>Owns the main processing loop</li>
+          <li>Coordinates: fetch → decode → effects → encode</li>
+          <li>Manages segment ring buffer (last 10)</li>
+          <li>Spawns blocking work on <code>spawn_blocking</code></li>
+          <li>Watches for shutdown signal (idle timeout)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="mockup">
+      <div class="mockup-header">effects.rs — Pure Pixel Math</div>
+      <div class="mockup-body" style="padding: 1rem; font-size: 12px; line-height: 1.8;">
+        <ul style="padding-left: 1rem; margin: 0;">
+          <li><code>apply_distortion()</code> — sine-wave remap</li>
+          <li><code>quantize()</code> — color posterization</li>
+          <li><code>detect_edges()</code> — Sobel + threshold</li>
+          <li><code>blend_texture()</code> — canvas overlay</li>
+          <li>All operate on <code>&mut [u8]</code> slices in-place</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="mockup">
+      <div class="mockup-header">codec.rs — FFmpeg Wrapper</div>
+      <div class="mockup-body" style="padding: 1rem; font-size: 12px; line-height: 1.8;">
+        <ul style="padding-left: 1rem; margin: 0;">
+          <li><code>decode_segment(bytes) → Vec&lt;Frame&gt;</code></li>
+          <li><code>encode_segment(frames) → Vec&lt;u8&gt;</code></li>
+          <li>Handles pixel format conversion (YUV↔RGB)</li>
+          <li>Configures H.264 encoder (CRF, preset)</li>
+          <li>Wraps output in MPEG-TS container</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>Deployment: Fly.io</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">Dockerfile — multi-stage build</div>
+      <div class="mockup-body" style="padding: 1.2rem; font-family: monospace; font-size: 12px; line-height: 1.7;">
+<pre style="margin: 0; color: #ccc;"><span style="color: #888;"># Stage 1: Build</span>
+FROM rust:1.83-bookworm AS builder
+RUN apt-get install -y libavcodec-dev ...
+COPY . .
+RUN cargo build --release
+
+<span style="color: #888;"># Stage 2: Runtime</span>
+FROM debian:bookworm-slim
+RUN apt-get install -y libavcodec60 ...
+COPY --from=builder /app/target/release/morphing .
+
+<span style="color: #2ecc71;"># Final image: ~80-120MB total</span>
+<span style="color: #2ecc71;"># (vs ~1-2GB for Python + OpenCV + FFmpeg)</span></pre>
+      </div>
+    </div>
+
+    <div class="mockup">
+      <div class="mockup-header">fly.toml — auto-stop config</div>
+      <div class="mockup-body" style="padding: 1.2rem; font-family: monospace; font-size: 12px; line-height: 1.7;">
+<pre style="margin: 0; color: #ccc;">app = "livestream-morphing"
+primary_region = "lhr"  <span style="color: #888;"># London!</span>
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+<span style="color: #2ecc71;"># Cost: $0 when idle</span>
+<span style="color: #2ecc71;"># ~$0.50-2/mo when actively streaming</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 1rem; padding: 1rem; background: rgba(46,204,113,0.08); border: 1px solid rgba(46,204,113,0.2); border-radius: 8px;">
+    <h4 style="margin: 0 0 0.5rem 0; color: #2ecc71;">Why London (LHR) region?</h4>
+    <p style="margin: 0; font-size: 13px; color: #ccc;">The Abbey Road EarthCam server is in the US, but your viewers likely care about latency to <em>them</em>, not to the source. LHR also makes the London timezone calculation trivial. If latency to EarthCam matters more, switch to <code>ewr</code> (Newark) or <code>iad</code> (Virginia).</p>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>Resource Budget</h3>
+  <div class="mockup">
+    <div class="mockup-header">Expected resource usage on shared-cpu-1x (256MB)</div>
+    <div class="mockup-body" style="padding: 1.2rem;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+          <td style="padding: 8px; color: #888; width: 200px;">Binary size</td>
+          <td style="padding: 8px;">~10-15MB (release, stripped)</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+          <td style="padding: 8px; color: #888;">Container image</td>
+          <td style="padding: 8px;">~80-120MB (with FFmpeg runtime libs)</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+          <td style="padding: 8px; color: #888;">RAM (idle/sleeping)</td>
+          <td style="padding: 8px;">0MB (machine stopped)</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+          <td style="padding: 8px; color: #888;">RAM (streaming)</td>
+          <td style="padding: 8px;">~60-100MB (pipeline buffers + 10-segment ring buffer)</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+          <td style="padding: 8px; color: #888;">CPU (per segment)</td>
+          <td style="padding: 8px;">~2-3s burst on shared vCPU, then idle until next segment</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+          <td style="padding: 8px; color: #888;">Cold start</td>
+          <td style="padding: 8px;">~1-2s (Fly machine wake + binary start)</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px; color: #888;">Monthly cost estimate</td>
+          <td style="padding: 8px; color: #2ecc71;"><strong>$0-3/mo</strong> (free tier covers light usage)</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</div>

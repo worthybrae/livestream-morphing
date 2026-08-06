@@ -1,0 +1,76 @@
+<h2>Design — Section 1: Architecture Overview</h2>
+<p class="subtitle">How the pieces fit together</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">System Architecture</div>
+    <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 1.8;">
+      <div style="display: flex; gap: 32px; align-items: flex-start;">
+
+        <!-- Left: React Studio -->
+        <div style="flex: 1; border: 2px solid #6366f1; border-radius: 8px; padding: 16px;">
+          <div style="color: #6366f1; font-weight: bold; margin-bottom: 12px;">studio/ (React + Vite + Tailwind)</div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="background: #1e1b4b; padding: 8px 12px; border-radius: 4px;">🎬 HLS Video Player</div>
+            <div style="background: #1e1b4b; padding: 8px 12px; border-radius: 4px;">📚 Effect Library Browser</div>
+            <div style="background: #1e1b4b; padding: 8px 12px; border-radius: 4px;">🔗 Pipeline Editor (drag &amp; drop)</div>
+            <div style="background: #1e1b4b; padding: 8px 12px; border-radius: 4px;">🎚️ Parameter Sliders</div>
+            <div style="background: #1e1b4b; padding: 8px 12px; border-radius: 4px;">💾 Preset Manager</div>
+          </div>
+        </div>
+
+        <!-- Middle: arrows -->
+        <div style="display: flex; flex-direction: column; justify-content: center; gap: 12px; padding-top: 40px;">
+          <div style="color: #a5b4fc;">REST API →</div>
+          <div style="color: #a5b4fc;">← JSON</div>
+          <div style="color: #a5b4fc;">← HLS segments</div>
+        </div>
+
+        <!-- Right: Rust Backend -->
+        <div style="flex: 1; border: 2px solid #f59e0b; border-radius: 8px; padding: 16px;">
+          <div style="color: #f59e0b; font-weight: bold; margin-bottom: 12px;">livestream-morphing-rs/ (Axum)</div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="background: #451a03; padding: 8px 12px; border-radius: 4px;">📡 Stream Source (Abbey Road)</div>
+            <div style="background: #451a03; padding: 8px 12px; border-radius: 4px;">🎨 Effect Registry (macro-registered)</div>
+            <div style="background: #451a03; padding: 8px 12px; border-radius: 4px;">⚙️ Pipeline Engine (ordered effects)</div>
+            <div style="background: #451a03; padding: 8px 12px; border-radius: 4px;">📺 HLS Server (segments + playlist)</div>
+            <div style="background: #451a03; padding: 8px 12px; border-radius: 4px;">💾 Preset Storage (TOML files)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Data flow -->
+      <div style="margin-top: 24px; padding: 16px; border: 1px solid #334155; border-radius: 8px;">
+        <div style="color: #94a3b8; font-weight: bold; margin-bottom: 8px;">Data Flow</div>
+        <div style="color: #cbd5e1;">
+          1. Abbey Road MPEG-TS → Decode → RGB frames<br>
+          2. Downsample 2x → <span style="color: #f59e0b;">Pipeline Engine applies effects in order</span> → Upsample 2x<br>
+          3. Encode H.264 → HLS segments → <span style="color: #6366f1;">Video Player</span><br>
+          4. <span style="color: #6366f1;">Slider change</span> → REST PATCH → <span style="color: #f59e0b;">Pipeline updates params</span> → next frame uses new values
+        </div>
+      </div>
+
+      <!-- Repo structure -->
+      <div style="margin-top: 24px; padding: 16px; border: 1px solid #334155; border-radius: 8px;">
+        <div style="color: #94a3b8; font-weight: bold; margin-bottom: 8px;">Repo Structure</div>
+        <div style="color: #cbd5e1;">
+          livestream-morphing/<br>
+          ├── livestream-morphing-rs/ &nbsp;&nbsp;# Rust backend (existing)<br>
+          │ &nbsp;&nbsp;├── src/<br>
+          │ &nbsp;&nbsp;│ &nbsp;&nbsp;├── effects/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# refactored: one file per effect<br>
+          │ &nbsp;&nbsp;│ &nbsp;&nbsp;├── registry.rs &nbsp;&nbsp;&nbsp;&nbsp;# Effect trait + macro + registry<br>
+          │ &nbsp;&nbsp;│ &nbsp;&nbsp;├── pipeline.rs &nbsp;&nbsp;&nbsp;&nbsp;# dynamic pipeline engine<br>
+          │ &nbsp;&nbsp;│ &nbsp;&nbsp;├── api.rs &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# REST endpoints<br>
+          │ &nbsp;&nbsp;│ &nbsp;&nbsp;└── ...<br>
+          │ &nbsp;&nbsp;└── presets/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# saved preset TOML files<br>
+          └── studio/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# React frontend (new)<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;├── src/<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;│ &nbsp;&nbsp;├── components/ &nbsp;&nbsp;&nbsp;&nbsp;# UI components<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;│ &nbsp;&nbsp;├── hooks/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# API hooks<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;│ &nbsp;&nbsp;└── types/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# shared types<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;└── package.json
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

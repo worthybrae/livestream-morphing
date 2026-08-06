@@ -1,0 +1,95 @@
+<h2>Three Approaches for the Rust Rewrite</h2>
+<p class="subtitle">Each takes a different stance on how much to replace and how lean to go</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Full Rust Binary — "The Monolith"</h3>
+      <p><strong>Replace everything:</strong> fetching, H.264 decoding, image processing, H.264 encoding, HLS serving — all in one Rust binary.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pros</h4>
+          <ul>
+            <li>Smallest possible footprint (~10-30MB binary, ~50-100MB RAM)</li>
+            <li>Zero external dependencies — no FFmpeg, no Python, no system libs</li>
+            <li>Fastest cold start (~1-2s for just the binary)</li>
+            <li>Single container, trivial deployment</li>
+            <li>Zero-copy frame pipeline (decode → process → encode in shared memory)</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Cons</h4>
+          <ul>
+            <li>Hardest to build — H.264 decode/encode in pure Rust is complex</li>
+            <li>Rust video codec ecosystem is less mature (openh264, rav1e)</li>
+            <li>Longest development time</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>Target:</strong> ~50-100MB RAM, 0.5 vCPU sustained, $0-5/mo on Fly.io</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Rust Core + FFmpeg Libs — "The Hybrid"</h3>
+      <p><strong>Rust does orchestration + image processing.</strong> Links against FFmpeg's libavcodec/libavformat for decode/encode (via the <code>ffmpeg-next</code> crate). No Python at all.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pros</h4>
+          <ul>
+            <li>Battle-tested H.264 codec (FFmpeg is the gold standard)</li>
+            <li>Still very lean (~100-200MB RAM with FFmpeg linked)</li>
+            <li>Much faster to build — focus effort on the effects pipeline</li>
+            <li>Zero-copy between decode → Rust processing → encode</li>
+            <li>Single process, no subprocess spawning</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Cons</h4>
+          <ul>
+            <li>Needs FFmpeg libs in the container (adds ~30-50MB)</li>
+            <li>FFmpeg C bindings can be fiddly to cross-compile</li>
+            <li>Slightly larger container than pure Rust</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>Target:</strong> ~100-200MB RAM, 0.5-1 vCPU sustained, $0-5/mo on Fly.io</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Rust Processing + Existing Python Shell — "The Transplant"</h3>
+      <p><strong>Replace only the hot path:</strong> Write a Rust library for image effects, call it from Python via PyO3 (like the current C++/pybind11 setup). Keep FastAPI, PyAV, FFmpeg subprocess.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pros</h4>
+          <ul>
+            <li>Fastest to build — smallest change surface</li>
+            <li>Rust effects may be faster than C++ (SIMD, better optimizer)</li>
+            <li>Low risk — can A/B test against current C++ processor</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Cons</h4>
+          <ul>
+            <li>Doesn't solve the core problem — still need Python + FFmpeg + all deps</li>
+            <li>Still ~500MB+ container, still high memory usage</li>
+            <li>Won't run on free tier — same resource hunger</li>
+            <li>Doesn't enable on-demand cold start pattern</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>Target:</strong> Same as current, marginal frame processing improvement only</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem; padding: 1.5rem; border-radius: 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
+  <h3>My Recommendation: Option B</h3>
+  <p>Option A is the dream but the Rust pure-video codec ecosystem isn't mature enough to justify the risk. Option C doesn't solve your actual problem. <strong>Option B</strong> gives you 90% of the benefits — a single lean Rust binary that links FFmpeg for the codec work it's best at, while Rust handles everything else (HTTP, HLS, image processing, scheduling). Should comfortably run on a Fly.io free-tier machine.</p>
+</div>

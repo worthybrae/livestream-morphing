@@ -1,0 +1,125 @@
+<h2>In-Memory Processing Pipeline</h2>
+<p class="subtitle">Everything stays in RAM — no temp files, no JPEG round-trips</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Current Python Pipeline (wasteful)</div>
+    <div class="mockup-body" style="font-family: monospace; font-size: 13px; line-height: 1.8; padding: 1.5rem;">
+      <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+        <span style="background: #e74c3c33; border: 1px solid #e74c3c; padding: 4px 10px; border-radius: 6px;">Download .ts to disk</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #e74c3c33; border: 1px solid #e74c3c; padding: 4px 10px; border-radius: 6px;">PyAV reads from disk</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #e74c3c33; border: 1px solid #e74c3c; padding: 4px 10px; border-radius: 6px;">Copy to numpy array</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #e74c3c33; border: 1px solid #e74c3c; padding: 4px 10px; border-radius: 6px;">Copy to C++ Mat</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #3498db33; border: 1px solid #3498db; padding: 4px 10px; border-radius: 6px;">C++ processes</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #e74c3c33; border: 1px solid #e74c3c; padding: 4px 10px; border-radius: 6px;">Copy back to numpy</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #e74c3c33; border: 1px solid #e74c3c; padding: 4px 10px; border-radius: 6px;">Write JPEG to disk ×30</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #e74c3c33; border: 1px solid #e74c3c; padding: 4px 10px; border-radius: 6px;">FFmpeg reads JPEGs from disk</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #e74c3c33; border: 1px solid #e74c3c; padding: 4px 10px; border-radius: 6px;">Write .ts to disk</span>
+      </div>
+      <p style="color: #e74c3c; margin-top: 1rem; font-size: 12px;">⚠ 5+ memory copies per frame, 60+ disk operations per segment, JPEG quality loss</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 1.5rem;">
+  <div class="mockup">
+    <div class="mockup-header">Proposed Rust Pipeline (zero-copy where possible)</div>
+    <div class="mockup-body" style="font-family: monospace; font-size: 13px; line-height: 1.8; padding: 1.5rem;">
+      <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+        <span style="background: #2ecc7133; border: 1px solid #2ecc71; padding: 4px 10px; border-radius: 6px;">HTTP GET → bytes in memory</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #2ecc7133; border: 1px solid #2ecc71; padding: 4px 10px; border-radius: 6px;">ffmpeg-next decodes → raw pixels</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #3498db33; border: 1px solid #3498db; padding: 4px 10px; border-radius: 6px;">Rust effects (in-place mutation)</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #2ecc7133; border: 1px solid #2ecc71; padding: 4px 10px; border-radius: 6px;">ffmpeg-next encodes → .ts bytes</span>
+        <span style="color: #666;">→</span>
+        <span style="background: #2ecc7133; border: 1px solid #2ecc71; padding: 4px 10px; border-radius: 6px;">Ring buffer (serve to clients)</span>
+      </div>
+      <p style="color: #2ecc71; margin-top: 1rem; font-size: 12px;">✓ 0-1 copies per frame, zero disk I/O, no quality loss, ~5× less memory</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>Per-Segment Flow Detail</h3>
+  <div class="mockup">
+    <div class="mockup-header">One 6-second segment lifecycle</div>
+    <div class="mockup-body" style="padding: 1.5rem; font-size: 13px; line-height: 2;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; color: #888; width: 80px;">Step 1</td>
+          <td style="padding: 8px;"><strong>Fetch</strong> — HTTP GET latest .ts segment (~3-5MB) → kept as <code>Vec&lt;u8&gt;</code> in memory</td>
+          <td style="padding: 8px; color: #888; text-align: right;">~200ms</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; color: #888;">Step 2</td>
+          <td style="padding: 8px;"><strong>Decode</strong> — ffmpeg-next reads from memory buffer, yields ~180 raw pixel frames</td>
+          <td style="padding: 8px; color: #888; text-align: right;">~300ms</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; color: #888;">Step 3</td>
+          <td style="padding: 8px;"><strong>Process</strong> — Each frame: quantize + edge detect + texture blend (in-place on pixel buffer)</td>
+          <td style="padding: 8px; color: #888; text-align: right;">~30-80ms/frame</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; color: #888;">Step 4</td>
+          <td style="padding: 8px;"><strong>Encode</strong> — ffmpeg-next encodes processed frames → H.264 MPEG-TS bytes</td>
+          <td style="padding: 8px; color: #888; text-align: right;">~500ms</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px; color: #888;">Step 5</td>
+          <td style="padding: 8px;"><strong>Buffer</strong> — Store encoded .ts bytes in ring buffer (last 10 segments). Generate M3U8 playlist from buffer.</td>
+          <td style="padding: 8px; color: #888; text-align: right;">~0ms</td>
+        </tr>
+      </table>
+      <div style="margin-top: 1rem; padding: 12px; background: rgba(46, 204, 113, 0.1); border-radius: 8px; border: 1px solid rgba(46, 204, 113, 0.2);">
+        <strong style="color: #2ecc71;">Total: ~2-4 seconds per segment</strong> (vs current ~6-10s) on a single vCPU.<br>
+        <span style="color: #888;">RAM usage: ~30-50MB for pipeline + ~30MB for 10-segment ring buffer = ~60-80MB total</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 2rem;">
+  <h3>On-Demand Lifecycle</h3>
+  <div class="mockup">
+    <div class="mockup-header">How the service wakes and sleeps</div>
+    <div class="mockup-body" style="padding: 1.5rem; font-size: 13px; line-height: 2;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="background: #f39c1233; border: 1px solid #f39c12; padding: 2px 8px; border-radius: 4px; font-size: 11px; min-width: 60px; text-align: center;">SLEEPING</span>
+          <span>Container exists but has 0 CPU allocation (Fly.io machines / Railway sleep)</span>
+        </div>
+        <div style="color: #666; padding-left: 36px;">↓ Frontend sends GET /api/stream</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="background: #e67e2233; border: 1px solid #e67e22; padding: 2px 8px; border-radius: 4px; font-size: 11px; min-width: 60px; text-align: center;">WAKING</span>
+          <span>Container cold-starts (~1-2s for Rust binary), returns empty M3U8 playlist</span>
+        </div>
+        <div style="color: #666; padding-left: 36px;">↓ Pipeline starts fetching Abbey Road stream</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="background: #f1c40f33; border: 1px solid #f1c40f; padding: 2px 8px; border-radius: 4px; font-size: 11px; min-width: 60px; text-align: center;">BUFFERING</span>
+          <span>First 3 segments processed (~10-15s). Frontend shows loading state.</span>
+        </div>
+        <div style="color: #666; padding-left: 36px;">↓ 3+ segments ready</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="background: #2ecc7133; border: 1px solid #2ecc71; padding: 2px 8px; border-radius: 4px; font-size: 11px; min-width: 60px; text-align: center;">STREAMING</span>
+          <span>Continuous processing. M3U8 playlist updates. Clients play video.</span>
+        </div>
+        <div style="color: #666; padding-left: 36px;">↓ No client requests for 5 minutes</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="background: #f39c1233; border: 1px solid #f39c12; padding: 2px 8px; border-radius: 4px; font-size: 11px; min-width: 60px; text-align: center;">SLEEPING</span>
+          <span>Pipeline stops, buffer cleared, container goes to sleep. $0 cost while idle.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

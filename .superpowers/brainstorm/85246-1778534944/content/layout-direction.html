@@ -1,0 +1,168 @@
+<h2>What overall layout feel are you going for?</h2>
+<p class="subtitle">This sets the foundation — how the video, effects, and controls relate to each other spatially</p>
+
+<div class="cards">
+  <!-- Option A: OBS/Streamlabs style -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 16px; background: #0a0a0f;">
+      <!-- Wireframe mockup A -->
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: #888;">
+        <!-- Top bar -->
+        <div style="display: flex; align-items: center; background: #111118; padding: 8px 12px; border-radius: 6px; gap: 12px;">
+          <span style="color: #f59e0b; font-weight: bold;">Morph Studio</span>
+          <div style="flex:1"></div>
+          <div style="display:flex; gap: 6px;">
+            <span style="padding: 3px 8px; background: #1e1e2e; border-radius: 4px; font-size: 10px;">Effects</span>
+            <span style="padding: 3px 8px; background: #4f46e5; border-radius: 4px; font-size: 10px; color: white;">Pipeline</span>
+            <span style="padding: 3px 8px; background: #1e1e2e; border-radius: 4px; font-size: 10px;">Presets</span>
+          </div>
+          <div style="flex:1"></div>
+          <span style="font-size: 10px; color: #666;">⚙</span>
+        </div>
+        <!-- Body -->
+        <div style="display: flex; gap: 6px; height: 200px;">
+          <div style="flex: 1; background: #000; border-radius: 6px; display: flex; align-items: center; justify-content: center; position: relative;">
+            <span style="color: #333; font-size: 24px;">▶ Video</span>
+            <span style="position: absolute; top: 6px; left: 8px; background: #dc2626; color: white; font-size: 8px; padding: 1px 5px; border-radius: 3px; font-weight: bold;">LIVE</span>
+          </div>
+          <div style="width: 240px; background: #111118; border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-size: 9px; text-transform: uppercase; color: #555; letter-spacing: 1px;">Pipeline</span>
+            <div style="padding: 6px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #4f46e5; font-size: 10px;">1. Blur</div>
+            <div style="padding: 6px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #22c55e; font-size: 10px;">2. Hue Rotate</div>
+            <div style="padding: 6px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #22c55e; font-size: 10px;">3. Contrast</div>
+            <div style="flex:1"></div>
+            <span style="font-size: 9px; text-transform: uppercase; color: #555; letter-spacing: 1px;">Parameters</span>
+            <div style="height: 4px; background: #333; border-radius: 2px;"><div style="height: 100%; width: 60%; background: #4f46e5; border-radius: 2px;"></div></div>
+            <div style="height: 4px; background: #333; border-radius: 2px;"><div style="height: 100%; width: 35%; background: #4f46e5; border-radius: 2px;"></div></div>
+          </div>
+        </div>
+        <!-- Bottom status -->
+        <div style="display: flex; align-items: center; background: #111118; padding: 6px 12px; border-radius: 6px; gap: 12px; font-size: 9px; color: #555;">
+          <span style="width: 6px; height: 6px; background: #22c55e; border-radius: 50%; display: inline-block;"></span>
+          <span>Next: 4s</span>
+          <span>Effects: 127ms</span>
+          <span>Frames: 180</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Focused Studio</h3>
+      <p>Video dominates the left, a single right panel shows Pipeline + Params. <strong>Tabs in header</strong> switch between Effects Library, Pipeline, and Presets views. Clean, minimal chrome.</p>
+    </div>
+  </div>
+
+  <!-- Option B: DAW / node-editor style -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 16px; background: #0a0a0f;">
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: #888;">
+        <!-- Top bar -->
+        <div style="display: flex; align-items: center; background: #111118; padding: 8px 12px; border-radius: 6px; gap: 12px;">
+          <span style="color: #f59e0b; font-weight: bold;">Morph Studio</span>
+          <div style="width: 250px; padding: 4px 8px; background: #0a0a12; border: 1px solid #333; border-radius: 4px; font-size: 10px; color: #666;">rtmp://stream.example.com/live</div>
+          <div style="flex:1"></div>
+          <span style="padding: 3px 8px; background: #d97706; border-radius: 4px; font-size: 10px; color: white;">🎲 Random</span>
+          <span style="padding: 3px 8px; background: #4f46e5; border-radius: 4px; font-size: 10px; color: white;">💾 Save</span>
+        </div>
+        <!-- Body: 3 columns -->
+        <div style="display: flex; gap: 6px; height: 200px;">
+          <!-- Left sidebar with tabs -->
+          <div style="width: 170px; background: #111118; border-radius: 6px; display: flex; flex-direction: column;">
+            <div style="display: flex; border-bottom: 1px solid #222; font-size: 9px;">
+              <span style="flex:1; padding: 6px; text-align: center; border-bottom: 2px solid #4f46e5; color: #4f46e5;">Effects</span>
+              <span style="flex:1; padding: 6px; text-align: center; color: #555;">Presets</span>
+            </div>
+            <div style="padding: 8px; display: flex; flex-direction: column; gap: 4px; flex: 1;">
+              <div style="padding: 5px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #4f46e5; font-size: 10px;">Blur</div>
+              <div style="padding: 5px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #4f46e5; font-size: 10px;">Hue Rotate</div>
+              <div style="padding: 5px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #4f46e5; font-size: 10px;">Contrast</div>
+              <div style="padding: 5px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #4f46e5; font-size: 10px;">Grayscale</div>
+              <div style="padding: 5px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #4f46e5; font-size: 10px;">Sharpen</div>
+            </div>
+          </div>
+          <!-- Center video -->
+          <div style="flex: 1; background: #000; border-radius: 6px; display: flex; align-items: center; justify-content: center; position: relative;">
+            <span style="color: #333; font-size: 24px;">▶ Video</span>
+            <span style="position: absolute; top: 6px; left: 8px; background: #dc2626; color: white; font-size: 8px; padding: 1px 5px; border-radius: 3px; font-weight: bold;">LIVE</span>
+          </div>
+          <!-- Right: Pipeline + Params stacked -->
+          <div style="width: 200px; background: #111118; border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-size: 9px; text-transform: uppercase; color: #555; letter-spacing: 1px;">Pipeline</span>
+            <div style="padding: 6px 8px; background: #4f46e5/20; border-radius: 4px; border-left: 2px solid #4f46e5; font-size: 10px; background: rgba(79,70,229,0.15);">1. Blur ✓</div>
+            <div style="padding: 6px 8px; background: #1a1a2e; border-radius: 4px; border-left: 2px solid #22c55e; font-size: 10px;">2. Contrast ✓</div>
+            <div style="flex:1; border-top: 1px solid #222; margin-top: 4px; padding-top: 6px;">
+              <span style="font-size: 9px; text-transform: uppercase; color: #555; letter-spacing: 1px;">Params</span>
+              <div style="margin-top: 6px;">
+                <div style="font-size: 9px; color: #999; margin-bottom: 3px;">Radius</div>
+                <div style="height: 4px; background: #333; border-radius: 2px;"><div style="height: 100%; width: 60%; background: #4f46e5; border-radius: 2px;"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Bottom status -->
+        <div style="display: flex; align-items: center; background: #111118; padding: 6px 12px; border-radius: 6px; gap: 12px; font-size: 9px; color: #555;">
+          <span style="width: 6px; height: 6px; background: #22c55e; border-radius: 50%; display: inline-block;"></span>
+          <span>Next: 4s</span>
+          <span>Effects: 127ms</span>
+          <span>Frames: 180</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Tabbed Sidebar</h3>
+      <p>Keep the 3-column layout but add <strong>tabs within the left sidebar</strong> to switch between Effects and Presets. Right panel stays as Pipeline + Params. Closest to current layout, just more polished.</p>
+    </div>
+  </div>
+
+  <!-- Option C: Collapsed/expandable panels -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 16px; background: #0a0a0f;">
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: #888;">
+        <!-- Top bar -->
+        <div style="display: flex; align-items: center; background: #111118; padding: 8px 12px; border-radius: 6px; gap: 12px;">
+          <span style="color: #f59e0b; font-weight: bold;">Morph Studio</span>
+          <div style="flex:1"></div>
+          <div style="display:flex; gap: 8px; font-size: 10px;">
+            <span style="padding: 3px 8px; background: #1e1e2e; border-radius: 4px;">🎨 Presets ▾</span>
+            <span style="padding: 3px 8px; background: #d97706; border-radius: 4px; color: white;">🎲 Random</span>
+            <span style="padding: 3px 8px; background: #4f46e5; border-radius: 4px; color: white;">💾 Save</span>
+          </div>
+        </div>
+        <!-- Body: Video full width with floating panels -->
+        <div style="position: relative; height: 220px; background: #000; border-radius: 6px;">
+          <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #333; font-size: 24px;">▶ Video (Full Width)</span>
+          <span style="position: absolute; top: 6px; left: 8px; background: #dc2626; color: white; font-size: 8px; padding: 1px 5px; border-radius: 3px; font-weight: bold;">LIVE</span>
+          <!-- Floating left panel -->
+          <div style="position: absolute; left: 8px; top: 30px; width: 140px; background: rgba(17,17,24,0.92); border-radius: 6px; padding: 8px; backdrop-filter: blur(8px); border: 1px solid #222;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 9px; text-transform: uppercase; color: #555; letter-spacing: 1px;">Effects</span>
+              <span style="font-size: 8px; color: #444;">◀</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+              <div style="padding: 4px 6px; background: rgba(79,70,229,0.15); border-radius: 3px; font-size: 9px;">Blur</div>
+              <div style="padding: 4px 6px; background: rgba(79,70,229,0.15); border-radius: 3px; font-size: 9px;">Hue</div>
+              <div style="padding: 4px 6px; background: rgba(79,70,229,0.15); border-radius: 3px; font-size: 9px;">Sharp</div>
+            </div>
+          </div>
+          <!-- Floating right panel -->
+          <div style="position: absolute; right: 8px; top: 30px; width: 160px; background: rgba(17,17,24,0.92); border-radius: 6px; padding: 8px; backdrop-filter: blur(8px); border: 1px solid #222;">
+            <span style="font-size: 9px; text-transform: uppercase; color: #555; letter-spacing: 1px;">Pipeline</span>
+            <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 3px;">
+              <div style="padding: 4px 6px; background: rgba(79,70,229,0.15); border-radius: 3px; font-size: 9px;">1. Blur</div>
+              <div style="padding: 4px 6px; background: rgba(34,197,94,0.15); border-radius: 3px; font-size: 9px;">2. Contrast</div>
+            </div>
+          </div>
+        </div>
+        <!-- Bottom status -->
+        <div style="display: flex; align-items: center; background: #111118; padding: 6px 12px; border-radius: 6px; gap: 12px; font-size: 9px; color: #555;">
+          <span style="width: 6px; height: 6px; background: #22c55e; border-radius: 50%; display: inline-block;"></span>
+          <span>Next: 4s</span>
+          <span>Effects: 127ms</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Overlay Panels</h3>
+      <p>Video takes the full width. Effects and Pipeline float as <strong>collapsible overlays</strong> on top. Maximum video real estate, controls hide when not needed. Presets in a dropdown from the header.</p>
+    </div>
+  </div>
+</div>

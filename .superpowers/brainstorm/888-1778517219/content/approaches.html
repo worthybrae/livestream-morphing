@@ -1,0 +1,69 @@
+<h2>Studio Architecture — 3 Approaches</h2>
+<p class="subtitle">How should the studio UI be built and served?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Single HTML + WebSocket (Recommended)</h3>
+      <p>One self-contained HTML file served from the existing Axum server. Vanilla JS, no build tools. WebSocket pushes real-time parameter changes to the effect pipeline.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Zero frontend build tooling — just HTML/CSS/JS</li>
+          <li>Single binary deployment, same as today</li>
+          <li>WebSocket gives instant feedback (no polling)</li>
+          <li>Easy to hack on — edit one file, refresh browser</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Vanilla JS can get messy at scale</li>
+          <li>No component reuse or framework niceties</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>SPA Framework + REST API</h3>
+      <p>React/Svelte/Vue frontend with a proper build step. REST endpoints on the Axum server for reading/writing effect state. Frontend polls or uses SSE for updates.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Cleaner component architecture</li>
+          <li>Better for complex UI interactions (drag-and-drop reorder)</li>
+          <li>Hot module reload during frontend dev</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Adds npm/node toolchain dependency</li>
+          <li>Two build steps (Rust + JS)</li>
+          <li>More complex deployment</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>HTMX + Server-Rendered</h3>
+      <p>Server renders HTML fragments, HTMX handles interactivity. Minimal JS — the server drives the UI. Slider changes send HTMX requests that update the pipeline and return updated HTML.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Almost zero client-side JS</li>
+          <li>Rust templates (Askama/Tera) keep everything in one language</li>
+          <li>Trendy, simple mental model</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Slider interactions feel laggy (round-trip per change)</li>
+          <li>Drag-and-drop reorder is awkward with HTMX</li>
+          <li>Less suited for highly interactive creative tools</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>My Recommendation: Option A</h3>
+  <p>For a creative tool where the primary interaction is dragging sliders and watching a live stream change, the single-HTML + WebSocket approach hits the sweet spot. No build tooling to fight, instant feedback via WebSocket, and the UI complexity is bounded — it's fundamentally a list of effects with sliders, not a complex app. You can always migrate to a framework later if it outgrows vanilla JS.</p>
+</div>

@@ -1,0 +1,122 @@
+<h2>What should the Presets tab look like?</h2>
+<p class="subtitle">This is the main new feature — right now presets are just tiny buttons in the toolbar. How should they feel?</p>
+
+<div class="cards">
+  <!-- Option A: Card grid -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 0; background: #0c0a09; overflow: hidden;">
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;">
+        <!-- Simulated right panel in Ember style -->
+        <div style="width: 100%; background: rgba(245,158,11,0.01); padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #57534e; font-weight: 600;">Presets</span>
+            <div style="display: flex; gap: 6px;">
+              <span style="padding: 4px 10px; font-size: 10px; color: white; background: linear-gradient(135deg, #f59e0b, #f97316); border-radius: 5px; font-weight: 500;">+ Save Current</span>
+              <span style="padding: 4px 10px; font-size: 10px; color: #a8a29e; background: rgba(255,255,255,0.04); border-radius: 5px; font-weight: 500; border: 1px solid rgba(255,255,255,0.06);">🎲 Random</span>
+            </div>
+          </div>
+          <!-- Preset cards in a grid -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div style="padding: 12px; background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.12); border-radius: 10px; cursor: pointer;">
+              <div style="font-size: 12px; color: #e7e5e4; font-weight: 500; margin-bottom: 4px;">Cool Dot Boxes</div>
+              <div style="font-size: 9px; color: #78716c;">5 effects</div>
+              <div style="display: flex; gap: 3px; margin-top: 8px;">
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">blur</span>
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">hue</span>
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">+3</span>
+              </div>
+            </div>
+            <div style="padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; cursor: pointer;">
+              <div style="font-size: 12px; color: #a8a29e; font-weight: 500; margin-bottom: 4px;">Neon Glow</div>
+              <div style="font-size: 9px; color: #78716c;">3 effects</div>
+              <div style="display: flex; gap: 3px; margin-top: 8px;">
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">contrast</span>
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">+2</span>
+              </div>
+            </div>
+            <div style="padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; cursor: pointer;">
+              <div style="font-size: 12px; color: #a8a29e; font-weight: 500; margin-bottom: 4px;">Dreamy Soft</div>
+              <div style="font-size: 9px; color: #78716c;">7 effects</div>
+              <div style="display: flex; gap: 3px; margin-top: 8px;">
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">blur</span>
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">levels</span>
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">+5</span>
+              </div>
+            </div>
+            <div style="padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; cursor: pointer;">
+              <div style="font-size: 12px; color: #a8a29e; font-weight: 500; margin-bottom: 4px;">Retro VHS</div>
+              <div style="font-size: 9px; color: #78716c;">6 effects</div>
+              <div style="display: flex; gap: 3px; margin-top: 8px;">
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">chroma</span>
+                <span style="padding: 2px 6px; font-size: 8px; background: rgba(255,255,255,0.04); border-radius: 3px; color: #78716c;">+5</span>
+              </div>
+            </div>
+          </div>
+          <!-- Hover state hint -->
+          <div style="font-size: 9px; color: #44403c; text-align: center; margin-top: 4px;">click to apply · hover to preview effects list</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Card Grid</h3>
+      <p>Each preset is a card showing name, effect count, and tag chips for the first few effects. 2-column grid in the right panel. <strong>Save Current</strong> and <strong>Randomize</strong> buttons at the top. Rich but compact.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Clean list -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 0; background: #0c0a09; overflow: hidden;">
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;">
+        <div style="width: 100%; background: rgba(245,158,11,0.01); padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #57534e; font-weight: 600;">Presets</span>
+            <div style="display: flex; gap: 6px;">
+              <span style="padding: 4px 10px; font-size: 10px; color: white; background: linear-gradient(135deg, #f59e0b, #f97316); border-radius: 5px; font-weight: 500;">+ Save Current</span>
+              <span style="padding: 4px 10px; font-size: 10px; color: #a8a29e; background: rgba(255,255,255,0.04); border-radius: 5px; font-weight: 500; border: 1px solid rgba(255,255,255,0.06);">🎲 Random</span>
+            </div>
+          </div>
+          <!-- Preset list -->
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <div style="padding: 10px 12px; background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.12); border-radius: 8px; display: flex; align-items: center; gap: 10px;">
+              <div style="width: 28px; height: 28px; border-radius: 7px; background: linear-gradient(135deg, #f59e0b, #f97316); display: flex; align-items: center; justify-content: center; font-size: 12px;">🎨</div>
+              <div style="flex: 1;">
+                <div style="font-size: 12px; color: #e7e5e4; font-weight: 500;">Cool Dot Boxes</div>
+                <div style="font-size: 9px; color: #78716c; margin-top: 1px;">5 effects · saved 2h ago</div>
+              </div>
+              <span style="font-size: 14px; color: #44403c; cursor: pointer;">×</span>
+            </div>
+            <div style="padding: 10px 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; display: flex; align-items: center; gap: 10px;">
+              <div style="width: 28px; height: 28px; border-radius: 7px; background: rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 12px;">✨</div>
+              <div style="flex: 1;">
+                <div style="font-size: 12px; color: #a8a29e; font-weight: 500;">Neon Glow</div>
+                <div style="font-size: 9px; color: #78716c; margin-top: 1px;">3 effects · saved yesterday</div>
+              </div>
+              <span style="font-size: 14px; color: #44403c; cursor: pointer;">×</span>
+            </div>
+            <div style="padding: 10px 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; display: flex; align-items: center; gap: 10px;">
+              <div style="width: 28px; height: 28px; border-radius: 7px; background: rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 12px;">🌀</div>
+              <div style="flex: 1;">
+                <div style="font-size: 12px; color: #a8a29e; font-weight: 500;">Dreamy Soft</div>
+                <div style="font-size: 9px; color: #78716c; margin-top: 1px;">7 effects · saved 3d ago</div>
+              </div>
+              <span style="font-size: 14px; color: #44403c; cursor: pointer;">×</span>
+            </div>
+            <div style="padding: 10px 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; display: flex; align-items: center; gap: 10px;">
+              <div style="width: 28px; height: 28px; border-radius: 7px; background: rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 12px;">📼</div>
+              <div style="flex: 1;">
+                <div style="font-size: 12px; color: #a8a29e; font-weight: 500;">Retro VHS</div>
+                <div style="font-size: 9px; color: #78716c; margin-top: 1px;">6 effects · saved 1w ago</div>
+              </div>
+              <span style="font-size: 14px; color: #44403c; cursor: pointer;">×</span>
+            </div>
+          </div>
+          <div style="font-size: 9px; color: #44403c; text-align: center; margin-top: 4px;">click to apply · × to delete</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Clean List</h3>
+      <p>Single-column list with icon, name, metadata, and delete button. Each row is a single click to apply. Simpler, more scannable, fits a narrow panel better. Timestamp gives context.</p>
+    </div>
+  </div>
+</div>

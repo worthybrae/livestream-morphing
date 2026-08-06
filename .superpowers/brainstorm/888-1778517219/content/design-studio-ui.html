@@ -1,0 +1,164 @@
+<h2>Design — Section 4: Studio UI</h2>
+<p class="subtitle">React app layout and component structure</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Studio Layout — Desktop</div>
+    <div class="mockup-body" style="padding: 0; min-height: 400px; display: flex; flex-direction: column;">
+
+      <!-- Top bar -->
+      <div style="background: #0f172a; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b;">
+        <div style="color: #f59e0b; font-weight: bold; font-size: 14px;">🎨 Morph Studio</div>
+        <div style="display: flex; gap: 8px;">
+          <div style="background: #1e293b; padding: 4px 12px; border-radius: 4px; font-size: 12px; color: #94a3b8;">Preset: <span style="color: #a3e635;">Psychedelic v1</span></div>
+          <div style="background: #6366f1; padding: 4px 12px; border-radius: 4px; font-size: 12px; color: white;">Save Preset</div>
+          <div style="background: #1e293b; padding: 4px 12px; border-radius: 4px; font-size: 12px; color: #94a3b8;">Load</div>
+        </div>
+      </div>
+
+      <!-- Main content -->
+      <div style="display: flex; flex: 1;">
+
+        <!-- Left: Effect Library -->
+        <div style="width: 200px; background: #0f172a; border-right: 1px solid #1e293b; padding: 12px;">
+          <div style="color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;">Effect Library</div>
+
+          <div style="background: #1e293b; padding: 8px; border-radius: 4px; margin-bottom: 4px; font-size: 12px; color: #e2e8f0; cursor: pointer; border-left: 2px solid #6366f1;">Quantize</div>
+          <div style="background: #1e293b; padding: 8px; border-radius: 4px; margin-bottom: 4px; font-size: 12px; color: #e2e8f0; cursor: pointer; border-left: 2px solid #6366f1;">Distortion</div>
+          <div style="background: #1e293b; padding: 8px; border-radius: 4px; margin-bottom: 4px; font-size: 12px; color: #e2e8f0; cursor: pointer; border-left: 2px solid #6366f1;">Edge Detect</div>
+          <div style="background: #1e293b; padding: 8px; border-radius: 4px; margin-bottom: 4px; font-size: 12px; color: #e2e8f0; cursor: pointer; border-left: 2px solid #6366f1;">Canvas Texture</div>
+          <div style="background: #1e293b; padding: 8px; border-radius: 4px; margin-bottom: 4px; font-size: 12px; color: #64748b; cursor: pointer; border-left: 2px solid #334155;">Blur</div>
+          <div style="background: #1e293b; padding: 8px; border-radius: 4px; margin-bottom: 4px; font-size: 12px; color: #64748b; cursor: pointer; border-left: 2px solid #334155;">Color Shift</div>
+          <div style="background: #1e293b; padding: 8px; border-radius: 4px; margin-bottom: 4px; font-size: 12px; color: #64748b; cursor: pointer; border-left: 2px solid #334155;">Vignette</div>
+
+          <div style="margin-top: 8px; font-size: 11px; color: #475569; text-align: center;">click to add to pipeline →</div>
+        </div>
+
+        <!-- Center: Video Player -->
+        <div style="flex: 1; background: #000; display: flex; flex-direction: column;">
+          <div style="flex: 1; display: flex; align-items: center; justify-content: center; min-height: 240px;">
+            <div style="width: 80%; aspect-ratio: 16/9; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); border-radius: 4px; display: flex; align-items: center; justify-content: center; position: relative;">
+              <div style="color: #475569; font-size: 14px;">🎥 HLS Live Stream</div>
+              <div style="position: absolute; top: 8px; left: 8px; background: #ef4444; padding: 2px 8px; border-radius: 4px; font-size: 10px; color: white;">LIVE</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Pipeline + Params -->
+        <div style="width: 280px; background: #0f172a; border-left: 1px solid #1e293b; display: flex; flex-direction: column;">
+
+          <!-- Pipeline order -->
+          <div style="padding: 12px; border-bottom: 1px solid #1e293b;">
+            <div style="color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;">Pipeline Order</div>
+
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; background: #1e293b; padding: 6px 8px; border-radius: 4px; border-left: 3px solid #a3e635;">
+              <div style="color: #475569; cursor: grab; font-size: 10px;">⠿</div>
+              <div style="font-size: 12px; color: #e2e8f0; flex: 1;">1. Distortion</div>
+              <div style="color: #a3e635; font-size: 10px;">●</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; background: #312e81; padding: 6px 8px; border-radius: 4px; border-left: 3px solid #6366f1;">
+              <div style="color: #475569; cursor: grab; font-size: 10px;">⠿</div>
+              <div style="font-size: 12px; color: #e2e8f0; flex: 1;">2. Quantize</div>
+              <div style="color: #a3e635; font-size: 10px;">●</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; background: #1e293b; padding: 6px 8px; border-radius: 4px; border-left: 3px solid #a3e635;">
+              <div style="color: #475569; cursor: grab; font-size: 10px;">⠿</div>
+              <div style="font-size: 12px; color: #e2e8f0; flex: 1;">3. Edge Detect</div>
+              <div style="color: #a3e635; font-size: 10px;">●</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; background: #1e293b; padding: 6px 8px; border-radius: 4px; border-left: 3px solid #ef4444;">
+              <div style="color: #475569; cursor: grab; font-size: 10px;">⠿</div>
+              <div style="font-size: 12px; color: #64748b; flex: 1; text-decoration: line-through;">4. Canvas Texture</div>
+              <div style="color: #ef4444; font-size: 10px;">●</div>
+            </div>
+            <div style="font-size: 10px; color: #475569; margin-top: 4px;">drag to reorder · click dot to toggle</div>
+          </div>
+
+          <!-- Params for selected effect -->
+          <div style="padding: 12px; flex: 1; overflow-y: auto;">
+            <div style="color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;">Quantize — Parameters</div>
+
+            <div style="margin-bottom: 14px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <div style="font-size: 12px; color: #cbd5e1;">Levels</div>
+                <div style="font-size: 12px; color: #6366f1; font-weight: bold;">10</div>
+              </div>
+              <div style="background: #334155; height: 4px; border-radius: 2px; position: relative;">
+                <div style="background: #6366f1; height: 4px; border-radius: 2px; width: 35%;"></div>
+                <div style="position: absolute; top: -4px; left: 35%; width: 12px; height: 12px; background: white; border-radius: 50%; transform: translateX(-50%);"></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-top: 2px;">
+                <div style="font-size: 10px; color: #475569;">2</div>
+                <div style="font-size: 10px; color: #475569;">32</div>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 14px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <div style="font-size: 12px; color: #cbd5e1;">Smoothing</div>
+                <div style="font-size: 12px; color: #6366f1; font-weight: bold;">0.0</div>
+              </div>
+              <div style="background: #334155; height: 4px; border-radius: 2px; position: relative;">
+                <div style="background: #6366f1; height: 4px; border-radius: 2px; width: 0%;"></div>
+                <div style="position: absolute; top: -4px; left: 0%; width: 12px; height: 12px; background: white; border-radius: 50%; transform: translateX(-50%);"></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-top: 2px;">
+                <div style="font-size: 10px; color: #475569;">0.0</div>
+                <div style="font-size: 10px; color: #475569;">1.0</div>
+              </div>
+            </div>
+
+            <div style="margin-top: 20px; padding-top: 12px; border-top: 1px solid #1e293b;">
+              <div style="background: #450a0a; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; color: #fca5a5; cursor: pointer;">Remove from Pipeline</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">React Component Tree</div>
+    <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 1.6; color: #e2e8f0;">
+      src/<br>
+      ├── App.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// layout shell, API state</span><br>
+      ├── components/<br>
+      │&nbsp;&nbsp;├── EffectLibrary.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// left panel — browse + click to add</span><br>
+      │&nbsp;&nbsp;├── VideoPlayer.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// center — HLS.js player</span><br>
+      │&nbsp;&nbsp;├── PipelineEditor.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// right top — drag-and-drop order</span><br>
+      │&nbsp;&nbsp;├── ParamPanel.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// right bottom — sliders for selected</span><br>
+      │&nbsp;&nbsp;├── PresetBar.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// top bar — save/load presets</span><br>
+      │&nbsp;&nbsp;└── Slider.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// reusable slider with label + value</span><br>
+      ├── hooks/<br>
+      │&nbsp;&nbsp;├── useEffects.ts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// GET /api/effects</span><br>
+      │&nbsp;&nbsp;├── usePipeline.ts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// GET/PUT /api/pipeline + PATCH params</span><br>
+      │&nbsp;&nbsp;└── usePresets.ts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// CRUD /api/presets</span><br>
+      └── types/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;└── index.ts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// Effect, PipelineSlot, Preset, ParamDef</span>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Key Decisions</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Drag-and-drop</h4>
+      <p>Use <code>@dnd-kit/core</code> — lightweight, accessible, built for React. Handles reorder in the pipeline list, then PUTs the new order to the backend.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">HLS playback</h4>
+      <p>Use <code>hls.js</code> — the standard for HLS in browsers. Points at the existing <code>/stream/playlist.m3u8</code> endpoint. Low-latency config to minimize the delay.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Dev workflow</h4>
+      <p><code>vite dev</code> with proxy to <code>localhost:3000</code> (Rust). Hot reload on React changes, <code>cargo run</code> for backend. Two terminals.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Production build</h4>
+      <p><code>vite build</code> → static files embedded in Rust binary via <code>include_dir</code> crate. Single binary serves both API and frontend.</p>
+    </div>
+  </div>
+</div>

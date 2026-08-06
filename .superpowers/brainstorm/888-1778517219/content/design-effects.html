@@ -1,0 +1,119 @@
+<h2>Design — Section 2: Effect System</h2>
+<p class="subtitle">How effects are defined, registered, and discovered</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Effect Trait + Registration Macro</div>
+    <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 1.6;">
+      <div style="color: #94a3b8; margin-bottom: 8px;">// registry.rs — the core abstraction</div>
+      <div style="color: #e2e8f0;">
+        <span style="color: #c084fc;">trait</span> <span style="color: #f59e0b;">Effect</span>: Send + Sync {<br>
+        &nbsp;&nbsp;<span style="color: #94a3b8;">/// Unique identifier (e.g. "quantize")</span><br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">id</span>(&self) -> &str;<br>
+        &nbsp;&nbsp;<span style="color: #94a3b8;">/// Human-readable name</span><br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">name</span>(&self) -> &str;<br>
+        &nbsp;&nbsp;<span style="color: #94a3b8;">/// Parameter definitions (name, min, max, default, step)</span><br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">params</span>(&self) -> Vec&lt;ParamDef&gt;;<br>
+        &nbsp;&nbsp;<span style="color: #94a3b8;">/// Allocate any scratch buffers for given dimensions</span><br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">init</span>(&mut self, width: u32, height: u32);<br>
+        &nbsp;&nbsp;<span style="color: #94a3b8;">/// Apply the effect to a frame</span><br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">apply</span>(&mut self, frame: &mut RawFrame, params: &ParamValues, ctx: &FrameCtx);<br>
+        }
+      </div>
+
+      <div style="margin-top: 20px; border-top: 1px solid #334155; padding-top: 16px;">
+        <div style="color: #94a3b8; margin-bottom: 8px;">// FrameCtx — shared context passed to every effect</div>
+        <div style="color: #e2e8f0;">
+          <span style="color: #c084fc;">struct</span> <span style="color: #f59e0b;">FrameCtx</span> {<br>
+          &nbsp;&nbsp;frame_number: u32,<br>
+          &nbsp;&nbsp;width: u32,<br>
+          &nbsp;&nbsp;height: u32,<br>
+          &nbsp;&nbsp;scratch: &mut RawFrame, <span style="color: #94a3b8;">// shared scratch buffer</span><br>
+          }
+        </div>
+      </div>
+
+      <div style="margin-top: 20px; border-top: 1px solid #334155; padding-top: 16px;">
+        <div style="color: #94a3b8; margin-bottom: 8px;">// ParamDef — describes a tunable parameter</div>
+        <div style="color: #e2e8f0;">
+          <span style="color: #c084fc;">struct</span> <span style="color: #f59e0b;">ParamDef</span> {<br>
+          &nbsp;&nbsp;id: String,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// "amplitude"</span><br>
+          &nbsp;&nbsp;name: String,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// "Distortion Amplitude"</span><br>
+          &nbsp;&nbsp;min: f32,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// 0.0</span><br>
+          &nbsp;&nbsp;max: f32,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// 0.2</span><br>
+          &nbsp;&nbsp;default: f32,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// 0.02</span><br>
+          &nbsp;&nbsp;step: f32,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// 0.005</span><br>
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Writing a New Effect — What You'd Actually Type</div>
+    <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 1.6;">
+      <div style="color: #94a3b8; margin-bottom: 8px;">// effects/blur.rs — a complete new effect</div>
+      <div style="color: #e2e8f0;">
+        <span style="color: #c084fc;">use crate</span>::registry::{Effect, ParamDef, ParamValues, FrameCtx, RawFrame};<br><br>
+
+        <span style="color: #c084fc;">pub struct</span> <span style="color: #f59e0b;">Blur</span>;<br><br>
+
+        <span style="color: #c084fc;">impl</span> Effect <span style="color: #c084fc;">for</span> Blur {<br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">id</span>(&self) -> &str { <span style="color: #a3e635;">"blur"</span> }<br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">name</span>(&self) -> &str { <span style="color: #a3e635;">"Gaussian Blur"</span> }<br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">params</span>(&self) -> Vec&lt;ParamDef&gt; {<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;vec![ParamDef::new(<span style="color: #a3e635;">"radius"</span>, <span style="color: #a3e635;">"Blur Radius"</span>, 0.0, 20.0, 3.0, 0.5)]<br>
+        &nbsp;&nbsp;}<br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">init</span>(&mut self, _w: u32, _h: u32) {}<br>
+        &nbsp;&nbsp;<span style="color: #c084fc;">fn</span> <span style="color: #6366f1;">apply</span>(&mut self, frame: &mut RawFrame, params: &ParamValues, _ctx: &FrameCtx) {<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #c084fc;">let</span> radius = params.get(<span style="color: #a3e635;">"radius"</span>);<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// ... your blur implementation here</span><br>
+        &nbsp;&nbsp;}<br>
+        }<br><br>
+
+        <span style="color: #22d3ee;">register_effect!</span>(Blur);&nbsp;&nbsp;<span style="color: #94a3b8;">// ← one line, shows up in studio</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Refactored effects/ Directory</div>
+    <div class="mockup-body" style="padding: 24px; font-family: monospace; font-size: 13px; line-height: 1.6; color: #e2e8f0;">
+      effects/<br>
+      ├── mod.rs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// re-exports + calls register_effect! for each</span><br>
+      ├── quantize.rs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// existing: color quantization</span><br>
+      ├── distortion.rs&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// existing: sine-wave psychedelic</span><br>
+      ├── edges.rs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// existing: sobel edge overlay</span><br>
+      ├── canvas_texture.rs <span style="color: #94a3b8;">// existing: canvas weave blend</span><br>
+      ├── blur.rs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// new: gaussian/box blur</span><br>
+      ├── color_shift.rs&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// new: hue/saturation/brightness</span><br>
+      └── ...&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #94a3b8;">// add more anytime</span>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Key Design Decisions</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Why a trait, not just functions?</h4>
+      <p>Effects like edge detection need scratch buffers (grayscale, edge maps). The trait's <code>init()</code> lets each effect pre-allocate what it needs. A plain function would re-allocate every frame.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Why FrameCtx?</h4>
+      <p>Frame number (for animation), dimensions, and a shared scratch buffer. Passed to every effect so animated effects like distortion can cycle over time without storing global state.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Why f32 for all params?</h4>
+      <p>Simplifies the UI — every param is a slider. Integer params just use step=1.0. Boolean toggles use min=0, max=1, step=1. One UI widget handles everything.</p>
+    </div>
+    <div style="background: #1e293b; padding: 16px; border-radius: 8px;">
+      <h4 style="color: #f59e0b;">Multiple instances?</h4>
+      <p>The pipeline holds effect <em>instances</em>, not types. You can add "Quantize" twice with different settings — each gets its own params and scratch buffers.</p>
+    </div>
+  </div>
+</div>
