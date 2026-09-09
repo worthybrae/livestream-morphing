@@ -211,6 +211,7 @@ impl AppState {
 
         let mut p = Pipeline::new();
         p.add_effect("distortion").expect("distortion registered");
+        p.add_effect("grayscale").expect("grayscale registered");
         p.add_effect("quantize").expect("quantize registered");
         p.add_effect("edges").expect("edges registered");
         p.add_effect("canvas_texture").expect("canvas_texture registered");
@@ -592,6 +593,24 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn default_pipeline_is_monochrome_before_quantization_and_edges() {
+        let (state, _rx) = AppState::new();
+        let effect_ids: Vec<String> = state
+            .pipeline
+            .lock()
+            .unwrap()
+            .view()
+            .into_iter()
+            .map(|slot| slot.effect_id)
+            .collect();
+
+        assert_eq!(
+            effect_ids,
+            ["distortion", "grayscale", "quantize", "edges", "canvas_texture"]
+        );
+    }
+
     use super::*;
     use crate::effects::RawFrame;
 
