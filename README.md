@@ -3,7 +3,7 @@
 A real-time video processing system that transforms the Abbey Road webcam livestream with artistic effects. Features a public viewer and admin interface for live stylization control.
 
 The portfolio stream uses the Rust service in `livestream-morphing-rs` and
-Railway Serverless. Production CDN delivery is pending (see below). It does not
+Railway Serverless with direct Railway HTTPS production delivery (see below). It does not
 use the legacy Python, Celery, Redis, S3, or R2 deployment instructions below.
 See [Production deployment](#production-deployment-railway) for the current runtime
 contract and rollout status.
