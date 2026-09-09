@@ -41,6 +41,6 @@ Files: personal/src/components/LiveStream, personal/src/pages/Home.tsx, related 
 - [x] Extend hero behind navigation and keep normal scroll behavior.
 - [x] Show real engine telemetry and stop background demand when the page is hidden.
 - [x] Run portfolio tests/build and studio build; visually inspect live-rendered comparison and local page.
-- [ ] Deploy only if benchmark and cost projection pass; verify live playback and retain rollback deployment identifiers.
+- [x] Deploy only if benchmark and cost projection pass; verify live playback and retain rollback deployment identifiers.
 
 Implementation note: preview uses a captured clip rendered on explicit request, with versioned export for production. This avoids a paid preview service and keeps production publishing tied to a reviewed deployment. See the benchmark report for the 360p release decision.

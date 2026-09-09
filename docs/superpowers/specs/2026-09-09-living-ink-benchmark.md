@@ -34,3 +34,16 @@ Source timing is verified for the current constant-frame-rate source. First sour
 ## Verification
 
 98 Rust tests; 91 portfolio tests; studio and portfolio builds passed. Local browser playback advanced; artwork filled the initial viewport behind navigation; scrolling removed the entire hero. Local studio rendered and played a draft using the native renderer, without production credentials. The earlier build-contention timing samples were discarded in favor of the isolated measurements above.
+
+## Production acceptance
+
+Stream deployment: `2284c45e-84d1-48c9-9308-9ae8ba45923a` (SUCCESS), commit `33a0acf`.
+Portfolio deployment: `5be49467-2ccb-47f1-afec-cedf6dec806c` (SUCCESS), commit `59c1fe8`.
+Previous stream deployment: `8138031e-4430-4834-888d-25b2ee5ce312`, source commit `ba3b487`.
+Previous portfolio deployment: `b141cdb4-fced-4c83-8bce-1fcfc5d67020`, source commit `8b00843`.
+
+Production first segment: 180 frames, 6.006 seconds, 640×360, 29.97 source fps; 2.657 seconds total processing, 9.40/10.33 ms frame p50/p95, 130,660 encoded bytes. Later browser checks confirmed the native HLS video advanced from 18.686 to 48.541 seconds, readyState 4, unpaused. Full-bleed navigation and telemetry were visually verified. `/health` and non-waking `/api/live/metrics` return 200; `/api/studio/preview` and `/api/pipeline` return 404. Test viewer closed after acceptance to avoid continued demand.
+
+The local test process eventually settled at 31.16 MiB container memory and 0% CPU after idle. The estimate above intentionally retains the higher 66 MiB process RSS assumption.
+
+Local studio is available at http://127.0.0.1:3080 while its preview container runs. Its captured input is `/tmp/living-ink/source.ts`; comparison outputs are in `artifacts/living-ink/` in the stream worktree. No Cloudflare or AWS resources were created or changed. The unrelated portfolio `tsconfig.tsbuildinfo` remains uncommitted.
