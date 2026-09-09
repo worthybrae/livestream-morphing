@@ -5,9 +5,15 @@ use crate::registry::{Effect, FrameCtx, ParamDef, ParamValues};
 pub struct Grayscale;
 
 impl Effect for Grayscale {
-    fn id(&self) -> &'static str { "grayscale" }
-    fn name(&self) -> &'static str { "Grayscale" }
-    fn params(&self) -> Vec<ParamDef> { vec![] }
+    fn id(&self) -> &'static str {
+        "grayscale"
+    }
+    fn name(&self) -> &'static str {
+        "Grayscale"
+    }
+    fn params(&self) -> Vec<ParamDef> {
+        vec![]
+    }
     fn init(&mut self, _width: u32, _height: u32) {}
     fn apply(&mut self, frame: &mut RawFrame, _params: &ParamValues, _ctx: &FrameCtx) {
         for pixel in frame.data.chunks_exact_mut(3) {
@@ -31,7 +37,11 @@ mod tests {
         let mut effect = Grayscale;
         let mut frame = RawFrame::new(2, 1);
         frame.data = vec![255, 0, 0, 0, 255, 0];
-        let ctx = FrameCtx { frame_number: 0, width: 2, height: 1 };
+        let ctx = FrameCtx {
+            frame_number: 0,
+            width: 2,
+            height: 1,
+        };
 
         effect.apply(&mut frame, &ParamValues::new(), &ctx);
 
