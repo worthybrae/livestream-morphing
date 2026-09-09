@@ -122,7 +122,11 @@ async fn get_segment(
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
     {
-        return StatusCode::BAD_REQUEST.into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CACHE_CONTROL, "no-store")],
+        )
+            .into_response();
     }
 
     // Strip .ts extension — the playlist generates URLs like /api/segments/12345.ts
@@ -146,7 +150,11 @@ async fn get_segment(
             bytes,
         )
             .into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            [(header::CACHE_CONTROL, "no-store")],
+        )
+            .into_response(),
     }
 }
 
@@ -266,6 +274,44 @@ mod tests {
             response.headers()[header::CACHE_CONTROL],
             "public, max-age=3600, immutable"
         );
+    }
+
+    #[tokio::test]
+    async fn invalid_segment_ids_are_not_cached() {
+        let (state, _rx) = AppState::new();
+        let app = router_with_config(state, test_config(true));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/segments/{}.ts", "a".repeat(65)))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn missing_segments_are_not_cached() {
+        let (state, _rx) = AppState::new();
+        let app = router_with_config(state, test_config(true));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/segments/does-not-exist.ts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     }
 
     #[tokio::test]
