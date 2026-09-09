@@ -199,7 +199,7 @@ pub struct AppState {
     pub stream_url: RwLock<String>,
     pub stats: Mutex<ProcessingStats>,
     pipeline_started_at: AtomicU64,
-    session_id: AtomicU64,
+    session_id: Mutex<uuid::Uuid>,
 }
 
 impl AppState {
@@ -220,7 +220,7 @@ impl AppState {
             stream_url: RwLock::new(StreamSource::default_url()),
             stats: Mutex::new(ProcessingStats::default()),
             pipeline_started_at: AtomicU64::new(0),
-            session_id: AtomicU64::new(0),
+            session_id: Mutex::new(uuid::Uuid::nil()),
         });
         (state, rx)
     }
@@ -250,12 +250,28 @@ impl AppState {
     pub fn mark_pipeline_started(&self, now_ms: u64) {
         *self.stats.lock().unwrap() = ProcessingStats::default();
         self.pipeline_started_at.store(now_ms, Ordering::Relaxed);
-        self.session_id.store(now_ms, Ordering::Relaxed);
+        *self.session_id.lock().unwrap() = uuid::Uuid::new_v4();
     }
 
     pub fn output_segment_id(&self, source_id: &str) -> String {
-        let session_id = self.session_id.load(Ordering::Relaxed);
+        let session_id = self.session_id.lock().unwrap();
         format!("{session_id}-{source_id}")
+    }
+
+    async fn publish_segment(&self, source_id: &str, encoded: Vec<u8>, stats: ProcessingStats) {
+        let mut buffer = self.hls_buffer.write().await;
+        let mut current_stats = self.stats.lock().unwrap();
+        let previous_completed_at = current_stats.segment_completed_at;
+        if previous_completed_at > 0
+            && stats
+                .segment_completed_at
+                .saturating_sub(previous_completed_at)
+                > FRESH_SEGMENT_MS
+        {
+            buffer.clear();
+        }
+        *current_stats = stats;
+        buffer.push_segment(self.output_segment_id(source_id), encoded);
     }
 
     /// Record a client request and activate the pipeline if needed.
@@ -449,24 +465,22 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 );
                 frame_counter += num_frames;
 
-                // Update processing stats
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_millis() as u64;
-                {
-                    let mut stats = state.stats.lock().unwrap();
-                    stats.effects_ms = effects_ms;
-                    stats.total_ms = total_ms;
-                    stats.frames = num_frames as u64;
-                    stats.segment_completed_at = now_ms;
-                }
-
                 state
-                    .hls_buffer
-                    .write()
-                    .await
-                    .push_segment(state.output_segment_id(&segment_id), encoded);
+                    .publish_segment(
+                        &segment_id,
+                        encoded,
+                        ProcessingStats {
+                            effects_ms,
+                            total_ms,
+                            frames: num_frames as u64,
+                            segment_completed_at: now_ms,
+                        },
+                    )
+                    .await;
             }
             Ok(Err(e)) => {
                 tracing::error!(error = %e, "Processing failed");
@@ -537,19 +551,18 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_millis() as u64;
-                    {
-                        let mut stats = state.stats.lock().unwrap();
-                        stats.effects_ms = effects_ms;
-                        stats.total_ms = total_ms;
-                        stats.frames = num_frames as u64;
-                        stats.segment_completed_at = now_ms;
-                    }
-
                     state
-                        .hls_buffer
-                        .write()
-                        .await
-                        .push_segment(state.output_segment_id(&next_seg_id), encoded);
+                        .publish_segment(
+                            &next_seg_id,
+                            encoded,
+                            ProcessingStats {
+                                effects_ms,
+                                total_ms,
+                                frames: num_frames as u64,
+                                segment_completed_at: now_ms,
+                            },
+                        )
+                        .await;
                 }
                 Ok(Err(e)) => {
                     tracing::error!(error = %e, "Processing failed (prefetched)");
@@ -639,14 +652,49 @@ mod tests {
         assert_eq!(state.live_status(101_001).await.state, LiveState::Unavailable);
     }
 
+    #[tokio::test]
+    async fn post_stall_segment_starts_new_readiness_window() {
+        let (state, _rx) = AppState::new();
+        state.mark_pipeline_started(1_000);
+        for (id, completed_at) in [("1", 10_000), ("2", 16_000)] {
+            state
+                .publish_segment(
+                    id,
+                    vec![1],
+                    ProcessingStats {
+                        segment_completed_at: completed_at,
+                        ..ProcessingStats::default()
+                    },
+                )
+                .await;
+        }
+
+        state
+            .publish_segment(
+                "3",
+                vec![1],
+                ProcessingStats {
+                    segment_completed_at: 40_001,
+                    ..ProcessingStats::default()
+                },
+            )
+            .await;
+
+        let status = state.live_status(40_001).await;
+        assert_eq!(status.buffer_count, 1);
+        assert_eq!(status.state, LiveState::Starting);
+        assert!(!status.ready);
+    }
+
     #[test]
-    fn output_ids_change_between_sessions() {
+    fn output_ids_change_between_sessions_with_same_timestamp() {
         let (state, _rx) = AppState::new();
         state.mark_pipeline_started(1_000);
         let first = state.output_segment_id("44");
-        state.mark_pipeline_started(2_000);
+        state.mark_pipeline_started(1_000);
         let second = state.output_segment_id("44");
-        assert_eq!(first, "1000-44");
-        assert_eq!(second, "2000-44");
+        assert_ne!(first, second);
+        assert!(first.ends_with("-44"));
+        assert!(second.ends_with("-44"));
     }
 }
