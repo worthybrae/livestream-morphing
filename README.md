@@ -127,6 +127,25 @@ uvicorn main:app --reload --port 8000
 
 ---
 
+## Production deployment (Railway)
+
+Railway builds the Rust service from the repository root using `Dockerfile.railway`
+and checks `GET /health` before serving traffic. Configure the production service
+with these settings:
+
+```text
+PUBLIC_MODE=true
+ALLOWED_ORIGIN=https://worthyrae.com
+PORT is supplied by Railway
+STREAM_URL is optional and defaults to the Abbey Road source
+Serverless must be enabled for the livestream-morphing service
+```
+
+`live.worthyrae.com` is the only public playback hostname. The local studio is
+mounted only when `PUBLIC_MODE` is `false`.
+
+---
+
 ## 🎨 Stylization Configuration
 
 The admin API (`/api/admin/config`) allows real-time adjustments:
