@@ -105,6 +105,8 @@ pub fn decode_segment(
 /// Encode RGB24 frames into an H.264 MPEG-TS segment.
 /// `pts_offset` is the starting PTS for this segment (in frame units) to ensure
 /// continuous timestamps across segments for seamless HLS playback.
+/// Every segment shares a one-second timestamp origin to accommodate B-frame
+/// decode delay without independently shifting the first segment's timestamps.
 pub fn encode_segment(
     frames: &[RawFrame],
     fps: u32,
@@ -158,7 +160,12 @@ pub fn encode_segment(
     let mut encoder = encoder.open_with(x264_opts)?;
     ost.set_parameters(&encoder);
 
-    octx.write_header()?;
+    let mut muxer_opts = ffmpeg::Dictionary::new();
+    // Preserve the shared timeline instead of letting each independent muxer
+    // normalize negative DTS or add its own MPEG-TS timestamp offset.
+    muxer_opts.set("avoid_negative_ts", "disabled");
+    muxer_opts.set("mpegts_copyts", "1");
+    octx.write_header_with(muxer_opts)?;
 
     // Scaler: RGB24 → YUV420P
     let mut scaler = ScalingContext::get(
@@ -188,7 +195,7 @@ pub fn encode_segment(
         scaler.run(&rgb, &mut yuv)?;
         // PTS in 90kHz ticks: each frame = 90000/fps ticks apart
         let ticks_per_frame = 90000i64 / fps as i64;
-        yuv.set_pts(Some((pts_offset + i as i64) * ticks_per_frame));
+        yuv.set_pts(Some(90000 + (pts_offset + i as i64) * ticks_per_frame));
 
         encoder.send_frame(&yuv)?;
 
@@ -222,6 +229,60 @@ pub fn encode_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn independently_muxed_segments_keep_continuous_timestamps() {
+        init();
+        let frames: Vec<_> = (0..180)
+            .map(|i| RawFrame::filled(64, 48, (i % 256) as u8, 80, 160))
+            .collect();
+        let segments: Vec<Vec<(i64, i64)>> = (0..3)
+            .map(|segment| {
+                let bytes = encode_segment(&frames, 30, segment * 180).expect("encode segment");
+                let mut tmp = NamedTempFile::new().expect("temporary segment");
+                tmp.write_all(&bytes).expect("write segment");
+                tmp.flush().expect("flush segment");
+                let mut demuxer = input(tmp.path()).expect("demux segment");
+                let stream = demuxer.streams().best(Type::Video).expect("video stream");
+                assert_eq!(stream.time_base(), ffmpeg::Rational(1, 90000));
+                let video_index = stream.index();
+                demuxer
+                    .packets()
+                    .filter(|(stream, _)| stream.index() == video_index)
+                    .map(|(_, packet)| {
+                        (
+                            packet.pts().expect("packet PTS"),
+                            packet.dts().expect("packet DTS"),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let mut previous_pts_end = None;
+        let mut previous_dts_end = None;
+        for packets in segments {
+            assert_eq!(packets.len(), 180, "every frame must survive muxing");
+            let mut presentation_times: Vec<_> = packets.iter().map(|p| p.0).collect();
+            presentation_times.sort_unstable(); // B-frames reorder packet PTS, not presentation.
+            assert!(presentation_times.windows(2).all(|p| p[1] - p[0] == 3000));
+            assert!(packets.windows(2).all(|p| p[1].1 - p[0].1 == 3000));
+            let pts_start = presentation_times[0];
+            let dts_start = packets[0].1;
+            assert!(
+                dts_start >= 0,
+                "the shared timestamp origin must accommodate B-frame delay"
+            );
+            if let Some(end) = previous_pts_end {
+                assert_eq!(pts_start - end, 3000, "PTS boundary must not overlap or gap");
+            }
+            if let Some(end) = previous_dts_end {
+                assert_eq!(dts_start - end, 3000, "DTS boundary must not overlap or gap");
+            }
+            previous_pts_end = presentation_times.last().copied();
+            previous_dts_end = packets.last().map(|p| p.1);
+        }
+    }
 
     #[test]
     fn decode_caps_rgb_memory_without_stretching_frames() {
