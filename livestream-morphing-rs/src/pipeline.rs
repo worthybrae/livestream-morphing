@@ -200,6 +200,9 @@ pub struct AppState {
     pub stats: Mutex<ProcessingStats>,
     pipeline_started_at: AtomicU64,
     session_id: Mutex<uuid::Uuid>,
+    #[cfg(test)]
+    live_status_snapshot_hook:
+        Mutex<Option<(Arc<tokio::sync::Barrier>, Arc<tokio::sync::Barrier>)>>,
 }
 
 impl AppState {
@@ -221,13 +224,25 @@ impl AppState {
             stats: Mutex::new(ProcessingStats::default()),
             pipeline_started_at: AtomicU64::new(0),
             session_id: Mutex::new(uuid::Uuid::nil()),
+            #[cfg(test)]
+            live_status_snapshot_hook: Mutex::new(None),
         });
         (state, rx)
     }
 
     pub async fn live_status(&self, now_ms: u64) -> LiveStatus {
-        let buffer_count = self.hls_buffer.read().await.segment_count();
+        let buffer = self.hls_buffer.read().await;
+        let buffer_count = buffer.segment_count();
+        #[cfg(test)]
+        {
+            let hook = self.live_status_snapshot_hook.lock().unwrap().clone();
+            if let Some((captured, resume)) = hook {
+                captured.wait().await;
+                resume.wait().await;
+            }
+        }
         let last_segment_at = self.stats.lock().unwrap().segment_completed_at;
+        drop(buffer);
         let started_at = self.pipeline_started_at.load(Ordering::Relaxed);
         let fresh =
             last_segment_at > 0 && now_ms.saturating_sub(last_segment_at) <= FRESH_SEGMENT_MS;
@@ -682,6 +697,69 @@ mod tests {
 
         let status = state.live_status(40_001).await;
         assert_eq!(status.buffer_count, 1);
+        assert_eq!(status.state, LiveState::Starting);
+        assert!(!status.ready);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_status_samples_one_readiness_window() {
+        let (state, _rx) = AppState::new();
+        state.mark_pipeline_started(1_000);
+        for (id, completed_at) in [("1", 10_000), ("2", 16_000), ("3", 22_000)] {
+            state
+                .publish_segment(
+                    id,
+                    vec![1],
+                    ProcessingStats {
+                        segment_completed_at: completed_at,
+                        ..ProcessingStats::default()
+                    },
+                )
+                .await;
+        }
+
+        let captured = Arc::new(tokio::sync::Barrier::new(2));
+        let resume = Arc::new(tokio::sync::Barrier::new(2));
+        *state.live_status_snapshot_hook.lock().unwrap() =
+            Some((captured.clone(), resume.clone()));
+
+        let status_state = state.clone();
+        let status_task = tokio::spawn(async move { status_state.live_status(40_001).await });
+        captured.wait().await;
+
+        let publish_state = state.clone();
+        let mut publish_task = tokio::spawn(async move {
+            publish_state
+                .publish_segment(
+                    "4",
+                    vec![1],
+                    ProcessingStats {
+                        segment_completed_at: 40_001,
+                        ..ProcessingStats::default()
+                    },
+                )
+                .await;
+        });
+        let published_while_status_paused = match tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            &mut publish_task,
+        )
+        .await
+        {
+            Ok(result) => {
+                result.unwrap();
+                true
+            }
+            Err(_) => false,
+        };
+
+        resume.wait().await;
+        let status = status_task.await.unwrap();
+        if !published_while_status_paused {
+            publish_task.await.unwrap();
+        }
+
+        assert_eq!(status.buffer_count, 3);
         assert_eq!(status.state, LiveState::Starting);
         assert!(!status.ready);
     }
