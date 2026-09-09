@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{watch, RwLock};
 use serde::{Deserialize, Serialize};
@@ -169,14 +170,36 @@ pub struct ProcessingStats {
     pub segment_completed_at: u64, // unix timestamp in millis
 }
 
+const READY_SEGMENTS: usize = 3;
+const FRESH_SEGMENT_MS: u64 = 18_000;
+const UNAVAILABLE_AFTER_MS: u64 = 90_000;
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LiveState {
+    Starting,
+    Live,
+    Unavailable,
+}
+
+#[derive(Serialize)]
+pub struct LiveStatus {
+    pub state: LiveState,
+    pub buffer_count: usize,
+    pub ready: bool,
+    pub last_segment_at: u64,
+}
+
 /// Shared state between the pipeline and HTTP server.
 pub struct AppState {
     pub hls_buffer: RwLock<HlsBuffer>,
     pub pipeline_active: watch::Sender<bool>,
-    pub last_client_request: std::sync::atomic::AtomicU64,
+    pub last_client_request: AtomicU64,
     pub pipeline: Mutex<Pipeline>,
     pub stream_url: RwLock<String>,
     pub stats: Mutex<ProcessingStats>,
+    pipeline_started_at: AtomicU64,
+    session_id: AtomicU64,
 }
 
 impl AppState {
@@ -192,12 +215,47 @@ impl AppState {
         let state = Arc::new(Self {
             hls_buffer: RwLock::new(HlsBuffer::new(10)),
             pipeline_active: tx,
-            last_client_request: std::sync::atomic::AtomicU64::new(0),
+            last_client_request: AtomicU64::new(0),
             pipeline: Mutex::new(p),
             stream_url: RwLock::new(StreamSource::default_url()),
             stats: Mutex::new(ProcessingStats::default()),
+            pipeline_started_at: AtomicU64::new(0),
+            session_id: AtomicU64::new(0),
         });
         (state, rx)
+    }
+
+    pub async fn live_status(&self, now_ms: u64) -> LiveStatus {
+        let buffer_count = self.hls_buffer.read().await.segment_count();
+        let last_segment_at = self.stats.lock().unwrap().segment_completed_at;
+        let started_at = self.pipeline_started_at.load(Ordering::Relaxed);
+        let fresh =
+            last_segment_at > 0 && now_ms.saturating_sub(last_segment_at) <= FRESH_SEGMENT_MS;
+        let ready = buffer_count >= READY_SEGMENTS && fresh;
+        let state = if ready {
+            LiveState::Live
+        } else if started_at > 0 && now_ms.saturating_sub(started_at) > UNAVAILABLE_AFTER_MS {
+            LiveState::Unavailable
+        } else {
+            LiveState::Starting
+        };
+        LiveStatus {
+            state,
+            buffer_count,
+            ready,
+            last_segment_at,
+        }
+    }
+
+    pub fn mark_pipeline_started(&self, now_ms: u64) {
+        *self.stats.lock().unwrap() = ProcessingStats::default();
+        self.pipeline_started_at.store(now_ms, Ordering::Relaxed);
+        self.session_id.store(now_ms, Ordering::Relaxed);
+    }
+
+    pub fn output_segment_id(&self, source_id: &str) -> String {
+        let session_id = self.session_id.load(Ordering::Relaxed);
+        format!("{session_id}-{source_id}")
     }
 
     /// Record a client request and activate the pipeline if needed.
@@ -207,7 +265,7 @@ impl AppState {
             .unwrap()
             .as_secs();
         self.last_client_request
-            .store(now, std::sync::atomic::Ordering::Relaxed);
+            .store(now, Ordering::Relaxed);
         let _ = self.pipeline_active.send(true);
     }
 
@@ -215,7 +273,7 @@ impl AppState {
     pub fn idle_seconds(&self) -> u64 {
         let last = self
             .last_client_request
-            .load(std::sync::atomic::Ordering::Relaxed);
+            .load(Ordering::Relaxed);
         if last == 0 {
             return u64::MAX;
         }
@@ -241,6 +299,11 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         }
     }
 
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    state.mark_pipeline_started(now_ms);
     tracing::info!("Pipeline activated!");
     let url = state.stream_url.read().await.clone();
     let mut source = StreamSource::new(url);
@@ -274,6 +337,11 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     return;
                 }
             }
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            state.mark_pipeline_started(now_ms);
             tracing::info!("Pipeline reactivated!");
             let url = state.stream_url.read().await.clone();
             source = StreamSource::new(url);
@@ -398,7 +466,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     .hls_buffer
                     .write()
                     .await
-                    .push_segment(segment_id, encoded);
+                    .push_segment(state.output_segment_id(&segment_id), encoded);
             }
             Ok(Err(e)) => {
                 tracing::error!(error = %e, "Processing failed");
@@ -481,7 +549,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                         .hls_buffer
                         .write()
                         .await
-                        .push_segment(next_seg_id, encoded);
+                        .push_segment(state.output_segment_id(&next_seg_id), encoded);
                 }
                 Ok(Err(e)) => {
                     tracing::error!(error = %e, "Processing failed (prefetched)");
@@ -540,5 +608,45 @@ mod tests {
         assert_eq!(pipeline.slot_count(), 1);
         pipeline.remove_slot(&slot_id);
         assert_eq!(pipeline.slot_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn public_status_requires_three_fresh_segments() {
+        let (state, _rx) = AppState::new();
+        state.mark_pipeline_started(1_000);
+        for id in ["1", "2"] {
+            state.hls_buffer.write().await.push_segment(id.into(), vec![1]);
+        }
+        state.stats.lock().unwrap().segment_completed_at = 10_000;
+        let status = state.live_status(20_000).await;
+        assert_eq!(status.state, LiveState::Starting);
+        assert!(!status.ready);
+
+        state.hls_buffer.write().await.push_segment("3".into(), vec![1]);
+        let status = state.live_status(20_000).await;
+        assert_eq!(status.state, LiveState::Live);
+        assert!(status.ready);
+    }
+
+    #[tokio::test]
+    async fn stale_stream_is_unavailable() {
+        let (state, _rx) = AppState::new();
+        state.mark_pipeline_started(1_000);
+        for id in ["1", "2", "3"] {
+            state.hls_buffer.write().await.push_segment(id.into(), vec![1]);
+        }
+        state.stats.lock().unwrap().segment_completed_at = 10_000;
+        assert_eq!(state.live_status(101_001).await.state, LiveState::Unavailable);
+    }
+
+    #[test]
+    fn output_ids_change_between_sessions() {
+        let (state, _rx) = AppState::new();
+        state.mark_pipeline_started(1_000);
+        let first = state.output_segment_id("44");
+        state.mark_pipeline_started(2_000);
+        let second = state.output_segment_id("44");
+        assert_eq!(first, "1000-44");
+        assert_eq!(second, "2000-44");
     }
 }
