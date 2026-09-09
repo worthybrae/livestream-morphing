@@ -1,7 +1,7 @@
 # Portfolio Live Stream Design
 
 **Date:** 2026-09-09  
-**Status:** Approved in chat; awaiting written-spec review  
+**Status:** Approved
 **Repositories:** `livestream-morphing`, `/Users/worthy/Test/personal`
 
 ## Purpose
