@@ -16,6 +16,7 @@ pub mod vignette;
 pub mod chromatic_aberration;
 pub mod denoise;
 pub mod gradient_map;
+pub mod grayscale;
 pub mod halftone;
 pub mod mirror;
 
