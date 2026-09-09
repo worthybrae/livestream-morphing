@@ -67,7 +67,7 @@ mod tests {
         frame.data[8] = 255; // B at pixel 2
         let mut params = default_params(&effect.params());
         params.insert("offset".into(), 1.0);
-        let ctx = FrameCtx { frame_number: 0, width: 5, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 5, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // Red channel shifts right: pixel 1 should get red from pixel 2
         assert_eq!(frame.data[3], 255); // pixel 1 red = original pixel 2 red
@@ -85,7 +85,7 @@ mod tests {
         frame.data = vec![100, 150, 200, 50, 75, 100];
         let mut params = default_params(&effect.params());
         params.insert("offset".into(), 5.0); // larger than width
-        let ctx = FrameCtx { frame_number: 0, width: 2, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 2, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // Should not panic — offset clamped to valid range
         assert_eq!(frame.data.len(), 6);
@@ -98,7 +98,7 @@ mod tests {
         let original = frame.data.clone();
         let mut params = default_params(&effect.params());
         params.insert("offset".into(), 2.0);
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         // Uniform image: shifting channels still reads same value
         assert_eq!(frame.data, original);

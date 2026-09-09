@@ -21,6 +21,16 @@ pub fn init() {
 pub fn decode_segment(
     ts_bytes: &[u8],
 ) -> Result<Vec<RawFrame>, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(decode_sized(ts_bytes, 1280)?.frames)
+}
+
+pub struct Decoded {
+    pub frames: Vec<RawFrame>,
+    pub fps: f64,
+    pub first_seconds: Option<f64>,
+}
+
+pub fn decode_sized(ts_bytes: &[u8], max_width: u32) -> Result<Decoded, Box<dyn std::error::Error + Send + Sync>> {
     // Write to temp file (ffmpeg-next requires file path for input)
     let mut tmp = NamedTempFile::new()?;
     tmp.write_all(ts_bytes)?;
@@ -32,29 +42,21 @@ pub fn decode_segment(
         .best(Type::Video)
         .ok_or("No video stream found")?;
     let stream_index = stream.index();
+    let time_base = f64::from(stream.time_base());
+    let rate = stream.avg_frame_rate();
+    let rate = if rate.numerator() > 0 && rate.denominator() > 0 { rate } else { stream.rate() };
+    let fps = f64::from(rate);
+    if !fps.is_finite() || fps <= 0.0 || fps > 120.0 { return Err("Invalid source frame rate".into()); }
 
     let decoder_ctx = ffmpeg::codec::context::Context::from_parameters(stream.parameters())?;
     let mut decoder = decoder_ctx.decoder().video()?;
 
     let (source_width, source_height) = (decoder.width(), decoder.height());
-    let (width, height) = if source_width <= 1280 && source_height <= 720 {
-        (source_width, source_height)
-    } else {
-        let (width, height) = if u64::from(source_width) * 720 > u64::from(source_height) * 1280 {
-            (
-                1280,
-                (u64::from(source_height) * 1280 / u64::from(source_width)) as u32,
-            )
-        } else {
-            (
-                (u64::from(source_width) * 720 / u64::from(source_height)) as u32,
-                720,
-            )
-        };
-        // Multiples of four keep the existing 2x downsample's output even for
-        // YUV420/H.264, preserving aspect ratio within pixel rounding.
-        ((width / 4 * 4).max(4), (height / 4 * 4).max(4))
-    };
+    let max_width=max_width.max(4);
+    let max_height=(max_width*9/16).max(4);
+    let scale=(max_width as f64/source_width as f64).min(max_height as f64/source_height as f64).min(1.0);
+    let width=((source_width as f64*scale) as u32/2*2).max(2);
+    let height=((source_height as f64*scale) as u32/2*2).max(2);
 
     let mut scaler = ScalingContext::get(
         decoder.format(),
@@ -67,11 +69,14 @@ pub fn decode_segment(
     )?;
 
     let mut frames = Vec::new();
+    let mut first_seconds = None;
 
     let mut receive_frames =
         |decoder: &mut ffmpeg::decoder::Video| -> Result<(), ffmpeg::Error> {
             let mut decoded = Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
+                if frames.len() >= 720 { return Err(ffmpeg::Error::InvalidData); }
+                if first_seconds.is_none() { first_seconds = decoded.timestamp().map(|pts|pts as f64*time_base); }
                 let mut rgb = Video::empty();
                 scaler.run(&decoded, &mut rgb)?;
 
@@ -99,7 +104,7 @@ pub fn decode_segment(
     receive_frames(&mut decoder)?;
 
     tracing::info!(frame_count = frames.len(), width, height, "Decoded segment");
-    Ok(frames)
+    Ok(Decoded { frames, fps, first_seconds })
 }
 
 /// Encode RGB24 frames into an H.264 MPEG-TS segment.
@@ -112,6 +117,10 @@ pub fn encode_segment(
     fps: u32,
     pts_offset: i64,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    encode_timed(frames, fps as f64, pts_offset * 90000 / fps as i64)
+}
+
+pub fn encode_timed(frames: &[RawFrame], fps: f64, pts_offset: i64) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if frames.is_empty() {
         return Err("No frames to encode".into());
     }
@@ -145,7 +154,7 @@ pub fn encode_segment(
     encoder.set_width(width);
     encoder.set_height(height);
     encoder.set_format(Pixel::YUV420P);
-    encoder.set_frame_rate(Some(ffmpeg::Rational(fps as i32, 1)));
+    encoder.set_frame_rate(Some(ffmpeg::Rational((fps * 1000.0).round() as i32, 1000)));
     // Use 90kHz time_base to match MPEG-TS native clock
     encoder.set_time_base(ffmpeg::Rational(1, 90000));
 
@@ -194,8 +203,8 @@ pub fn encode_segment(
         let mut yuv = Video::empty();
         scaler.run(&rgb, &mut yuv)?;
         // PTS in 90kHz ticks: each frame = 90000/fps ticks apart
-        let ticks_per_frame = 90000i64 / fps as i64;
-        yuv.set_pts(Some(90000 + (pts_offset + i as i64) * ticks_per_frame));
+        let frame_ticks = (i as f64 * 90000.0 / fps).round() as i64;
+        yuv.set_pts(Some(90000 + pts_offset + frame_ticks));
 
         encoder.send_frame(&yuv)?;
 

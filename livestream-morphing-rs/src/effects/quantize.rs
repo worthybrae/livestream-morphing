@@ -48,7 +48,7 @@ mod tests {
         // Use 2 levels to force black/white
         let mut params2 = params.clone();
         params2.insert("levels".into(), 2.0);
-        let ctx = FrameCtx { frame_number: 0, width: 2, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 2, height: 1 };
         effect.apply(&mut frame, &params2, &ctx);
         assert_eq!(frame.data, vec![0, 0, 0, 255, 255, 255]);
     }
@@ -60,7 +60,7 @@ mod tests {
         frame.data = vec![100, 100, 100];
         let mut params = default_params(&effect.params());
         params.insert("levels".into(), 4.0);
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, vec![85, 85, 85]);
     }

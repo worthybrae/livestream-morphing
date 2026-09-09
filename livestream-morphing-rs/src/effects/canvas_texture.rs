@@ -68,7 +68,7 @@ mod tests {
         let mut frame = RawFrame::filled(4, 4, 200, 200, 200);
         let mut params = default_params(&effect.params());
         params.insert("strength".into(), 0.5);
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         // Canvas texture values are ~200/255, so factor < 1.0 at strength 0.5 → darkened
         assert!(frame.data[0] < 200, "Should be darkened, got {}", frame.data[0]);
@@ -83,7 +83,7 @@ mod tests {
         let original = frame.data.clone();
         let mut params = default_params(&effect.params());
         params.insert("strength".into(), 0.0);
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original, "Zero strength should leave frame unchanged");
     }

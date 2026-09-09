@@ -108,7 +108,7 @@ mod tests {
         }
 
         let params = default_params(&effect.params()); // radius = 3
-        let ctx = FrameCtx { frame_number: 0, width: w, height: h };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: w, height: h };
         effect.apply(&mut frame, &params, &ctx);
 
         // The boundary pixel (x = w/2 - 1 = 4) should be between 0 and 255.
@@ -125,7 +125,7 @@ mod tests {
         let original = frame.data.clone();
         let mut params = default_params(&effect.params());
         params.insert("radius".into(), 0.0);
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }

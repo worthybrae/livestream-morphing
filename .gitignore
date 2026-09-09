@@ -194,3 +194,6 @@ cython_debug/
 # Superpowers
 .superpowers/
 .worktrees/
+
+# Local render comparisons (not deployed)
+artifacts/

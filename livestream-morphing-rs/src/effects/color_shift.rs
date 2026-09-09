@@ -126,7 +126,7 @@ mod tests {
         let mut frame = RawFrame::filled(4, 4, 100, 150, 200);
         let original = frame.data.clone();
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }
@@ -138,7 +138,7 @@ mod tests {
         let mut frame = RawFrame::filled(2, 2, 200, 200, 200);
         let mut params = default_params(&effect.params());
         params.insert("brightness".into(), 0.5);
-        let ctx = FrameCtx { frame_number: 0, width: 2, height: 2 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 2, height: 2 };
         effect.apply(&mut frame, &params, &ctx);
         // Every channel should be darker than the original 200.
         for chunk in frame.data.chunks_exact(3) {
@@ -157,7 +157,7 @@ mod tests {
         frame.data = vec![255, 0, 0];
         let mut params = default_params(&effect.params());
         params.insert("hue".into(), 120.0);
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // After +120° rotation (red→green), green channel should dominate.
         assert!(

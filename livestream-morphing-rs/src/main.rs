@@ -1,4 +1,6 @@
 mod api;
+mod offline;
+mod studio;
 mod codec;
 mod effects;
 mod hls;
@@ -22,6 +24,12 @@ async fn main() {
 
     // Initialize FFmpeg
     codec::init();
+
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("render") {
+        if let Err(e) = offline::run(&args[2..]) { eprintln!("{e}"); std::process::exit(1); }
+        return;
+    }
 
     // Create shared state
     let (state, active_rx) = pipeline::AppState::new();

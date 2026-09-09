@@ -44,7 +44,7 @@ mod tests {
         let mut frame = RawFrame::new(1, 1);
         frame.data = vec![200, 200, 200];
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // 200 >= 128, so 255 - 200 = 55
         assert_eq!(frame.data, vec![55, 55, 55]);
@@ -56,7 +56,7 @@ mod tests {
         let mut frame = RawFrame::new(1, 1);
         frame.data = vec![50, 50, 50];
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // 50 < 128, unchanged
         assert_eq!(frame.data, vec![50, 50, 50]);
@@ -69,7 +69,7 @@ mod tests {
         frame.data = vec![100, 200, 50];
         let mut params = default_params(&effect.params());
         params.insert("threshold".into(), 150.0);
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // 100 < 150 -> unchanged, 200 >= 150 -> 55, 50 < 150 -> unchanged
         assert_eq!(frame.data, vec![100, 55, 50]);

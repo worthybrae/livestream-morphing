@@ -22,6 +22,10 @@ impl HlsBuffer {
     }
 
     pub fn push_segment(&mut self, id: String, data: Vec<u8>) {
+        self.push_timed_segment(id, data, 6.0);
+    }
+
+    pub fn push_timed_segment(&mut self, id: String, data: Vec<u8>, duration: f32) {
         if self.segments.len() >= self.max_segments {
             self.segments.pop_front();
             self.sequence += 1;
@@ -29,7 +33,7 @@ impl HlsBuffer {
         self.segments.push_back(Segment {
             id,
             data,
-            duration: 6.0,
+            duration,
         });
     }
 
@@ -41,13 +45,15 @@ impl HlsBuffer {
     }
 
     pub fn generate_playlist(&self) -> String {
+        // Fixed for Abbey Road, whose source advertises a 13-second upper bound.
+        let target = 13;
         let mut m3u8 = format!(
-            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:{}\n",
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:{target}\n#EXT-X-MEDIA-SEQUENCE:{}\n",
             self.sequence
         );
         for seg in &self.segments {
             m3u8.push_str(&format!(
-                "#EXTINF:{:.1},\n/api/segments/{}.ts\n",
+                "#EXTINF:{:.3},\n/api/segments/{}.ts\n",
                 seg.duration, seg.id
             ));
         }
@@ -80,6 +86,15 @@ impl HlsBuffer {
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn fractional_source_duration_is_preserved() {
+        let mut buffer=HlsBuffer::new(10);
+        buffer.push_timed_segment("source".into(),vec![],6.006);
+        let playlist=buffer.generate_playlist();
+        assert!(playlist.contains("#EXTINF:6.006,"));
+        assert!(playlist.contains("#EXT-X-TARGETDURATION:13"));
+    }
     #[test]
     fn push_and_retrieve_segment() {
         let mut buf = HlsBuffer::new(10);

@@ -45,7 +45,7 @@ mod tests {
         let mut frame = RawFrame::new(1, 1);
         frame.data = vec![200, 200, 200];
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, vec![255, 255, 255]);
     }
@@ -56,7 +56,7 @@ mod tests {
         let mut frame = RawFrame::new(1, 1);
         frame.data = vec![50, 50, 50];
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, vec![0, 0, 0]);
     }
@@ -69,7 +69,7 @@ mod tests {
         frame.data = vec![100, 100, 100];
         let mut params = default_params(&effect.params());
         params.insert("cutoff".into(), 50.0);
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // 100 >= 50, so white
         assert_eq!(frame.data, vec![255, 255, 255]);

@@ -4,7 +4,7 @@ use tokio::sync::{watch, RwLock};
 use serde::{Deserialize, Serialize};
 
 use crate::codec;
-use crate::effects::{downsample_2x, RawFrame};
+use crate::effects::RawFrame;
 use crate::hls::HlsBuffer;
 use crate::registry::{self, default_params, Effect, FrameCtx, ParamValues};
 use crate::stream_source::StreamSource;
@@ -31,6 +31,7 @@ pub struct PipelineSlotView {
 pub struct Pipeline {
     slots: Vec<PipelineSlot>,
     dimensions: Option<(u32, u32)>,
+    source_end: Option<f64>,
 }
 
 impl Pipeline {
@@ -39,11 +40,13 @@ impl Pipeline {
         Self {
             slots: Vec::new(),
             dimensions: None,
+            source_end: None,
         }
     }
 
     /// Store dimensions and call init() on all existing effects.
     pub fn set_dimensions(&mut self, width: u32, height: u32) {
+        if self.dimensions == Some((width, height)) { return; }
         self.dimensions = Some((width, height));
         for slot in self.slots.iter_mut() {
             slot.effect.init(width, height);
@@ -148,11 +151,22 @@ impl Pipeline {
 
     /// Apply all enabled slots to a frame in order.
     pub fn process_frame(&mut self, frame: &mut RawFrame, frame_number: u32) {
+        self.process_frame_timed(frame, frame_number, 1.0/30.0);
+    }
+
+    pub fn reset(&mut self) {
+        self.source_end = None;
+        if let Some((w,h)) = self.dimensions {
+            for slot in &mut self.slots { slot.effect.init(w,h); }
+        }
+    }
+
+    pub fn process_frame_timed(&mut self, frame: &mut RawFrame, frame_number: u32, delta_seconds: f32) {
         let (width, height) = match self.dimensions {
             Some(d) => d,
             None => (frame.width, frame.height),
         };
-        let ctx = FrameCtx { frame_number, width, height };
+        let ctx = FrameCtx { delta_seconds, frame_number, width, height };
         for slot in self.slots.iter_mut() {
             if slot.enabled {
                 slot.effect.apply(frame, &slot.params, &ctx);
@@ -168,6 +182,14 @@ pub struct ProcessingStats {
     pub total_ms: u64,
     pub frames: u64,
     pub segment_completed_at: u64, // unix timestamp in millis
+    pub width: u32,
+    pub height: u32,
+    pub source_fps: f64,
+    pub frame_p50_ms: f64,
+    pub frame_p95_ms: f64,
+    pub duration_seconds: f64,
+    pub rendered_frames: u64,
+    pub encoded_bytes: usize,
 }
 
 const READY_SEGMENTS: usize = 3;
@@ -188,6 +210,7 @@ pub struct LiveStatus {
     pub buffer_count: usize,
     pub ready: bool,
     pub last_segment_at: u64,
+    pub engine: ProcessingStats,
 }
 
 /// Shared state between the pipeline and HTTP server.
@@ -210,11 +233,9 @@ impl AppState {
         let (tx, rx) = watch::channel(false);
 
         let mut p = Pipeline::new();
-        p.add_effect("distortion").expect("distortion registered");
-        p.add_effect("grayscale").expect("grayscale registered");
-        p.add_effect("quantize").expect("quantize registered");
-        p.add_effect("edges").expect("edges registered");
-        p.add_effect("canvas_texture").expect("canvas_texture registered");
+        let slot = p.add_effect("living_ink").expect("living ink registered");
+        let preset: ParamValues = serde_json::from_str(include_str!("living_ink_preset.json")).expect("valid built-in ink preset");
+        p.update_params(&slot, &preset);
 
         let state = Arc::new(Self {
             hls_buffer: RwLock::new(HlsBuffer::new(10)),
@@ -260,11 +281,13 @@ impl AppState {
             buffer_count,
             ready,
             last_segment_at,
+            engine: self.stats.lock().unwrap().clone(),
         }
     }
 
     pub fn mark_pipeline_started(&self, now_ms: u64) {
         *self.stats.lock().unwrap() = ProcessingStats::default();
+        self.pipeline.lock().unwrap().reset();
         self.pipeline_started_at.store(now_ms, Ordering::Relaxed);
         *self.session_id.lock().unwrap() = uuid::Uuid::new_v4();
     }
@@ -287,7 +310,7 @@ impl AppState {
             buffer.clear();
         }
         *current_stats = stats;
-        buffer.push_segment(self.output_segment_id(source_id), encoded);
+        buffer.push_timed_segment(self.output_segment_id(source_id), encoded, current_stats.duration_seconds.max(0.001) as f32);
     }
 
     /// Record a client request and activate the pipeline if needed.
@@ -317,6 +340,56 @@ impl AppState {
     }
 }
 
+
+/// Shared segment processing for both ingestion paths. No duplicate RGB batch.
+fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, i64, ProcessingStats), Box<dyn std::error::Error + Send + Sync>> {
+    let start=std::time::Instant::now();
+    let width=std::env::var("OUTPUT_WIDTH").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(640).clamp(320,960);
+    let decoded=codec::decode_sized(bytes,width)?;
+    let fps=decoded.fps;
+    let mut frames=decoded.frames;
+    if frames.is_empty() { return Err("No decoded frames".into()); }
+    if frames.len() as f64 / fps > 13.0 { return Err("Source segment exceeds the 13-second HLS target".into()); }
+    let mut times=Vec::with_capacity(frames.len());
+    let previous_stats=state.stats.lock().unwrap().clone();
+    {
+        let mut pipeline=state.pipeline.lock().unwrap();
+        pipeline.set_dimensions(frames[0].width,frames[0].height);
+        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
+        if previous_stats.segment_completed_at>0 && now.saturating_sub(previous_stats.segment_completed_at)>FRESH_SEGMENT_MS { pipeline.reset(); }
+        if let (Some(previous), Some(first)) = (pipeline.source_end, decoded.first_seconds) {
+            if (first-previous).abs() > 2.0/fps { pipeline.reset(); }
+        }
+        pipeline.source_end = decoded.first_seconds.map(|first|first+frames.len() as f64/fps);
+        for (i,frame) in frames.iter_mut().enumerate() {
+            let t=std::time::Instant::now();
+            pipeline.process_frame_timed(frame,(previous_stats.rendered_frames+i as u64) as u32,(1.0/fps) as f32);
+            times.push(t.elapsed().as_secs_f64()*1000.0);
+        }
+    }
+    let effects_ms=times.iter().sum::<f64>().round() as u64;
+    times.sort_by(f64::total_cmp);
+    let encoded=codec::encode_timed(&frames,fps,pts)?;
+    let duration=frames.len() as f64/fps;
+    let stats=ProcessingStats {
+        effects_ms, total_ms:start.elapsed().as_millis() as u64, frames:frames.len() as u64,
+        width:frames[0].width, height:frames[0].height, source_fps:fps,
+        frame_p50_ms:times[times.len()/2], frame_p95_ms:times[(times.len()*95/100).min(times.len()-1)],
+        duration_seconds:duration, rendered_frames:previous_stats.rendered_frames+frames.len() as u64,
+        encoded_bytes:encoded.len(), segment_completed_at:0,
+    };
+    Ok((encoded,(duration*90000.0).round() as i64,stats))
+}
+
+pub fn release_idle_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        extern "C" { fn malloc_trim(pad: usize) -> i32; }
+        // glibc's thread-safe trim releases only unused allocator pages.
+        unsafe { malloc_trim(0); }
+    }
+}
+
 /// Main pipeline loop. Runs until the shutdown receiver signals.
 pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
     tracing::info!("Pipeline waiting for first client...");
@@ -340,7 +413,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
     let url = state.stream_url.read().await.clone();
     let mut source = StreamSource::new(url);
     let mut frame_counter: i64 = 0;
-    let idle_timeout = std::time::Duration::from_secs(300); // 5 minutes
+    let idle_timeout = std::time::Duration::from_secs(60); // Stop work promptly when the last viewer leaves.
 
     loop {
         // Check if stream URL changed
@@ -351,14 +424,18 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                 source = StreamSource::new(current_url.clone());
                 state.hls_buffer.write().await.clear();
                 frame_counter = 0;
+                state.mark_pipeline_started(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
             }
         }
 
         // Check idle timeout
         if state.idle_seconds() > idle_timeout.as_secs() {
-            tracing::info!("No clients for 5 minutes, pipeline going idle");
+            tracing::info!("No clients for 1 minute, pipeline going idle");
             let _ = state.pipeline_active.send(false);
             state.hls_buffer.write().await.clear();
+
+            // Return freed decoder/encoder arenas to Linux instead of paying for idle RSS.
+            release_idle_memory();
 
             // Wait for reactivation
             loop {
@@ -399,68 +476,9 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         // Spawn CPU-bound processing on blocking thread
         let pts_offset = frame_counter;
         let state_clone = state.clone();
-        let process_handle = tokio::task::spawn_blocking(
-            move || -> Result<(Vec<u8>, i64, u64, u64), Box<dyn std::error::Error + Send + Sync>> {
-                let t0 = std::time::Instant::now();
-
-                let all_frames = codec::decode_segment(&ts_bytes)?;
-                let t_decode = t0.elapsed();
-
-                if all_frames.is_empty() {
-                    return Err("No frames decoded".into());
-                }
-
-                let mut half_frames: Vec<_> = all_frames
-                    .iter()
-                    .map(|f| downsample_2x(f))
-                    .collect();
-                let t_downsample = t0.elapsed();
-
-                let half_w = half_frames[0].width;
-                let half_h = half_frames[0].height;
-                let out_frames = half_frames.len() as i64;
-
-                {
-                    let mut pipeline = state_clone.pipeline.lock().unwrap();
-                    pipeline.set_dimensions(half_w, half_h);
-
-                    // Time-of-day edge darkness
-                    let (edge_color, _bg) = crate::time_color::get_colors_now();
-                    let edge_darkness = if edge_color == (0, 0, 0) { 100.0 } else { 40.0 };
-                    for slot in pipeline.view().iter() {
-                        if slot.effect_id == "edges" {
-                            let mut params = std::collections::HashMap::new();
-                            params.insert("darkness".to_string(), edge_darkness);
-                            pipeline.update_params(&slot.slot_id, &params);
-                        }
-                    }
-
-                    for (i, frame) in half_frames.iter_mut().enumerate() {
-                        pipeline.process_frame(frame, i as u32);
-                    }
-                }
-
-                let t_effects = t0.elapsed();
-
-                let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
-                let t_encode = t0.elapsed();
-
-                let effects_ms = (t_effects - t_downsample).as_millis() as u64;
-                let total_ms = t_encode.as_millis() as u64;
-
-                tracing::info!(
-                    decode_ms = t_decode.as_millis() as u64,
-                    downsample_ms = (t_downsample - t_decode).as_millis() as u64,
-                    effects_ms,
-                    encode_ms = (t_encode - t_effects).as_millis() as u64,
-                    total_ms,
-                    frames = out_frames,
-                    "Pipeline timing"
-                );
-
-                Ok((encoded, out_frames, effects_ms, total_ms))
-            },
-        );
+        let process_handle = tokio::task::spawn_blocking(move || {
+            render_segment(&ts_bytes, &state_clone, pts_offset)
+        });
 
         // While processing runs on blocking thread, prefetch next segment
         let next_id = source.fetch_latest_segment_id().await;
@@ -473,13 +491,13 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         // Now await processing result
         let processed = process_handle.await;
         match processed {
-            Ok(Ok((encoded, num_frames, effects_ms, total_ms))) => {
+            Ok(Ok((encoded, ticks, mut stats))) => {
                 tracing::info!(
                     segment_id,
                     size_kb = encoded.len() / 1024,
                     "Segment processed"
                 );
-                frame_counter += num_frames;
+                frame_counter += ticks;
 
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -489,12 +507,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     .publish_segment(
                         &segment_id,
                         encoded,
-                        ProcessingStats {
-                            effects_ms,
-                            total_ms,
-                            frames: num_frames as u64,
-                            segment_completed_at: now_ms,
-                        },
+                        { stats.segment_completed_at = now_ms; stats },
                     )
                     .await;
             }
@@ -510,58 +523,18 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         if let (Some(next_seg_id), Some(next_ts)) = (next_id, next_bytes) {
             let pts_offset = frame_counter;
             let state_clone = state.clone();
-            let processed = tokio::task::spawn_blocking(
-                move || -> Result<(Vec<u8>, i64, u64, u64), Box<dyn std::error::Error + Send + Sync>> {
-                    let t0 = std::time::Instant::now();
-                    let all_frames = codec::decode_segment(&next_ts)?;
-                    if all_frames.is_empty() {
-                        return Err("No frames decoded".into());
-                    }
-                    let mut half_frames: Vec<_> = all_frames
-                        .iter()
-                        .map(|f| downsample_2x(f))
-                        .collect();
-                    let half_w = half_frames[0].width;
-                    let half_h = half_frames[0].height;
-                    let out_frames = half_frames.len() as i64;
-                    let t_pre = t0.elapsed();
-
-                    {
-                        let mut pipeline = state_clone.pipeline.lock().unwrap();
-                        pipeline.set_dimensions(half_w, half_h);
-
-                        // Time-of-day edge darkness
-                        let (edge_color, _bg) = crate::time_color::get_colors_now();
-                        let edge_darkness = if edge_color == (0, 0, 0) { 100.0 } else { 40.0 };
-                        for slot in pipeline.view().iter() {
-                            if slot.effect_id == "edges" {
-                                let mut params = std::collections::HashMap::new();
-                                params.insert("darkness".to_string(), edge_darkness);
-                                pipeline.update_params(&slot.slot_id, &params);
-                            }
-                        }
-
-                        for (i, frame) in half_frames.iter_mut().enumerate() {
-                            pipeline.process_frame(frame, i as u32);
-                        }
-                    }
-                    let effects_ms = (t0.elapsed() - t_pre).as_millis() as u64;
-
-                    let encoded = codec::encode_segment(&half_frames, 30, pts_offset)?;
-                    let total_ms = t0.elapsed().as_millis() as u64;
-                    Ok((encoded, out_frames, effects_ms, total_ms))
-                },
-            )
-            .await;
+            let processed = tokio::task::spawn_blocking(move || {
+                render_segment(&next_ts, &state_clone, pts_offset)
+            }).await;
 
             match processed {
-                Ok(Ok((encoded, num_frames, effects_ms, total_ms))) => {
+                Ok(Ok((encoded, ticks, mut stats))) => {
                     tracing::info!(
                         segment_id = next_seg_id,
                         size_kb = encoded.len() / 1024,
                         "Segment processed (prefetched)"
                     );
-                    frame_counter += num_frames;
+                    frame_counter += ticks;
 
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -571,12 +544,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                         .publish_segment(
                             &next_seg_id,
                             encoded,
-                            ProcessingStats {
-                                effects_ms,
-                                total_ms,
-                                frames: num_frames as u64,
-                                segment_completed_at: now_ms,
-                            },
+                            { stats.segment_completed_at = now_ms; stats },
                         )
                         .await;
                 }
@@ -594,6 +562,24 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn repeated_dimensions_preserve_temporal_state_and_reset_clears_it() {
+        let mut p = super::Pipeline::new();
+        p.add_effect("living_ink").unwrap();
+        p.set_dimensions(64,32);
+        let mut source = crate::effects::RawFrame::filled(64,32,20,20,20);
+        for y in 0..32 { for x in 24..64 { source.data[(y*64+x)*3..(y*64+x)*3+3].fill(220); } }
+        p.process_frame(&mut source,0);
+        p.set_dimensions(64,32);
+        let mut blank=crate::effects::RawFrame::filled(64,32,20,20,20);
+        p.process_frame(&mut blank,1);
+        assert!(blank.data.iter().any(|v|*v>24));
+        p.reset();
+        let mut blank=crate::effects::RawFrame::filled(64,32,20,20,20);
+        p.process_frame(&mut blank,2);
+        assert!(blank.data.iter().all(|v|*v==24));
+    }
+
+    #[test]
     fn default_pipeline_is_monochrome_before_quantization_and_edges() {
         let (state, _rx) = AppState::new();
         let effect_ids: Vec<String> = state
@@ -607,7 +593,7 @@ mod tests {
 
         assert_eq!(
             effect_ids,
-            ["distortion", "grayscale", "quantize", "edges", "canvas_texture"]
+            ["living_ink"]
         );
     }
 

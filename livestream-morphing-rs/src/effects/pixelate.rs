@@ -78,7 +78,7 @@ mod tests {
         let mut frame = RawFrame::filled(8, 8, 100, 150, 200);
         let original = frame.data.clone();
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 8, height: 8 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 8, height: 8 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }
@@ -94,7 +94,7 @@ mod tests {
         ];
         let mut params = default_params(&effect.params());
         params.insert("block_size".into(), 2.0);
-        let ctx = FrameCtx { frame_number: 0, width: 2, height: 2 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 2, height: 2 };
         effect.apply(&mut frame, &params, &ctx);
         // Average: (0+200+100+100)/4 = 100
         assert_eq!(frame.data, vec![100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]);
@@ -107,7 +107,7 @@ mod tests {
         let mut frame = RawFrame::filled(3, 3, 60, 60, 60);
         let mut params = default_params(&effect.params());
         params.insert("block_size".into(), 2.0);
-        let ctx = FrameCtx { frame_number: 0, width: 3, height: 3 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 3, height: 3 };
         effect.apply(&mut frame, &params, &ctx);
         // Uniform input, so output should still be uniform
         for &b in &frame.data {

@@ -100,3 +100,5 @@ mod tests {
         assert_eq!(dst.data[0], 50);
     }
 }
+
+pub mod living_ink;

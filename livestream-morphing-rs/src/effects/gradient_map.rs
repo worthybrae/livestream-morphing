@@ -89,7 +89,7 @@ mod tests {
         let mut effect = GradientMap::default();
         let mut frame = RawFrame::filled(1, 1, 0, 0, 0);
         let params = default_params(&effect.params()); // palette=0 (Sunset)
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // Luminance 0 -> first stop of Sunset: (20, 0, 80)
         assert_eq!(frame.data, vec![20, 0, 80]);
@@ -100,7 +100,7 @@ mod tests {
         let mut effect = GradientMap::default();
         let mut frame = RawFrame::filled(1, 1, 255, 255, 255);
         let params = default_params(&effect.params()); // palette=0 (Sunset)
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // Luminance 255 -> last stop of Sunset: (255, 200, 50)
         assert_eq!(frame.data, vec![255, 200, 50]);
@@ -112,7 +112,7 @@ mod tests {
         let mut frame = RawFrame::filled(1, 1, 0, 0, 0);
         let mut params = default_params(&effect.params());
         params.insert("palette".into(), 6.0); // Matrix
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // Luminance 0 -> first stop of Matrix: (0, 10, 0)
         assert_eq!(frame.data, vec![0, 10, 0]);

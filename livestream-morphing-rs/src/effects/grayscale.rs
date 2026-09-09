@@ -37,7 +37,7 @@ mod tests {
         let mut effect = Grayscale;
         let mut frame = RawFrame::new(2, 1);
         frame.data = vec![255, 0, 0, 0, 255, 0];
-        let ctx = FrameCtx {
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0,
             frame_number: 0,
             width: 2,
             height: 1,

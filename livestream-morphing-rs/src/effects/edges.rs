@@ -100,7 +100,7 @@ mod tests {
         let mut effect = EdgeDetect::default();
         effect.init(8, 4);
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 8, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 8, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
 
         // Pixel at (1, 3) is on the white side near the boundary — should be darkened
@@ -119,7 +119,7 @@ mod tests {
         let mut effect = EdgeDetect::default();
         effect.init(8, 8);
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 8, height: 8 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 8, height: 8 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original, "Uniform frame should have no edges");
     }

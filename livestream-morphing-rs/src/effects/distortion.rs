@@ -96,7 +96,7 @@ mod tests {
         let original = frame.data.clone();
         let mut params = default_params(&effect.params());
         params.insert("amplitude".into(), 0.0);
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }
@@ -117,7 +117,7 @@ mod tests {
         let original = frame.data.clone();
         let mut params = default_params(&effect.params());
         params.insert("amplitude".into(), 0.05);
-        let ctx = FrameCtx { frame_number: 10, width: 8, height: 8 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 10, width: 8, height: 8 };
         effect.apply(&mut frame, &params, &ctx);
         assert_ne!(frame.data, original);
     }

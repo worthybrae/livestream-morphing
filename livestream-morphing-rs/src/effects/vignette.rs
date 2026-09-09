@@ -62,7 +62,7 @@ mod tests {
         // Use an odd-sized frame so there's a clear center pixel
         let mut frame = RawFrame::filled(3, 3, 200, 200, 200);
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 3, height: 3 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 3, height: 3 };
         effect.apply(&mut frame, &params, &ctx);
         // Center pixel (1,1) should be close to original
         let center_idx = (1 * 3 + 1) * 3;
@@ -74,7 +74,7 @@ mod tests {
         let mut effect = Vignette::default();
         let mut frame = RawFrame::filled(10, 10, 200, 200, 200);
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 10, height: 10 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 10, height: 10 };
         effect.apply(&mut frame, &params, &ctx);
         // Corner pixel (0,0) should be darker than center
         let corner = frame.data[0];
@@ -90,7 +90,7 @@ mod tests {
         let original = frame.data.clone();
         let mut params = default_params(&effect.params());
         params.insert("strength".into(), 0.0);
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }

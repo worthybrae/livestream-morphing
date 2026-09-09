@@ -62,7 +62,7 @@ mod tests {
         let mut frame = RawFrame::filled(4, 4, 100, 100, 100);
         let original = frame.data.clone();
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }
@@ -75,7 +75,7 @@ mod tests {
         frame.data = vec![50, 50, 50, 200, 200, 200, 50, 50, 50];
         let mut params = default_params(&effect.params());
         params.insert("amount".into(), 1.0);
-        let ctx = FrameCtx { frame_number: 0, width: 3, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 3, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // Center pixel should become brighter (pushed away from neighbors)
         assert!(frame.data[3] > 200, "center should be amplified, got {}", frame.data[3]);
@@ -89,7 +89,7 @@ mod tests {
         let original = frame.data.clone();
         let mut params = default_params(&effect.params());
         params.insert("amount".into(), 0.0);
-        let ctx = FrameCtx { frame_number: 0, width: 2, height: 2 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 2, height: 2 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }

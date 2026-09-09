@@ -57,7 +57,7 @@ mod tests {
         frame.data = vec![100, 150, 200];
         let original = frame.data.clone();
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }
@@ -69,7 +69,7 @@ mod tests {
         frame.data = vec![50, 50, 50];
         let mut params = default_params(&effect.params());
         params.insert("black_point".into(), 100.0);
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // 50 is below black_point 100, so it clamps to 0
         assert_eq!(frame.data, vec![0, 0, 0]);
@@ -82,7 +82,7 @@ mod tests {
         frame.data = vec![128, 128, 128];
         let mut params = default_params(&effect.params());
         params.insert("gamma".into(), 2.0);
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // gamma > 1 brightens midtones: (128/255)^(1/2) * 255 ≈ 181
         assert!(frame.data[0] > 128, "gamma 2.0 should brighten midtones, got {}", frame.data[0]);

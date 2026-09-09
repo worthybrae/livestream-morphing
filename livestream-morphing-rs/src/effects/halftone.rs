@@ -90,7 +90,7 @@ mod tests {
         let mut effect = Halftone::default();
         let mut frame = RawFrame::filled(6, 6, 0, 0, 0);
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 6, height: 6 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 6, height: 6 };
         effect.apply(&mut frame, &params, &ctx);
         // Brightness 0 -> radius 0 -> all pixels black
         for &b in &frame.data {
@@ -103,7 +103,7 @@ mod tests {
         let mut effect = Halftone::default();
         let mut frame = RawFrame::filled(6, 6, 255, 255, 255);
         let params = default_params(&effect.params()); // dot_size=6
-        let ctx = FrameCtx { frame_number: 0, width: 6, height: 6 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 6, height: 6 };
         effect.apply(&mut frame, &params, &ctx);
         // Center pixel of 6x6 cell (pixel 3,3) should be white
         let center_idx = (3 * 6 + 3) * 3;
@@ -117,7 +117,7 @@ mod tests {
         let mut effect = Halftone::default();
         let mut frame = RawFrame::filled(6, 6, 128, 128, 128);
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 6, height: 6 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 6, height: 6 };
         effect.apply(&mut frame, &params, &ctx);
         // Every pixel should be either 0 or 255
         for &b in &frame.data {

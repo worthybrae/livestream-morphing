@@ -60,6 +60,7 @@ pub fn router_with_config(state: Arc<AppState>, config: ServerConfig) -> Router 
 
     let public = Router::new()
         .route("/api/live/status", get(live_status))
+        .route("/api/live/metrics", get(live_metrics))
         .route("/api/stream", get(stream_playlist))
         .route("/api/segments/{segment_id}", get(get_segment))
         .route("/health", get(health));
@@ -69,6 +70,7 @@ pub fn router_with_config(state: Arc<AppState>, config: ServerConfig) -> Router 
     } else {
         public
             .merge(api::api_router())
+            .merge(crate::studio::router())
             .fallback_service(
                 ServeDir::new("../studio/dist")
                     .not_found_service(ServeFile::new("../studio/dist/index.html")),
@@ -77,6 +79,14 @@ pub fn router_with_config(state: Arc<AppState>, config: ServerConfig) -> Router 
 
     app.layer(cors)
         .with_state(state)
+}
+
+async fn live_metrics(State(state): State<Arc<AppState>>) -> Response {
+    let buffer = state.hls_buffer.read().await;
+    let engine = state.stats.lock().unwrap().clone();
+    ([(header::CACHE_CONTROL, "no-store")], Json(serde_json::json!({
+        "engine":engine,"buffer_count":buffer.segment_count()
+    }))).into_response()
 }
 
 async fn live_status(State(state): State<Arc<AppState>>) -> Response {
@@ -178,6 +188,17 @@ mod tests {
         }
     }
 
+
+    #[tokio::test]
+    async fn public_metrics_does_not_wake_and_preview_is_not_exposed() {
+        let (state, rx)=AppState::new();
+        let app=router_with_config(state, test_config(true));
+        let response=app.clone().oneshot(Request::builder().uri("/api/live/metrics").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(),StatusCode::OK);
+        assert!(!*rx.borrow());
+        let response=app.oneshot(Request::builder().method("POST").uri("/api/studio/preview").header("content-type","application/json").body(Body::from("{}")).unwrap()).await.unwrap();
+        assert_eq!(response.status(),StatusCode::NOT_FOUND);
+    }
     #[tokio::test]
     async fn public_status_wakes_pipeline_and_is_not_cached() {
         let (state, rx) = AppState::new();
@@ -223,6 +244,7 @@ mod tests {
                 "buffer_count": 0,
                 "ready": false,
                 "last_segment_at": 0,
+                "engine": crate::pipeline::ProcessingStats::default(),
             })
         );
     }

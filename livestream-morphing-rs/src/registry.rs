@@ -30,6 +30,7 @@ pub type ParamValues = HashMap<String, f32>;
 
 /// Context passed to every effect on each frame.
 pub struct FrameCtx {
+    pub delta_seconds: f32,
     pub frame_number: u32,
     pub width: u32,
     pub height: u32,

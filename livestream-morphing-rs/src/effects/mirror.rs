@@ -95,7 +95,7 @@ mod tests {
             10, 10, 10, 20, 20, 20, 30, 30, 30, 40, 40, 40,
         ];
         let params = default_params(&effect.params()); // mode=0
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 1 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 1 };
         effect.apply(&mut frame, &params, &ctx);
         // Right half mirrors left: pixel[2] = pixel[1], pixel[3] = pixel[0]
         assert_eq!(frame.data[6], 20); // pixel 2 = pixel 1
@@ -112,7 +112,7 @@ mod tests {
         ];
         let mut params = default_params(&effect.params());
         params.insert("mode".into(), 1.0);
-        let ctx = FrameCtx { frame_number: 0, width: 1, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 1, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         // Bottom half mirrors top: row[2] = row[1], row[3] = row[0]
         assert_eq!(frame.data[6], 20); // row 2 = row 1
@@ -125,7 +125,7 @@ mod tests {
         let mut frame = RawFrame::filled(4, 4, 100, 100, 100);
         let original = frame.data.clone();
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }

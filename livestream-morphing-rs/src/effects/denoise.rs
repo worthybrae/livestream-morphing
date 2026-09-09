@@ -88,7 +88,7 @@ mod tests {
         let mut frame = RawFrame::filled(4, 4, 100, 100, 100);
         let original = frame.data.clone();
         let params = default_params(&effect.params());
-        let ctx = FrameCtx { frame_number: 0, width: 4, height: 4 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 4, height: 4 };
         effect.apply(&mut frame, &params, &ctx);
         assert_eq!(frame.data, original);
     }
@@ -105,7 +105,7 @@ mod tests {
         frame.data[center + 1] = 104;
         frame.data[center + 2] = 104;
         let params = default_params(&effect.params()); // strength=5, threshold=15
-        let ctx = FrameCtx { frame_number: 0, width: 3, height: 3 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 3, height: 3 };
         effect.apply(&mut frame, &params, &ctx);
         // Center should be averaged toward 100 (noise reduced)
         assert!(frame.data[center] < 104, "noise should be reduced, got {}", frame.data[center]);
@@ -127,7 +127,7 @@ mod tests {
         }
         let mut params = default_params(&effect.params());
         params.insert("strength".into(), 5.0); // threshold=15, edge dist=600 >> 15
-        let ctx = FrameCtx { frame_number: 0, width: 3, height: 3 };
+        let ctx = FrameCtx { delta_seconds: 1.0/30.0, frame_number: 0, width: 3, height: 3 };
         effect.apply(&mut frame, &params, &ctx);
         // The dark column should stay dark (edge preserved)
         assert_eq!(frame.data[0], 0);
