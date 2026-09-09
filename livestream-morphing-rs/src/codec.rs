@@ -16,7 +16,8 @@ pub fn init() {
     ffmpeg::init().expect("Failed to initialize FFmpeg");
 }
 
-/// Decode a .ts segment from raw bytes into RGB24 frames.
+/// Decode a .ts segment into RGB24 frames bounded to 1280x720.
+/// The pipeline halves these frames again, producing 640x360 for a 16:9 source.
 pub fn decode_segment(
     ts_bytes: &[u8],
 ) -> Result<Vec<RawFrame>, Box<dyn std::error::Error + Send + Sync>> {
@@ -35,18 +36,36 @@ pub fn decode_segment(
     let decoder_ctx = ffmpeg::codec::context::Context::from_parameters(stream.parameters())?;
     let mut decoder = decoder_ctx.decoder().video()?;
 
+    let (source_width, source_height) = (decoder.width(), decoder.height());
+    let (width, height) = if source_width <= 1280 && source_height <= 720 {
+        (source_width, source_height)
+    } else {
+        let (width, height) = if u64::from(source_width) * 720 > u64::from(source_height) * 1280 {
+            (
+                1280,
+                (u64::from(source_height) * 1280 / u64::from(source_width)) as u32,
+            )
+        } else {
+            (
+                (u64::from(source_width) * 720 / u64::from(source_height)) as u32,
+                720,
+            )
+        };
+        // Multiples of four keep the existing 2x downsample's output even for
+        // YUV420/H.264, preserving aspect ratio within pixel rounding.
+        ((width / 4 * 4).max(4), (height / 4 * 4).max(4))
+    };
+
     let mut scaler = ScalingContext::get(
         decoder.format(),
-        decoder.width(),
-        decoder.height(),
+        source_width,
+        source_height,
         Pixel::RGB24,
-        decoder.width(),
-        decoder.height(),
+        width,
+        height,
         Flags::BILINEAR,
     )?;
 
-    let width = decoder.width();
-    let height = decoder.height();
     let mut frames = Vec::new();
 
     let mut receive_frames =
@@ -203,6 +222,36 @@ pub fn encode_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_caps_rgb_memory_without_stretching_frames() {
+        init();
+
+        for (width, height, expected_width, expected_height) in [
+            (1920, 1080, 1280, 720),
+            (1600, 1200, 960, 720),
+            (1080, 1920, 404, 720),
+        ] {
+            let frames = vec![RawFrame::filled(width, height, 90, 130, 170); 3];
+            let encoded = encode_segment(&frames, 30, 0).expect("encode fixture");
+            let decoded = decode_segment(&encoded).expect("decode fixture");
+
+            assert_eq!(decoded.len(), 3, "resizing must preserve frame cadence");
+            for frame in decoded {
+                assert_eq!(
+                    (frame.width, frame.height),
+                    (expected_width, expected_height)
+                );
+                assert_eq!(
+                    frame.data.len(),
+                    (expected_width * expected_height * 3) as usize
+                );
+                // The pipeline halves RGB dimensions before YUV420/H.264 encoding.
+                assert_eq!(frame.width % 4, 0);
+                assert_eq!(frame.height % 4, 0);
+            }
+        }
+    }
 
     #[test]
     fn roundtrip_encode_decode() {

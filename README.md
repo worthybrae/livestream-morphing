@@ -2,6 +2,12 @@
 
 A real-time video processing system that transforms the Abbey Road webcam livestream with artistic effects. Features a public viewer and admin interface for live stylization control.
 
+The portfolio stream uses the Rust service in `livestream-morphing-rs` and
+Railway Serverless. Production CDN delivery is pending (see below). It does not
+use the legacy Python, Celery, Redis, S3, or R2 deployment instructions below.
+See [Production deployment](#production-deployment-railway) for the current runtime
+contract and rollout status.
+
 ## 🎯 What It Does
 
 Captures the Abbey Road webcam stream, applies artistic "carbonized" blob effects (blur, quantization, psychedelic distortion), and serves it back as an HLS stream with time-based color schemes that change throughout the day.
@@ -41,7 +47,7 @@ livestream-morphing/
 
 ## 🚀 How to Run
 
-### Option 1: Legacy Setup (Current - Uses Celery)
+### Option 1: Legacy Python Setup (Uses Celery; not the portfolio deployment)
 
 **1. Setup Virtual Environment:**
 ```bash
@@ -88,9 +94,11 @@ uvicorn api:app --reload
 
 ---
 
-### Option 2: New Backend Structure (WIP - Simpler!)
+### Option 2: Legacy Python Backend Structure (WIP)
 
-**Note:** This is the future setup. Backend code needs import updates to work.
+**Note:** These are historical Python setup notes. Backend code needs import
+updates to work. Do not provision AWS or R2 credentials for the Rust portfolio
+deployment.
 
 **1. Setup:**
 ```bash
@@ -141,8 +149,200 @@ STREAM_URL is optional and defaults to the Abbey Road source
 Serverless must be enabled for the livestream-morphing service
 ```
 
-`live.worthyrae.com` is the only public playback hostname. The local studio is
+The portfolio uses the generated Railway HTTPS origin below. The local studio is
 mounted only when `PUBLIC_MODE` is `false`.
+
+### Deployment targets and controls (2026-09-09)
+
+- Existing Railway project: `lavish-energy`, production environment, in the same
+  Hobby workspace as `personal` (`worthyrae.com`).
+- Stream service: `livestream-morphing` (`ec75829f-b72a-49ff-b7c8-879afb9dfb4b`).
+- Origin: `https://livestream-morphing-production.up.railway.app`.
+- Optional future branded domain: `https://live.worthyrae.com`. Its CNAME target is
+  `fk1nlch4.up.railway.app`.
+- Serverless is enabled (`sleepApplication: true`). The pipeline releases its
+  source work after five minutes without viewer requests.
+- The shared workspace has a $5 soft usage alert and no hard limit. Railway
+  rejected the planned $4 alert because its minimum nonzero threshold is $5.
+  A soft alert sends email; it does not enforce a $5 service budget or stop the
+  portfolio. Other services consume the same included Hobby usage allowance.
+
+### Delivery decision
+
+The tuned direct-origin cost gate passes. The portfolio build-time variable is
+`VITE_LIVE_STREAM_URL=https://livestream-morphing-production.up.railway.app`.
+This launch does not require AWS, R2, or a Cloudflare CDN cache.
+
+Custom-domain branding remains optional and pending DNS access.
+The authenticated Cloudflare account contains `streamclout.io`, not
+`worthyrae.com`. Public DNS for `worthyrae.com` uses
+`dns1.registrar-servers.com` and `dns2.registrar-servers.com`, so its DNS is not
+currently hosted by Cloudflare. The intended hostname needs access to the
+current DNS provider. No nameserver migration has been attempted.
+
+The original plain Cloudflare proxy/cache proposal also needs revision.
+[Cloudflare's video-delivery policy](https://developers.cloudflare.com/fundamentals/reference/policies-compliances/delivering-videos-with-cloudflare/)
+does not permit externally hosted video delivery on an ordinary Free, Pro, or
+Business CDN plan without an appropriate video service. Do not enable a generic
+orange-cloud HLS cache as a substitute. Direct Railway HTTPS delivery was selected
+after measuring the tuned five-viewer workload below.
+[Cloudflare's explanation of its terms](https://blog.cloudflare.com/updated-tos/)
+allows video hosted by its Stream or R2 services. No R2 resources or credentials
+have been created by this rollout.
+
+When deploying from an isolated Git worktree, pass its path explicitly:
+
+```bash
+railway up "$PWD" --path-as-root --service livestream-morphing --environment production --detach
+```
+
+The service also has `dockerfilePath: Dockerfile.railway` set in Railway. The first
+CLI upload without the explicit root selected the legacy Python Dockerfile and
+failed before serving traffic. Confirm the build log names `Dockerfile.railway`.
+Railway currently accepts `railway.json` but warns that Config as Code support
+ends on 2026-12-01; migrate the configuration before that date.
+
+### Rollback
+
+Remove `VITE_LIVE_STREAM_URL` from the existing `personal` Railway service and
+redeploy the portfolio. Verify that `/art/livestream-art` plays its recording.
+Only then stop the `livestream-morphing` service's deployment. Keep this order so
+the art page remains usable throughout rollback. A deployment restart or a new
+deployment can restore the stream service; no persistent stream data is needed.
+
+### Verification status
+
+The tuned origin serves H.264 at 640 × 360, 30 FPS. Public status and playlist
+responses are `no-store`; successful MPEG-TS responses are immutable for one
+hour; missing segments are `no-store`. The configured origin is exactly
+`https://worthyrae.com`, and `PUT /api/source` returns 404 in public mode.
+
+Local verification on 2026-09-09 passed 87 Rust tests, 82 portfolio tests, the
+portfolio production build, and the fallback-only build plus 12 focused media
+tests. Focused ESLint has no errors and one pre-existing `Home.tsx` hook warning.
+Strict Rust clippy (with baseline `dead_code` allowed) reports 53 existing lint
+errors on both the original checkout and feature worktree; it is not a passing
+gate. No effect-code cleanup was included in this deployment task.
+
+The single cost-tuning pass caps decoded RGB frames at 1280 × 720 before retaining
+them in memory, so the existing 2x stage produces 640 × 360 for Abbey Road. Smaller
+sources keep their original dimensions; larger sources retain their aspect ratio
+within rounding required for H.264. A real encode/decode regression test failed
+on the original 1920 × 1080 behavior, then passed with the cap. The tuned service
+passes all 87 Rust tests; strict clippy still reports the same 53 baseline errors.
+
+### Measured cost gate
+
+The one authorized tuning pass reduced Abbey Road output from 960 × 540 to
+640 × 360. The tuned direct Railway deployment passes the $5 incremental
+resource target for 50 active hours in 50 one-hour sessions:
+
+| Tuned measurement / projection | 1 continuous viewer | 5 continuous viewers |
+| --- | ---: | ---: |
+| Decoded test duration per client | 5:30 | 10:30 |
+| Average CPU | 0.5254 vCPU | 0.5249 vCPU |
+| Average RAM | 0.6958 GB | 0.6981 GB |
+| Generated video | 0.2200 GB/hour | 0.2085 GB/hour |
+| Mean / maximum processing per 6-second segment | 2.638 / 2.898 s | 2.662 / 2.897 s |
+| 50-hour viewer egress | 11.00 GB | 52.13 GB |
+| Cost with 10-minute session overhead | $1.95 | $4.00 |
+| Cost with 15-minute session overhead | $2.05 | $4.10 |
+
+The tuned one-viewer run was 19:24:18–19:29:40 UTC, and the five-viewer run was
+19:29:40–19:40:00 UTC on 2026-09-09. The 54 and 104 segments respectively had
+zero cadence overruns. Each decoder exited successfully with zero dropped or
+duplicated frames. All five clients decoded 18,900 frames; each recovered from
+two TLS EOF warnings. The one-client run decoded 9,902 frames and recovered from
+one TLS EOF plus two initial null-muxer non-monotonic DTS warnings. These are
+FFmpeg transport/decode results, not substitutes for browser acceptance.
+
+Railway's interior five-viewer metrics window was 19:30:30–19:39:30 UTC. Memory
+peaked at 0.7028 GB. Missing buckets where the CPU limit was zero were excluded;
+zero CPU buckets followed by accumulated CPU samples were retained. Segment
+sizes conservatively add one KiB to the logged integer KiB value. A sensitivity
+using 0.65 vCPU, 0.75 GB RAM, the higher 0.2200 GB/hour payload rate, and 15-minute
+overhead yields **$4.51 for five viewers**. This is not a guaranteed spending cap:
+longer viewing, more sessions, retries, or more complex source video can cost more.
+
+Post-deployment activation reached first status in 114 ms and three fresh
+segments in 12.248 seconds. This is not an asleep-container cold-start measurement.
+After all five clients closed at 19:40:00 UTC, production logged pipeline idle at
+19:45:03 UTC, confirming the five-minute viewer lease stops processing.
+Railway reported `SLEEPING` at 19:52:00 UTC (the previous 19:50:26 check was still
+running). Actual sleep occurred within 10:26–12:00 after the final viewer, so the
+15-minute overhead sensitivity covers the observed wake/idle lifecycle.
+
+The subsequent production Chrome cold-start showed the recording and starting
+label immediately. A transient retry label appeared around 18.5 seconds; the
+page recovered automatically and was confirmed `LIVE` by 89.6 seconds, with the
+live video playing (`readyState=4`, no media error) above the still-playing
+recording. Exact first `canplay` time was not captured. Origin logs show activation
+at 19:52:30.890 UTC, first segment at 19:52:33.816, and third at 19:52:41.211,
+without source errors. This is a self-recovering cold start, not a flawless direct
+transition; the transient browser failure has not been reproduced or attributed.
+Safari also passed warm-service native HLS acceptance on the production page:
+the transformed Abbey Road video was visible with the `LIVE` badge. Both browser
+pages were closed after verification.
+
+### Baseline, cost method, and supported alternatives
+
+The first origin session ran on 2026-09-09 from 18:47:54 to 19:02:54 UTC.
+One FFmpeg client decoded 27,000 frames (15 minutes) successfully, with no dropped
+or duplicated frames. Four transient TLS EOF warnings recovered automatically.
+Across 150 processed segments, mean processing time was 4.240 seconds and maximum
+was 5.125 seconds; none exceeded the six-second cadence. Mean segment size was
+approximately 637 KB, or 0.3824 GB/hour (rounded upward from KiB log values).
+Railway reported average 0.8504 vCPU and 1.5356 GB RAM over the interior metrics
+window (18:48:00–19:02:30 UTC). These are direct-origin measurements, not browser
+or Cloudflare-cache acceptance results.
+
+The original five-client session ran from 19:02:54 to 19:18:13 UTC. Each client
+decoded 27,900 frames (15:30 video), exited successfully, and had zero dropped or
+duplicated frames; recoverable TLS EOF warnings occurred. Its 153 processed
+segments averaged 4.301 seconds (maximum 5.668 seconds), with no cadence overruns.
+Average segment size was about 650 KB / 0.3902 GB/hour. Railway averaged 0.8841
+vCPU and 2.5134 GB RAM (peak RAM 3.1520 GB). Direct five-viewer delivery at this
+original resolution projects to about $8.30 for 50 one-hour sessions plus ten
+minutes overhead each, exceeding the $5 gate and triggering the one tuning pass.
+
+Use [Railway's current rates](https://docs.railway.com/pricing): $20/vCPU-month,
+$10/GB-month RAM, and $0.05/GB egress. For 50 active hours in `N` sessions,
+reserve `H = 50 + N / 6` compute hours (ten minutes overhead per session).
+With average CPU `C`, average memory `M` GB, and generated video `G` GB/hour:
+
+```text
+compute = H * (C * 20 / 730 + M * 10 / 730)
+direct Railway total = compute + 50 * simultaneous_viewers * G * 0.05
+Railway + R2 estimate = compute + H * G * 0.05 + R2 usage
+```
+
+Ten minutes is a planning assumption, not a maximum.
+[Railway's Serverless documentation](https://docs.railway.com/deployments/serverless)
+allows 5–10 minutes after the last outbound packet before sleep, following the
+pipeline's own five-minute idle period. Also calculate `H = 50 + N / 4` for a
+15-minute overhead sensitivity, plus startup time if material.
+
+The R2 estimate conservatively uploads during all overhead hours. Direct
+delivery only sends video while viewers are present. These are incremental
+resource estimates, not a promise that all services in the shared workspace
+will total $5. Output complexity, session count, retries, and viewing hours can
+change the bill.
+
+[R2 Standard pricing](https://developers.cloudflare.com/r2/pricing/) includes
+1 million writes, 10 million reads, and 10 GB-month storage per month, with free
+egress. For 50 one-hour sessions, a six-second segment cadence means about
+35,000 writes including overhead and at most 150,000 segment reads for five
+continuous viewers. With short retention and unused shared R2 allowances, the
+additional R2 usage is expected to fit the free tier. This estimate needs a
+small R2 delivery design and validation; R2 has not been implemented. Apply an
+[object lifecycle](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)
+and account for deletion potentially lagging expiry by 24 hours.
+
+[Cloudflare Stream pricing](https://developers.cloudflare.com/stream/pricing/)
+charges $1 per 1,000 delivered minutes. Fifty viewing hours therefore cost $3
+for one continuous viewer or $15 for five, before this custom processor and
+Stream storage. Storage capacity is sold in $5/1,000-minute monthly increments.
+Stream does not fit the five-viewer $5 target.
 
 ---
 
@@ -252,7 +452,11 @@ Currently processes **every 3rd frame** and copies the rest for speed:
 
 ---
 
-## 💰 Deployment Options
+## 💰 Legacy Deployment Options (historical estimates)
+
+These older Python/S3/R2 notes are not current pricing guidance and do not apply
+to the Rust portfolio deployment. Use the measured production cost decision
+above when selecting infrastructure.
 
 ### Ultra-Cheap (~$0-2/month)
 
