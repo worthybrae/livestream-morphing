@@ -193,3 +193,4 @@ cython_debug/
 
 # Superpowers
 .superpowers/
+.worktrees/
