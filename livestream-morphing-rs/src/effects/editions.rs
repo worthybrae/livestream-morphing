@@ -9,6 +9,7 @@ use crate::{
 #[derive(Default)]
 pub struct Editions {
     ink: LivingInk,
+    forms: super::edition_forms::Forms,
     warp: Distortion,
     luma: Vec<f32>,
     smooth: Vec<f32>,
@@ -118,7 +119,7 @@ impl Effect for Editions {
     }
     fn params(&self) -> Vec<ParamDef> {
         vec![
-            ParamDef::new("edition", "Edition", 0., 21., 0., 1.),
+            ParamDef::new("edition", "Edition", 0., 25., 0., 1.),
             ParamDef::new("hour", "London hour", 0., 24., 14., 0.25),
             ParamDef::new("cloud", "Cloud cover", 0., 1., 0.3, 0.05),
             ParamDef::new("rain", "Wet atmosphere", 0., 1., 0., 0.05),
@@ -152,7 +153,7 @@ impl Effect for Editions {
                 .filter(|x| x.is_finite())
                 .unwrap_or(default)
         };
-        let edition = get("edition", 0.).round().clamp(0., 21.) as u32;
+        let edition = get("edition", 0.).round().clamp(0., 25.) as u32;
         let detail = get("detail", 1.).clamp(0.5, 2.);
         let pigment = get("pigment", 1.).clamp(0.5, 1.5);
         for (i, p) in frame.data.chunks_exact(3).enumerate() {
@@ -173,6 +174,12 @@ impl Effect for Editions {
                 2
             },
         );
+        if edition >= 22 {
+            let seconds = ctx.frame_number as f64 * ctx.delta_seconds.max(0.) as f64;
+            self.forms.draw(frame, &self.smooth, edition, seconds as f32);
+            self.warp.apply_rgb_at_phase(frame, 0.012, 8., (seconds / 8.) as f32 * std::f32::consts::TAU);
+            return;
+        }
         let mut ink_params: ParamValues =
             serde_json::from_str(include_str!("../living_ink_preset.json")).unwrap();
         ink_params.insert("trail_strength".into(), 0.);
@@ -536,7 +543,7 @@ mod tests {
     #[test]
     fn every_material_is_distinct_deterministic_and_keeps_moving() {
         let mut results = std::collections::HashSet::new();
-        for edition in 0..=21 {
+        for edition in 0..=25 {
             let params = ParamValues::from([("edition".into(), edition as f32)]);
             let mut a = image();
             let mut b = image();

@@ -79,3 +79,5 @@ mod tests {
 pub mod living_ink;
 
 pub mod editions;
+
+mod edition_forms;

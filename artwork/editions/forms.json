@@ -1,0 +1,26 @@
+[
+  {
+    "id": 25,
+    "slug": "living-current",
+    "name": "Living current / luminous filaments",
+    "description": "Thousands of curved strokes follow the street\u2019s light contours. They turn gently like a magnetic field, while the signature wave moves the whole drawing."
+  },
+  {
+    "id": 22,
+    "slug": "cathedral",
+    "name": "Cathedral / molten glass",
+    "description": "The crossing becomes a field of irregular glass panes, with gold bevels and slowly turning jewel light."
+  },
+  {
+    "id": 23,
+    "slug": "ribbon-relief",
+    "name": "Ribbon relief / a folded street",
+    "description": "The camera sculpts overlapping colored ribbons. Highlights rise into crests, with dark gaps beneath the folds."
+  },
+  {
+    "id": 24,
+    "slug": "paper-theatre",
+    "name": "Paper theatre / loose layers",
+    "description": "Cobalt, vermilion, rose, and ochre cutouts move slightly apart. Torn edges cast small shadows over the layer below."
+  }
+]
