@@ -1,0 +1,46 @@
+[
+  {
+    "id": 60,
+    "slug": "fine-return",
+    "name": "Reference / Fine knife revisited",
+    "description": "The previous small-stroke study, on the same footage.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 61,
+    "slug": "loaded-brush",
+    "name": "Oil / Loaded brush",
+    "description": "A thick heel opens into a pressure belly, then tapers into broken bristles. Stable curved brush shapes carry changing pigment.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 62,
+    "slug": "paint-over-paint",
+    "name": "Oil / Paint over paint",
+    "description": "Broad underpainting beneath selective overlapping marks. Earlier colors remain visible through dry bristles. Layers are rebuilt from each frame, without trails.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 63,
+    "slug": "quiet-fields",
+    "name": "Oil / Quiet fields",
+    "description": "Broad quiet passages with small expressive accents appearing at scene detail. Fixed brush shapes keep the surface anchored.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  }
+]

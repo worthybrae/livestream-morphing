@@ -65,3 +65,11 @@ Local comparisons use the same daytime clip. The source colors are retained; the
 Returns to the original Fine knife geometry (36/18/8), full detail-site density, gradient-driven angles and original pigment/ridge texture. Retains source RGB and the accepted dark-gray-night/richer-day grading. Only20% of coarse stroke identities are eligible for a curved accent, and this fades to zero by gradient0.05. Eligible strokes lengthen up to45% with a gentle0.18-width bend. There is no regional direction field, large paint patch, or pigment dragging. The exact final psychedelic warp remains.
 
 The comparison includes edition46 as it appears in production, rendered on the same clip. Edition60 is a local preview; production is unchanged.131 tests passed, including serial/parallel equivalence for the new edition.
+
+## Three brush directions (editions 61–63)
+
+Recorded comparison against edition 60, all at noon with cloud 0.3. Loaded brush (61) uses a pressure belly, loaded heel, tapered dry end and longitudinal bristle gaps. Paint over paint (62) uses broader underpainting and selective translucent overpainting; layers are spatial, rebuilt per frame, with no temporal trails. Quiet fields (63) concentrates finer marks at luminance detail and keeps broad passages quieter.
+
+The three new modes anchor stroke angles, sizes and curves to spatial identities rather than changing gradients. Source pigment and detail opacity still respond to video. All retain source RGB, the existing day/night/weather grading and the unchanged final psychedelic warp. Preview weather is fixed, not a live weather integration. These are local studies, not production changes.
+
+The New York comparison uses a separately captured Times Square sample from the supplied EarthCam playlist (camera 50683), 1920 × 1080 at 30 fps. The catalog records the America/New_York local hour at capture; weather inputs remain illustrative. Signed playlist credentials are not saved in the repository.
