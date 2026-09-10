@@ -1,0 +1,35 @@
+[
+  {
+    "id": 57,
+    "slug": "curved-reference",
+    "name": "Previous / Brushed passages",
+    "description": "The previous curved brushwork for comparison.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 58,
+    "slug": "impasto-scales",
+    "name": "Oil / Impasto scales",
+    "description": "Broad loaded paint, short dabs and fine dragged marks. Width and length vary independently; fewer fine marks leave the broad layers exposed. Same source colors, curves, day/night treatment and psychedelic movement.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 59,
+    "slug": "impasto-bold",
+    "name": "Oil / Broad impasto",
+    "description": "A more abstract study with larger fields of thick paint and sparse smaller accents. Inspired by the contrast of scales in your reference, retaining the street\u2019s source colors.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  }
+]
