@@ -3,6 +3,7 @@ import Hls from 'hls.js'
 import { useEffects } from './hooks/useEffects'
 import { usePipeline } from './hooks/usePipeline'
 import './living-ink.css'
+import looks from './looks.json'
 
 type Metrics = { width: number; height: number; frames: number; source_fps: number; frame_p50_ms: number; frame_p95_ms: number; total_ms: number; duration_seconds: number; bytes: number }
 type Saved = { name: string; version: string; params: Record<string, number> }
@@ -45,6 +46,10 @@ export default function App() {
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Render failed') }
     finally { setBusy(false) }
   }
+  function chooseLook(kind: 'linework' | 'motion', choice: { name: string; params: Record<string, number> }) {
+    setParams({ ...draft, ...choice.params })
+    setMessage(`${choice.name} ${kind} loaded. Render to preview the captured clip.`)
+  }
   function save() {
     const entry = { name: name.trim() || 'Untitled', version: new Date().toISOString(), params: draft }
     const next = [entry, ...saved].slice(0, 30)
@@ -79,7 +84,16 @@ export default function App() {
       </section>
       <aside className="ink-controls">
         <h1>The marks</h1><p>Keep the street quiet. Let motion carry the light.</p>
-        {(ink?.params ?? []).map(p => <label className="ink-slider" key={p.id}><span>{p.name}<output>{draft[p.id].toFixed(p.step < 1 ? 2 : 0)}</output></span><input type="range" min={p.min} max={p.max} step={p.step} value={draft[p.id]} onChange={e => setParams(previous => ({ ...previous, [p.id]: Number(e.target.value) }))} /></label>)}
+        <div className="ink-starting-looks">
+          <h2>Starting styles</h2><p>Try a combination, then refine the sliders below. These are the same choices as the public sample playground.</p>
+          {(['linework', 'motion'] as const).map(kind => <fieldset key={kind}><legend>{kind === 'linework' ? 'Linework' : 'Motion'}</legend>
+            <div>{looks[kind].map(choice => <button key={choice.id} disabled={!ink || busy}
+              aria-pressed={Object.entries(choice.params).every(([key,value]) => Math.abs(draft[key]-value)<0.0001)}
+              title={choice.description} onClick={() => chooseLook(kind, choice)}>{choice.name}</button>)}</div>
+          </fieldset>)}
+          <button disabled={!ink || busy} onClick={() => { setParams(looks.base); setMessage('Current live look loaded. Render to preview.'); }}>Reset to live look</button>
+        </div>
+        {(ink?.params ?? []).map(p => <label className="ink-slider" key={p.id}><span>{p.name}<output>{draft[p.id].toFixed(Math.max(0, Math.ceil(-Math.log10(p.step))))}</output></span><input type="range" min={p.min} max={p.max} step={p.step} value={draft[p.id]} onChange={e => setParams(previous => ({ ...previous, [p.id]: Number(e.target.value) }))} /></label>)}
         {!ink && <p>Start the local Rust engine to load the controls.</p>}
         <button className="ink-render" disabled={busy || !ink || !preset} onClick={() => void render()}>{busy ? 'Rendering…' : 'Render preview ↗'}</button>
         <div className="ink-presets"><label>PRESET NAME<input value={name} onChange={e => setName(e.target.value)} /></label><div className="ink-actions"><button onClick={save} disabled={!ink}>Save version</button><button onClick={exportPreset} disabled={!ink}>Export for production</button></div>

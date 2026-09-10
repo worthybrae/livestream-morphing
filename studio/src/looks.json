@@ -1,0 +1,81 @@
+{
+  "base": {
+    "smoothing": 1,
+    "fine_threshold": 16,
+    "broad_threshold": 12,
+    "fine_weight": 1.5,
+    "broad_weight": 0,
+    "stroke_body": 0.15,
+    "charcoal": 32,
+    "highlight": 245,
+    "trail_strength": 0,
+    "subpixel": 1,
+    "warp_amplitude": 0.012,
+    "warp_frequency": 8,
+    "warp_period": 8
+  },
+  "linework": [
+    {
+      "id": "delicate",
+      "name": "Delicate",
+      "description": "Fewer, lighter marks leave more of the street in shadow.",
+      "params": {
+        "fine_threshold": 24,
+        "fine_weight": 1.05,
+        "stroke_body": 0
+      }
+    },
+    {
+      "id": "crisp",
+      "name": "Crisp",
+      "description": "Precise bright contours keep cars and crossing lines clearly defined.",
+      "params": {
+        "fine_threshold": 16,
+        "fine_weight": 1.5,
+        "stroke_body": 0.15
+      }
+    },
+    {
+      "id": "bold",
+      "name": "Bold",
+      "description": "Stronger strokes reveal more texture across the street.",
+      "params": {
+        "fine_threshold": 12,
+        "fine_weight": 1.8,
+        "stroke_body": 0.4
+      }
+    }
+  ],
+  "motion": [
+    {
+      "id": "still",
+      "name": "Still",
+      "description": "The camera keeps moving; the drawing has no added distortion.",
+      "params": {
+        "warp_amplitude": 0,
+        "warp_frequency": 8,
+        "warp_period": 8
+      }
+    },
+    {
+      "id": "flowing",
+      "name": "Flowing",
+      "description": "A slow ripple bends the outlines gently. This is the live treatment.",
+      "params": {
+        "warp_amplitude": 0.012,
+        "warp_frequency": 8,
+        "warp_period": 8
+      }
+    },
+    {
+      "id": "psychedelic",
+      "name": "Psychedelic",
+      "description": "Deeper, faster waves make the whole street undulate.",
+      "params": {
+        "warp_amplitude": 0.03,
+        "warp_frequency": 11,
+        "warp_period": 4
+      }
+    }
+  ]
+}

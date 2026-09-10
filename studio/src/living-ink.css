@@ -8,3 +8,5 @@
 @media(max-width:850px) { .ink-workspace { grid-template-columns:1fr; }.ink-controls { border-left:0;border-top:1px solid #333631; }.ink-preview { padding:20px; }.ink-header { padding:20px; }.ink-header span:nth-child(2) { display:none; }.ink-equation { flex-direction:column;gap:10px; } }
 
 .ink-studio .ink-render:hover { background:#d4dec6; }
+
+.ink-starting-looks { margin-bottom:28px; }.ink-starting-looks h2 { font:20px Georgia,serif; }.ink-starting-looks p { color:#92968c;line-height:1.7; }.ink-starting-looks fieldset { border:0;padding:0;margin:18px 0; }.ink-starting-looks legend { margin-bottom:10px; }.ink-starting-looks fieldset>div { display:flex;gap:4px; }.ink-starting-looks fieldset button { padding:9px 6px;font-size:10px;flex:1; }.ink-starting-looks button[aria-pressed=true] { background:#c2ceb3;color:#191c16; }.ink-studio button:focus-visible { outline:2px solid #eee;outline-offset:3px; }
