@@ -14,3 +14,7 @@ Local study only. Render with render.py and paper-focus.json, selecting paper-cu
 - Edition 35, sundial: a 24-second lighting orbit moves shadows and edge illumination around the same cutouts. Lighting direction is computed once per frame; it adds no extra per-pixel samples.
 
 All three reuse the same two-sample construction, source-timed animation, and final signature warp. They do not use persistent trails or change production settings.
+
+## Clean cuts
+
+Edition 36 retains lifted-edge depth and colors but classifies smoothed luminance into discrete paper layers before sampling shadows. The prior fixed luminance transition band produced broad color mixtures wherever source gradients were weak. Discrete masks remove that dependence; translated shadows use bilinear mask samples, and the unchanged final warp provides spatial interpolation. The original lifted-edge film remains for comparison. Check moving edges for any increased stepping or shimmer when evaluating this harder treatment.

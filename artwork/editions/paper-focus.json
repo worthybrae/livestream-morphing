@@ -1,5 +1,11 @@
 [
   {
+    "id": 36,
+    "slug": "paper-clean-cuts",
+    "name": "Paper / clean cuts",
+    "description": "Lifted edges with discrete paper masks: crisp color boundaries, clean cast shadows, and the same psychedelic movement."
+  },
+  {
     "id": 32,
     "slug": "paper-cutouts",
     "name": "Paper / cutouts",

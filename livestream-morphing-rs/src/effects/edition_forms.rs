@@ -258,7 +258,7 @@ impl Forms {
                 }
             }
             26 | 27 => paper_relief(frame, luma, edition, seconds),
-            32..=35 => paper_cutouts(frame, luma, edition, seconds),
+            32..=36 => paper_cutouts(frame, luma, edition, seconds),
             28..=31 => filaments(frame, luma, edition, seconds),
             _ => unreachable!(),
         }
@@ -409,13 +409,38 @@ fn paper_cutouts(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32)
         // Light travels slowly; geometry and the signature warp remain untouched.
         let phase = seconds * std::f32::consts::TAU / 24.;
         (phase.cos() * 6., phase.sin() * 4.5, 0.26)
-    } else if edition == 33 {
+    } else if edition == 33 || edition == 36 {
         (6., 4.5, 0.28)
     } else {
         (4., 3., 0.22)
     };
     let shadow = ShiftSample::new(w, h, 0., 0., dx * scale, dy * scale);
     let rim = ShiftSample::new(w, h, 0., 0., -dx * 0.3 * scale, -dy * 0.3 * scale);
+    if edition == 36 {
+        // Classify before translating: a fixed luminance blend band can cover many
+        // pixels on low-contrast slopes. Discrete paper masks have no such haze.
+        let layers: Vec<f32> = luma
+            .iter()
+            .map(|l| thresholds.iter().filter(|t| l >= *t).count() as f32)
+            .collect();
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                let layer = layers[i];
+                let shade = (shadow.get(&layers, x, y) - layer).clamp(0., 1.) * strength;
+                let edge = (layer - rim.get(&layers, x, y)).clamp(0., 1.) * 0.16;
+                let c = blend(
+                    blend(colors[layer as usize], [10., 15., 29.], shade),
+                    [255., 242., 213.],
+                    edge,
+                );
+                let fiber = (hash(x / 2, y / 2) - 0.5) * 0.65;
+                put(frame, i, std::array::from_fn(|k| c[k] + fiber));
+            }
+        }
+        // The final shared warp supplies spatial antialiasing on the hard masks.
+        return;
+    }
     // Continuous layer coordinate also antialiases the cuts and their shadows.
     let level = |l: f32| -> f32 {
         thresholds
