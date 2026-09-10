@@ -274,6 +274,8 @@ impl Forms {
             52 => palette_knife::<4>(frame, luma, edition, environment),
             53 => palette_knife::<5>(frame, luma, edition, environment),
             54 => palette_knife::<6>(frame, luma, edition, environment),
+            55 => palette_knife::<7>(frame, luma, edition, environment),
+            56 => palette_knife::<8>(frame, luma, edition, environment),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -700,6 +702,14 @@ fn painted_detail_opacity(gradient: f32) -> f32 {
     t*t*(3.-2.*t)
 }
 
+// Deterministic brush families: width/length variation comes from the stroke
+// identity, not the current frame. Each family has a distinctly different aspect.
+fn mixed_brush(seed: f32, variation: f32) -> (f32, f32) {
+    if seed < 0.34 { (0.95 + variation*0.7, 0.55 + variation*0.35) }
+    else if seed < 0.70 { (2.0 + variation*1.2, 0.12 + variation*0.10) }
+    else { (0.42 + variation*0.32, 0.38 + variation*0.30) }
+}
+
 // MODE 0 retains the reference pixels. New studies share its optimized geometry.
 fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u32, environment: [f32; 3]) {
     let w = frame.width as usize;
@@ -748,7 +758,9 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
             }
         }
     }
-    let sizes = if edition == 45 {
+    let sizes = if MODE == 8 { [80., 32., 10.] }
+    else if MODE == 7 { [60., 26., 8.] }
+    else if edition == 45 {
         [48., 25., 12.]
     } else {
         [36., 18., 8.]
@@ -768,11 +780,11 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                 let dx = luma[y * w + (x + d).min(w - 1)] - luma[y * w + x.saturating_sub(d)];
                 let dy = luma[(y + d).min(h - 1) * w + x] - luma[y.saturating_sub(d) * w + x];
                 let gradient = dx.abs() + dy.abs();
-                let opacity = if MODE == 6 && coat == 2 { painted_detail_opacity(gradient) } else { 1. };
-                if (MODE == 6 && opacity <= 0.) || (MODE != 6 && coat == 2 && gradient < 0.065) {
+                let opacity = if MODE >= 6 && coat == 2 { painted_detail_opacity(gradient) } else { 1. };
+                if (MODE >= 6 && opacity <= 0.) || (MODE < 6 && coat == 2 && gradient < 0.065) {
                     continue;
                 }
-                let angle = if MODE == 6 {
+                let angle = if MODE >= 6 {
                     painted_stroke_direction(dx, dy, seed)
                 } else if gradient > 0.03 {
                     dy.atan2(dx) + 1.57 + (seed - 0.5) * 0.45
@@ -780,8 +792,13 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                     (seed - 0.5) * 2.6
                 };
                 let (sn, cs) = angle.sin_cos();
-                let length = (size * scale).max(1.) * (0.8 + seed * 0.75) * if MODE == 6 { 1.12 } else { 1. };
-                let width = (size * scale).max(1.) * (0.35 + hash(gx, gy + 41) * 0.25) * if MODE == 6 { 0.92 } else { 1. };
+                let length = (size * scale).max(1.) * (0.8 + seed * 0.75) * if MODE >= 6 { 1.12 } else { 1. };
+                let width = (size * scale).max(1.) * (0.35 + hash(gx, gy + 41) * 0.25) * if MODE >= 6 { 0.92 } else { 1. };
+                let (length, width) = if MODE >= 7 {
+                    let variation = hash(gx + 417, gy + coat*97);
+                    let (l, w) = mixed_brush(seed, variation);
+                    ((size*scale).max(1.)*l, (size*scale).max(1.)*w)
+                } else { (length, width) };
                 let bx = cs.abs() * length + sn.abs() * width;
                 let by = sn.abs() * length + cs.abs() * width;
                 let c = if MODE == 0 { color_at(luma[i]) } else { source_color(x, y, (step / 4).max(1)) };
@@ -879,7 +896,7 @@ fn knife_pixels<const MODE: u8>(
     }
     let cover = (-distance * width).max(F::ZERO).min(F::ONE) * 0.94;
     let scrape = knife_noise4(u * 4. + seed * 19., v * 13. + coat as f32 * 37.);
-    let cover = if MODE == 6 {
+    let cover = if MODE >= 6 {
         // Rounded, slightly ragged tips inside the original convex bounds.
         // The same pigment field supplies dry-brush breakup near the edge.
         let curved_v = v + (F::ONE - u*u).max(F::ZERO) * ((seed-0.5)*0.22);
@@ -897,7 +914,7 @@ fn knife_pixels<const MODE: u8>(
     } else {
         // Blade-local channels give thick paint a directional surface. Reuse
         // existing pigment noise; no extra noise field or full-frame lighting pass.
-        let phase = v * 5.5 + scrape * 0.7 + seed * 7.;
+        let phase = v * (if MODE >= 7 { 3. + seed*6. } else { 5.5 }) + scrape * 0.7 + seed * 7.;
         let fraction = phase - phase.floor();
         let groove = (fraction - 0.5).abs() * 4. - 1.;
         let shoulder = (F::ONE - (v - 0.55).abs() * 6.).max(F::ZERO);
@@ -1250,6 +1267,18 @@ mod sampling_tests {
 #[cfg(test)]
 mod knife_batch_tests {
     use super::*;
+    #[test]
+    fn brush_families_have_distinct_proportions_and_bounded_sizes() {
+        for v in [0., 0.5, 1.] {
+            let broad = mixed_brush(0.1, v);
+            let thin = mixed_brush(0.5, v);
+            let dab = mixed_brush(0.9, v);
+            assert!(thin.0/thin.1 > 9.);
+            assert!(broad.1 > thin.1*2.);
+            assert!(dab.0 < broad.0 && dab.0 < thin.0*0.4);
+            for (l,w) in [broad,thin,dab] { assert!(l>0. && l<=3.2 && w>0. && w<=0.9); }
+        }
+    }
     #[test]
     fn painted_strokes_do_not_pop_at_old_gradient_thresholds() {
         for seed in [0., 0.2, 0.5, 0.8, 1.] {

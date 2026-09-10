@@ -1,0 +1,35 @@
+[
+  {
+    "id": 54,
+    "slug": "painted-flow-reference",
+    "name": "Previous / Painted flow",
+    "description": "The previous, subtler stroke treatment for comparison.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 55,
+    "slug": "mixed-brushes",
+    "name": "Oil / Mixed brushes",
+    "description": "Broad loaded strokes, long narrow lines and short rounded dabs. Their sizes and placement stay stable as the street moves. The same day/night colors and psychedelic movement.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 56,
+    "slug": "bold-gestures",
+    "name": "Oil / Bold gestures",
+    "description": "A larger, looser version of the mixed brushwork, with more visible sweeping marks. Same source colors, raised pigment and psychedelic movement.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  }
+]

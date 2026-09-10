@@ -41,3 +41,9 @@ Uses the same smooth night strength as the soft-light treatment. Night reduces s
 Longer, narrower marks with rounded, curved, bristled tips, clipped inside the original convex footprint. The existing pigment field supplies the breakup; no extra noise field is generated. Raised pigment channels remain. Fine detail opacity now ramps continuously over a contrast interval instead of appearing at 0.065. Stroke orientation uses bounded continuous alignment around deterministic anchors, removing the old weak-gradient angle switch. These measures reduce structural popping while retaining independent frames, parallel rendering, and the exact final psychedelic warp. There is no temporal image blending; source movement and color still update each frame.
 
 This is a new material rather than a change to existing previews. It inherits edition 53's dark gray night / richer day grading and softened lights. All 129 Rust tests passed, including continuity at old gradient thresholds and encoded serial/parallel equivalence. Judge the before/after in motion; continuity tests are not a claim that all temporal artifacts have been removed.
+
+## Mixed brushes (editions 55–56)
+
+The previous pass was visually too subtle. These studies use three clearly different stroke families: broad loaded marks, very long narrow strokes, and short rounded dabs. Family and size variation are fixed by the stroke seed, so they do not randomize across frames. Edition 55 uses coat spacings 60/26/8 at 1080p; edition 56 increases these to 80/32/10 for larger gestures. Existing gradual orientation/detail response, source colors, day/night grading, softened lights, and final psychedelic warp are retained. Internal groove spacing also varies by stroke identity.
+
+The larger spacing reduces stroke counts; geometry and overdraw still determine actual speed. Compare the rendered benchmarks rather than assuming cheaper or faster production. These are local previews.
