@@ -117,6 +117,13 @@ impl Effect for LivingInk {
     }
     fn clear_history(&mut self) { self.has_previous=false; self.trail.fill(0.0); }
     fn apply(&mut self, frame: &mut RawFrame, params: &ParamValues, ctx: &FrameCtx) {
+        let dt=if ctx.delta_seconds.is_finite() { ctx.delta_seconds.max(0.0) } else {1.0/30.0};
+        self.apply_at_time(frame,params,ctx,ctx.frame_number as f64*dt as f64);
+    }
+}
+impl LivingInk {
+    /// Explicit source time keeps flow stable when an interactive preview skips frames.
+    pub fn apply_at_time(&mut self, frame: &mut RawFrame, params: &ParamValues, ctx: &FrameCtx, seconds: f64) {
         let w=frame.width as usize; let h=frame.height as usize;
         if w==0 || h==0 { return; }
         if self.luma.len()!=w*h { self.init(frame.width,frame.height); }
@@ -166,7 +173,7 @@ impl Effect for LivingInk {
         }
         self.has_previous=true;
         }
-        self.warp.apply_monochrome(frame,get("warp_amplitude"),get("warp_frequency"),((ctx.frame_number as f64*dt as f64/get("warp_period") as f64) as f32)*std::f32::consts::TAU);
+        self.warp.apply_monochrome(frame,get("warp_amplitude"),get("warp_frequency"),((seconds/get("warp_period") as f64) as f32)*std::f32::consts::TAU);
     }
 }
 crate::register_effect!(LivingInk);
@@ -204,6 +211,19 @@ mod tests {
                 }
             }
             assert_eq!(actual,expected);
+        }
+    }
+    #[test]
+    fn explicit_source_time_matches_native_frame_clock() {
+        let mut native=LivingInk::default();let mut timed=LivingInk::default();
+        let mut params=default_params(&native.params());
+        params.insert("warp_amplitude".into(),0.03);
+        for index in 0..5 {
+            let ctx=FrameCtx{frame_number:index,width:64,height:32,delta_seconds:1.0/30.0};
+            let mut a=boundary(20+index as usize);let mut b=a.clone();
+            native.apply(&mut a,&params,&ctx);
+            timed.apply_at_time(&mut b,&params,&ctx,index as f64*ctx.delta_seconds as f64);
+            assert_eq!(a.data,b.data);
         }
     }
     #[test]
