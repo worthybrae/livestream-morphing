@@ -4,6 +4,7 @@ pub struct Segment {
     pub id: String,
     pub data: Vec<u8>,
     pub duration: f32,
+    pub raw: Option<Vec<u8>>,
 }
 
 pub struct HlsBuffer {
@@ -26,6 +27,10 @@ impl HlsBuffer {
     }
 
     pub fn push_timed_segment(&mut self, id: String, data: Vec<u8>, duration: f32) {
+        self.push_paired_segment(id, data, duration, None);
+    }
+
+    pub fn push_paired_segment(&mut self, id: String, data: Vec<u8>, duration: f32, raw: Option<Vec<u8>>) {
         if self.segments.len() >= self.max_segments {
             self.segments.pop_front();
             self.sequence += 1;
@@ -34,6 +39,7 @@ impl HlsBuffer {
             id,
             data,
             duration,
+            raw,
         });
     }
 
@@ -42,6 +48,21 @@ impl HlsBuffer {
             .iter()
             .find(|s| s.id == id)
             .map(|s| s.data.as_slice())
+    }
+
+    pub fn get_raw_segment(&self, id: &str) -> Option<&[u8]> {
+        self.segments.iter().find(|s| s.id == id).and_then(|s| s.raw.as_deref())
+    }
+
+    pub fn generate_raw_playlist(&self) -> String {
+        // Publish only paired segments. Each source segment has its own timestamp
+        // domain, so discontinuities also cover source gaps without inventing frames.
+        let mut playlist = format!("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:13\n#EXT-X-MEDIA-SEQUENCE:{}\n#EXT-X-DISCONTINUITY-SEQUENCE:{}\n", self.sequence, self.sequence);
+        for seg in &self.segments {
+            if seg.raw.is_none() { return "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:13\n".into(); }
+            playlist.push_str(&format!("#EXT-X-DISCONTINUITY\n#EXTINF:{:.3},\n/api/raw-segments/{}.ts\n", seg.duration, seg.id));
+        }
+        playlist
     }
 
     pub fn generate_playlist(&self) -> String {
@@ -86,6 +107,20 @@ impl HlsBuffer {
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn paired_source_is_published_and_evicted_with_its_drawing() {
+        let mut buffer = HlsBuffer::new(1);
+        buffer.push_paired_segment("one".into(), vec![1], 6.006, Some(vec![2]));
+        assert_eq!(buffer.get_raw_segment("one"), Some([2u8].as_slice()));
+        assert!(buffer.generate_raw_playlist().contains("#EXTINF:6.006,\n/api/raw-segments/one.ts"));
+        buffer.push_paired_segment("two".into(), vec![3], 6.006, Some(vec![4]));
+        assert!(buffer.get_segment("one").is_none());
+        assert!(buffer.get_raw_segment("one").is_none());
+        assert!(buffer.generate_raw_playlist().contains("#EXT-X-DISCONTINUITY-SEQUENCE:1"));
+        buffer.clear();
+        assert!(buffer.get_raw_segment("two").is_none());
+    }
 
     #[test]
     fn fractional_source_duration_is_preserved() {

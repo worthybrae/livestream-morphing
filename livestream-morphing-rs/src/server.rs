@@ -62,6 +62,8 @@ pub fn router_with_config(state: Arc<AppState>, config: ServerConfig) -> Router 
         .route("/api/live/status", get(live_status))
         .route("/api/live/metrics", get(live_metrics))
         .route("/api/stream", get(stream_playlist))
+        .route("/api/raw-stream", get(raw_playlist))
+        .route("/api/raw-segments/{segment_id}", get(get_raw_segment))
         .route("/api/segments/{segment_id}", get(get_segment))
         .route("/health", get(health));
 
@@ -121,10 +123,24 @@ async fn stream_playlist(State(state): State<Arc<AppState>>) -> Response {
         .into_response()
 }
 
+async fn raw_playlist(State(state): State<Arc<AppState>>) -> Response {
+    state.touch();
+    let playlist = state.hls_buffer.read().await.generate_raw_playlist();
+    ([(header::CONTENT_TYPE, "application/vnd.apple.mpegurl"), (header::CACHE_CONTROL, "no-store")], playlist).into_response()
+}
+
+async fn get_raw_segment(State(state): State<Arc<AppState>>, Path(segment_id): Path<String>) -> Response {
+    segment_response(state, segment_id, true).await
+}
+
 async fn get_segment(
     State(state): State<Arc<AppState>>,
     Path(segment_id): Path<String>,
 ) -> Response {
+    segment_response(state, segment_id, false).await
+}
+
+async fn segment_response(state: Arc<AppState>, segment_id: String, raw: bool) -> Response {
     state.touch();
 
     if segment_id.len() > 64
@@ -144,7 +160,7 @@ async fn get_segment(
 
     let data = {
         let buf = state.hls_buffer.read().await;
-        buf.get_segment(id).map(|d| d.to_vec())
+        if raw { buf.get_raw_segment(id).map(|d| d.to_vec()) } else { buf.get_segment(id).map(|d| d.to_vec()) }
     };
 
     match data {

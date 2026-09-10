@@ -301,6 +301,10 @@ impl AppState {
     }
 
     async fn publish_segment(&self, source_id: &str, encoded: Vec<u8>, stats: ProcessingStats) {
+        self.publish_paired_segment(source_id, encoded, stats, None).await;
+    }
+
+    async fn publish_paired_segment(&self, source_id: &str, encoded: Vec<u8>, stats: ProcessingStats, raw: Option<Vec<u8>>) {
         let mut buffer = self.hls_buffer.write().await;
         let mut current_stats = self.stats.lock().unwrap();
         let previous_completed_at = current_stats.segment_completed_at;
@@ -313,7 +317,7 @@ impl AppState {
             buffer.clear();
         }
         *current_stats = stats;
-        buffer.push_timed_segment(self.output_segment_id(source_id), encoded, current_stats.duration_seconds.max(0.001) as f32);
+        buffer.push_paired_segment(self.output_segment_id(source_id), encoded, current_stats.duration_seconds.max(0.001) as f32, raw);
     }
 
     /// Record a client request and activate the pipeline if needed.
@@ -471,7 +475,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         let pts_offset = frame_counter;
         let state_clone = state.clone();
         let process_handle = tokio::task::spawn_blocking(move || {
-            render_segment(&ts_bytes, &state_clone, pts_offset)
+            (render_segment(&ts_bytes, &state_clone, pts_offset), ts_bytes)
         });
 
         // While processing runs on blocking thread, prefetch next segment
@@ -485,7 +489,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
         // Now await processing result
         let processed = process_handle.await;
         match processed {
-            Ok(Ok((encoded, ticks, mut stats))) => {
+            Ok((Ok((encoded, ticks, mut stats)), raw)) => {
                 tracing::info!(
                     segment_id,
                     size_kb = encoded.len() / 1024,
@@ -498,14 +502,15 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                     .unwrap()
                     .as_millis() as u64;
                 state
-                    .publish_segment(
+                    .publish_paired_segment(
                         &segment_id,
                         encoded,
                         { stats.segment_completed_at = now_ms; stats },
+                        Some(raw),
                     )
                     .await;
             }
-            Ok(Err(e)) => {
+            Ok((Err(e), _)) => {
                 tracing::error!(error = %e, "Processing failed");
             }
             Err(e) => {
@@ -518,11 +523,11 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
             let pts_offset = frame_counter;
             let state_clone = state.clone();
             let processed = tokio::task::spawn_blocking(move || {
-                render_segment(&next_ts, &state_clone, pts_offset)
+                (render_segment(&next_ts, &state_clone, pts_offset), next_ts)
             }).await;
 
             match processed {
-                Ok(Ok((encoded, ticks, mut stats))) => {
+                Ok((Ok((encoded, ticks, mut stats)), raw)) => {
                     tracing::info!(
                         segment_id = next_seg_id,
                         size_kb = encoded.len() / 1024,
@@ -535,14 +540,15 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
                         .unwrap()
                         .as_millis() as u64;
                     state
-                        .publish_segment(
+                        .publish_paired_segment(
                             &next_seg_id,
                             encoded,
                             { stats.segment_completed_at = now_ms; stats },
+                        Some(raw),
                         )
                         .await;
                 }
-                Ok(Err(e)) => {
+                Ok((Err(e), _)) => {
                     tracing::error!(error = %e, "Processing failed (prefetched)");
                 }
                 Err(e) => {
