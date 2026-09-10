@@ -83,7 +83,14 @@ impl Forms {
             }
         }
     }
-    pub(super) fn draw(&mut self, frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
+    pub(super) fn draw(
+        &mut self,
+        frame: &mut RawFrame,
+        luma: &[f32],
+        edition: u32,
+        seconds: f32,
+        environment: [f32; 3],
+    ) {
         let w = frame.width as usize;
         let h = frame.height as usize;
         let scale = w as f32 / 1920.;
@@ -258,7 +265,7 @@ impl Forms {
                 }
             }
             26 | 27 => paper_relief(frame, luma, edition, seconds),
-            32..=40 => paper_cutouts(frame, luma, edition, seconds),
+            32..=41 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
             _ => unreachable!(),
         }
@@ -383,11 +390,93 @@ fn paper_relief(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) 
 }
 // A single tonal stack gives bold, registered cutouts. Depth is confined to edges;
 // the shared final warp supplies all motion without separating the paper layers.
-fn paper_cutouts(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
+fn garden_palette([hour, cloud, rain]: [f32; 3]) -> [[f32; 3]; 5] {
+    let day = [
+        [25., 39., 39.],
+        [44., 83., 76.],
+        [93., 146., 116.],
+        [232., 157., 169.],
+        [246., 233., 209.],
+    ];
+    let night = [
+        [16., 22., 36.],
+        [27., 48., 60.],
+        [58., 88., 88.],
+        [152., 117., 155.],
+        [202., 205., 207.],
+    ];
+    let dusk = [
+        [36., 30., 44.],
+        [54., 74., 69.],
+        [115., 143., 100.],
+        [243., 157., 148.],
+        [255., 226., 185.],
+    ];
+    // Clock-based artistic anchors, not calculated sunrise/sunset times.
+    let anchors = [
+        (0., night),
+        (5., night),
+        (8., day),
+        (16., day),
+        (19., dusk),
+        (22., night),
+        (24., night),
+    ];
+    let h = hour.clamp(0., 24.);
+    let pair = anchors.windows(2).find(|p| h <= p[1].0).unwrap();
+    let t = ((h - pair[0].0) / (pair[1].0 - pair[0].0)).clamp(0., 1.);
+    let t = t * t * (3. - 2. * t);
+    let overcast = [
+        [25., 35., 44.],
+        [49., 75., 82.],
+        [106., 137., 129.],
+        [211., 163., 181.],
+        [231., 226., 215.],
+    ];
+    std::array::from_fn(|i| {
+        let base = blend(pair[0].1[i], pair[1].1[i], t);
+        let cloudy = blend(base, overcast[i], cloud.clamp(0., 1.) * 0.28);
+        std::array::from_fn(|k| cloudy[k] * (1. - rain.clamp(0., 1.) * 0.09))
+    })
+}
+
+#[cfg(test)]
+mod garden_tests {
+    use super::*;
+    #[test]
+    fn environment_is_continuous_and_changes_the_palette() {
+        let day = garden_palette([12., 0., 0.]);
+        assert_ne!(day, garden_palette([0., 0., 0.]));
+        assert_ne!(day, garden_palette([12., 1., 1.]));
+        assert_eq!(
+            garden_palette([0., 0.4, 0.2]),
+            garden_palette([24., 0.4, 0.2])
+        );
+        for h in [5., 8., 16., 19., 22.] {
+            let a = garden_palette([h - 0.001, 0.5, 0.]);
+            let b = garden_palette([h + 0.001, 0.5, 0.]);
+            for i in 0..5 {
+                for k in 0..3 {
+                    assert!((a[i][k] - b[i][k]).abs() < 0.01);
+                }
+            }
+        }
+    }
+}
+
+fn paper_cutouts(
+    frame: &mut RawFrame,
+    luma: &[f32],
+    edition: u32,
+    seconds: f32,
+    environment: [f32; 3],
+) {
     let w = frame.width as usize;
     let h = frame.height as usize;
     let scale = w as f32 / 1920.;
-    let colors = if edition == 37 {
+    let colors = if edition == 41 {
+        garden_palette(environment)
+    } else if edition == 37 {
         [
             [20., 22., 40.],
             [67., 42., 124.],

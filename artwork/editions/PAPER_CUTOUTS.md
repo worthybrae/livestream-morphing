@@ -22,3 +22,11 @@ Edition 36 retains lifted-edge depth and colors but classifies smoothed luminanc
 ## Clean-cut palettes
 
 Editions 37–40 are color-only variations of clean cuts: Acid orchid (violet/citron), Blue hour (indigo/sea glass), Ember (burgundy/apricot), and Rose garden (green/blush). They share edition 36's discrete masks, thresholds, shadow geometry, grain and exact final warp. Palette selection happens once per frame. No time-dependent color cycling is introduced in this comparison.
+
+## Environmental Rose garden
+
+Edition 41 derives five palette colors from London hour, cloud cover and rain. Smooth clock-based anchors keep Rose garden's daytime identity, move into blue-green night and warm evening. These are artistic clock anchors, not seasonal solar calculations. Cloud gently cools/desaturates the palette; rain darkens it slightly. The five colors are calculated once per frame; masks, shadows and the signature warp are unchanged.
+
+`weather.py --edition 41` supplies a time/forecast snapshot with Europe/London DST handling and the existing MET Norway disk cache (at least 15 minutes between network checks, conditional requests, stale-data rejection and fallback). It is a local sampling command, not an enabled production scheduler. Live adoption still needs a shared refresh loop and gradual interpolation between forecast updates; no per-viewer requests are needed.
+
+The day-cycle film is explicitly accelerated (one hour per second). The London snapshot uses current sampled parameters on recorded footage; it is not the weather at recording time. Forecast attribution: MET Norway, CC BY 4.0, adapted into palette signals. https://api.met.no/ and https://creativecommons.org/licenses/by/4.0/

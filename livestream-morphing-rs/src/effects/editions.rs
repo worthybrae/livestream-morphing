@@ -119,7 +119,7 @@ impl Effect for Editions {
     }
     fn params(&self) -> Vec<ParamDef> {
         vec![
-            ParamDef::new("edition", "Edition", 0., 40., 0., 1.),
+            ParamDef::new("edition", "Edition", 0., 41., 0., 1.),
             ParamDef::new("hour", "London hour", 0., 24., 14., 0.25),
             ParamDef::new("cloud", "Cloud cover", 0., 1., 0.3, 0.05),
             ParamDef::new("rain", "Wet atmosphere", 0., 1., 0., 0.05),
@@ -153,7 +153,7 @@ impl Effect for Editions {
                 .filter(|x| x.is_finite())
                 .unwrap_or(default)
         };
-        let edition = get("edition", 0.).round().clamp(0., 40.) as u32;
+        let edition = get("edition", 0.).round().clamp(0., 41.) as u32;
         let detail = get("detail", 1.).clamp(0.5, 2.);
         let pigment = get("pigment", 1.).clamp(0.5, 1.5);
         for (i, p) in frame.data.chunks_exact(3).enumerate() {
@@ -178,7 +178,8 @@ impl Effect for Editions {
         );
         if edition >= 22 {
             let seconds = ctx.frame_number as f64 * ctx.delta_seconds.max(0.) as f64;
-            self.forms.draw(frame, &self.smooth, edition, seconds as f32);
+            let hour = if get("day_cycle", 0.) >= 0.5 { repeat(seconds as f32, 24.) } else { get("hour", 14.).clamp(0.,24.) };
+            self.forms.draw(frame, &self.smooth, edition, seconds as f32, [hour, get("cloud",0.3).clamp(0.,1.), get("rain",0.).clamp(0.,1.)]);
             self.warp.apply_rgb_at_phase(frame, 0.012, 8., (seconds / 8.) as f32 * std::f32::consts::TAU);
             return;
         }
@@ -545,7 +546,7 @@ mod tests {
     #[test]
     fn every_material_is_distinct_deterministic_and_keeps_moving() {
         let mut results = std::collections::HashSet::new();
-        for edition in 0..=40 {
+        for edition in 0..=41 {
             let params = ParamValues::from([("edition".into(), edition as f32)]);
             let mut a = image();
             let mut b = image();

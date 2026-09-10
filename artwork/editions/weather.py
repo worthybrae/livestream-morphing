@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sample a cached Abbey Road forecast into optional mineral palette parameters.
+"""Sample a cached Abbey Road forecast into optional artwork palette parameters.
 
 This local command never updates the production pipeline. Forecast data are not
 street-level observations. MET Norway data: CC BY 4.0, adapted into color signals.
@@ -92,8 +92,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
     parser.add_argument('--cache', type=Path, required=True)
+    parser.add_argument('--edition', type=int, choices=[18, 41], default=18)
     args = parser.parse_args()
     params, status = sample(args.cache)
+    params["edition"] = args.edition
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(params, indent=2))
     args.output.with_suffix('.status.json').write_text(json.dumps(status, indent=2))

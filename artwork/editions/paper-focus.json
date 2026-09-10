@@ -1,5 +1,22 @@
 [
   {
+    "id": 41,
+    "slug": "garden-day-cycle",
+    "name": "Garden / a day in London",
+    "description": "Illustration: 24 hours compressed into 24 seconds, from blue-green night through blush daylight and warm evening. Fixed light cloud; not live weather.",
+    "params": {
+      "day_cycle": 1,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 41,
+    "slug": "garden-london-snapshot",
+    "name": "Garden / London forecast snapshot",
+    "description": "Recorded footage colored with the 10 September 2026, 5:45 PM London sample: 99% forecast cloud and no next-hour rain. MET Norway forecast, not conditions measured at the camera."
+  },
+  {
     "id": 36,
     "slug": "paper-clean-cuts",
     "name": "Paper / clean cuts",
