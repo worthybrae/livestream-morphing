@@ -54,11 +54,22 @@ impl Distortion {
             let y0=sy as usize; let fy=sy.fract();
             let a=&frame.data[y0*w*3..][..w*3];
             let b=&frame.data[(y0+1).min(h-1)*w*3..][..w*3];
-            for (pixel,&(x0,x1,fx)) in row.chunks_exact_mut(3).zip(&columns) {
+            use wide::f32x4 as F;
+            for (batch,pixels) in row.chunks_mut(12).enumerate() {
+                let at=std::array::from_fn::<_,4,_>(|k| columns[(batch*4+k).min(w-1)]);
+                let fx=F::new(at.map(|v|v.2));let inverse=F::ONE-fx;
+                let mut colors=[[0.;4];3];
                 for c in 0..3 {
-                    let val=a[x0+c] as f32*(1.0-fx)*(1.0-fy)+a[x1+c] as f32*fx*(1.0-fy)
-                        +b[x0+c] as f32*(1.0-fx)*fy+b[x1+c] as f32*fx*fy;
-                    pixel[c]=val.clamp(0.0,255.0) as u8;
+                    let aa=F::new(at.map(|v|a[v.0+c] as f32));
+                    let ab=F::new(at.map(|v|a[v.1+c] as f32));
+                    let ba=F::new(at.map(|v|b[v.0+c] as f32));
+                    let bb=F::new(at.map(|v|b[v.1+c] as f32));
+                    // Preserve the scalar operation order and exact signature.
+                    colors[c]=(aa*inverse*(1.-fy)+ab*fx*(1.-fy)+ba*inverse*fy+bb*fx*fy)
+                        .max(F::ZERO).min(F::splat(255.)).to_array();
+                }
+                for (k,pixel) in pixels.chunks_exact_mut(3).enumerate() {
+                    for c in 0..3 {pixel[c]=colors[c][k] as u8;}
                 }
             }
         }
@@ -145,6 +156,30 @@ mod tests {
     use super::*;
     use crate::registry::default_params;
 
+    #[test]
+    fn packed_rgb_warp_preserves_every_scalar_pixel() {
+        for (w,h) in [(31,19),(64,36),(320,180)] {
+            let mut source=RawFrame::new(w,h);
+            for (i,p) in source.data.iter_mut().enumerate() {*p=((i*71+i/17)%256) as u8;}
+            for phase in [0.,0.13,1.7,8.2] {
+                let mut actual=source.clone();
+                Distortion::default().apply_rgb_at_phase(&mut actual,0.012,8.,phase);
+                let mut expected=source.clone();
+                for y in 0..h as usize { for x in 0..w as usize {
+                    let sx=(x as f32+(phase+x as f32*8./w as f32).sin()*w as f32*0.012).clamp(0.,(w-1) as f32);
+                    let sy=(y as f32+(phase+y as f32*8./h as f32).sin()*h as f32*0.012).clamp(0.,(h-1) as f32);
+                    let x0=sx as usize;let x1=(x0+1).min(w as usize-1);let fx=sx.fract();
+                    let y0=sy as usize;let y1=(y0+1).min(h as usize-1);let fy=sy.fract();
+                    for c in 0..3 {
+                        let at=|xx,yy|source.data[(yy*w as usize+xx)*3+c] as f32;
+                        let value=at(x0,y0)*(1.-fx)*(1.-fy)+at(x1,y0)*fx*(1.-fy)+at(x0,y1)*(1.-fx)*fy+at(x1,y1)*fx*fy;
+                        expected.data[(y*w as usize+x)*3+c]=value.clamp(0.,255.) as u8;
+                    }
+                }}
+                assert_eq!(actual.data,expected.data,"{w}x{h} phase={phase}");
+            }
+        }
+    }
     #[test]
     fn monochrome_fast_path_matches_color_interpolation() {
         let mut a=RawFrame::new(32,18);
