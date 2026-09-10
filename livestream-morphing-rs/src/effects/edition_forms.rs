@@ -265,7 +265,7 @@ impl Forms {
                 }
             }
             26 | 27 => paper_relief(frame, luma, edition, seconds),
-            32..=41 => paper_cutouts(frame, luma, edition, seconds, environment),
+            32..=43 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
             _ => unreachable!(),
         }
@@ -464,6 +464,20 @@ mod garden_tests {
     }
 }
 
+// Smooth deterministic pigment field, elongated by the brush coordinate mapping.
+fn paint_noise(x: f32, y: f32) -> f32 {
+    let ix = x.floor() as i32;
+    let iy = y.floor() as i32;
+    let tx = x - x.floor();
+    let ty = y - y.floor();
+    let tx = tx * tx * (3. - 2. * tx);
+    let ty = ty * ty * (3. - 2. * ty);
+    let h = |dx: i32, dy: i32| hash((ix + dx) as usize, (iy + dy) as usize);
+    let a = h(0, 0) * (1. - tx) + h(1, 0) * tx;
+    let b = h(0, 1) * (1. - tx) + h(1, 1) * tx;
+    a * (1. - ty) + b * ty
+}
+
 fn paper_cutouts(
     frame: &mut RawFrame,
     luma: &[f32],
@@ -500,7 +514,7 @@ fn paper_cutouts(
             [237., 162., 75.],
             [251., 230., 171.],
         ]
-    } else if edition == 40 {
+    } else if edition == 40 || edition >= 42 {
         [
             [25., 39., 39.],
             [44., 83., 76.],
@@ -555,6 +569,28 @@ fn paper_cutouts(
                     [255., 242., 213.],
                     edge,
                 );
+                let c = if edition >= 42 {
+                    let sx = x as f32 / scale;
+                    let sy = y as f32 / scale;
+                    // Broad diagonal pulls across the foreground, finer marks above.
+                    // Source luminance modulates pigment, without temporal randomness.
+                    let breadth = 0.65 + sy / 1080. * 0.85;
+                    let u = (sx * 0.91 + sy * 0.41) / breadth;
+                    let v = (sy * 0.91 - sx * 0.41) / breadth;
+                    let load = paint_noise(u / 68., v / 13. + layer * 19.);
+                    let ridge = paint_noise(u / 45., v / 2.8 + layer * 31.);
+                    let slope = paint_noise(u / 45., (v + 1.4) / 2.8 + layer * 31.) - ridge;
+                    let broken = paint_noise(u / 19. + 73., v / 7.);
+                    let amount = if edition == 43 { 1.4 } else { 0.85 };
+                    let pigment = (load - 0.5) * 15. + (broken - 0.5) * 4.;
+                    let relief = slope * 32. * (0.3 + load * 0.7);
+                    let tone = (luma[i] - [0.05, 0.16, 0.295, 0.46, 0.68][layer as usize])
+                        .clamp(-0.1, 0.1)
+                        * 30.;
+                    std::array::from_fn(|k| c[k] + amount * (pigment + relief + tone))
+                } else {
+                    c
+                };
                 let fiber = (hash(x / 2, y / 2) - 0.5) * 0.65;
                 put(frame, i, std::array::from_fn(|k| c[k] + fiber));
             }

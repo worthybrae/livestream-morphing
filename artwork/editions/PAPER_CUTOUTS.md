@@ -30,3 +30,9 @@ Edition 41 derives five palette colors from London hour, cloud cover and rain. S
 `weather.py --edition 41` supplies a time/forecast snapshot with Europe/London DST handling and the existing MET Norway disk cache (at least 15 minutes between network checks, conditional requests, stale-data rejection and fallback). It is a local sampling command, not an enabled production scheduler. Live adoption still needs a shared refresh loop and gradual interpolation between forecast updates; no per-viewer requests are needed.
 
 The day-cycle film is explicitly accelerated (one hour per second). The London snapshot uses current sampled parameters on recorded footage; it is not the weather at recording time. Forecast attribution: MET Norway, CC BY 4.0, adapted into palette signals. https://api.met.no/ and https://creativecommons.org/licenses/by/4.0/
+
+## Painted relief studies
+
+Editions 42 and 43 add directional pigment fields and simulated ridge lighting inside Rose garden's discrete paper masks. Smooth, deterministic anisotropic noise produces elongated strokes; stroke breadth increases toward the foreground, and source luminance supplies restrained tonal variation. These are procedural brush coordinates, not semantic object recognition or motion-tracked strokes. All paint construction precedes the exact signature warp, so texture deforms with the surface. The two editions differ only in texture strength (0.85 vs 1.4). Static Rose garden colors isolate this material experiment from environmental palette changes.
+
+Compare the moving films for material quality, texture shimmer, and compression cost. This is a stylized painted-relief experiment, not a claim of photorealistic oil painting. No production deployment.

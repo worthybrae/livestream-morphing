@@ -1,5 +1,17 @@
 [
   {
+    "id": 42,
+    "slug": "garden-brushed-oil",
+    "name": "Garden / brushed oil",
+    "description": "Rose garden with restrained directional pigment and softly lit paint ridges inside crisp cutouts. The same psychedelic movement carries the painted surface."
+  },
+  {
+    "id": 43,
+    "slug": "garden-heavy-paint",
+    "name": "Garden / heavy paint",
+    "description": "A more tactile version with stronger pigment variation and raised brush texture, preserving the clean silhouettes and original psychedelic movement."
+  },
+  {
     "id": 41,
     "slug": "garden-day-cycle",
     "name": "Garden / a day in London",
