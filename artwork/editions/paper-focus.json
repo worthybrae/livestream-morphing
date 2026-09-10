@@ -1,0 +1,20 @@
+[
+  {
+    "id": 24,
+    "slug": "paper-theatre",
+    "name": "Paper / original",
+    "description": "The original paper theatre, retained for comparison."
+  },
+  {
+    "id": 26,
+    "slug": "paper-relief",
+    "name": "Paper / deeper stage",
+    "description": "Larger cobalt, red, and rose cutouts with soft cast shadows, lit edges, and smooth independent layer motion."
+  },
+  {
+    "id": 27,
+    "slug": "paper-nocturne",
+    "name": "Paper / nocturne",
+    "description": "The same sculpted paper stage in petrol blue, muted jade, copper, and warm paper."
+  }
+]
