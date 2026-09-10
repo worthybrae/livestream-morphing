@@ -258,7 +258,7 @@ impl Forms {
                 }
             }
             26 | 27 => paper_relief(frame, luma, edition, seconds),
-            32..=36 => paper_cutouts(frame, luma, edition, seconds),
+            32..=40 => paper_cutouts(frame, luma, edition, seconds),
             28..=31 => filaments(frame, luma, edition, seconds),
             _ => unreachable!(),
         }
@@ -387,7 +387,39 @@ fn paper_cutouts(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32)
     let w = frame.width as usize;
     let h = frame.height as usize;
     let scale = w as f32 / 1920.;
-    let colors = if edition == 34 {
+    let colors = if edition == 37 {
+        [
+            [20., 22., 40.],
+            [67., 42., 124.],
+            [173., 84., 180.],
+            [218., 236., 93.],
+            [251., 246., 205.],
+        ]
+    } else if edition == 38 {
+        [
+            [21., 29., 62.],
+            [42., 69., 132.],
+            [86., 137., 180.],
+            [161., 209., 211.],
+            [238., 235., 213.],
+        ]
+    } else if edition == 39 {
+        [
+            [43., 24., 39.],
+            [105., 42., 69.],
+            [192., 76., 58.],
+            [237., 162., 75.],
+            [251., 230., 171.],
+        ]
+    } else if edition == 40 {
+        [
+            [25., 39., 39.],
+            [44., 83., 76.],
+            [93., 146., 116.],
+            [232., 157., 169.],
+            [246., 233., 209.],
+        ]
+    } else if edition == 34 {
         [
             [25., 42., 53.],
             [54., 108., 126.],
@@ -409,14 +441,14 @@ fn paper_cutouts(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32)
         // Light travels slowly; geometry and the signature warp remain untouched.
         let phase = seconds * std::f32::consts::TAU / 24.;
         (phase.cos() * 6., phase.sin() * 4.5, 0.26)
-    } else if edition == 33 || edition == 36 {
+    } else if edition == 33 || edition >= 36 {
         (6., 4.5, 0.28)
     } else {
         (4., 3., 0.22)
     };
     let shadow = ShiftSample::new(w, h, 0., 0., dx * scale, dy * scale);
     let rim = ShiftSample::new(w, h, 0., 0., -dx * 0.3 * scale, -dy * 0.3 * scale);
-    if edition == 36 {
+    if edition >= 36 {
         // Classify before translating: a fixed luminance blend band can cover many
         // pixels on low-contrast slopes. Discrete paper masks have no such haze.
         let layers: Vec<f32> = luma

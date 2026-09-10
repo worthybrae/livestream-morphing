@@ -18,3 +18,7 @@ All three reuse the same two-sample construction, source-timed animation, and fi
 ## Clean cuts
 
 Edition 36 retains lifted-edge depth and colors but classifies smoothed luminance into discrete paper layers before sampling shadows. The prior fixed luminance transition band produced broad color mixtures wherever source gradients were weak. Discrete masks remove that dependence; translated shadows use bilinear mask samples, and the unchanged final warp provides spatial interpolation. The original lifted-edge film remains for comparison. Check moving edges for any increased stepping or shimmer when evaluating this harder treatment.
+
+## Clean-cut palettes
+
+Editions 37–40 are color-only variations of clean cuts: Acid orchid (violet/citron), Blue hour (indigo/sea glass), Ember (burgundy/apricot), and Rose garden (green/blush). They share edition 36's discrete masks, thresholds, shadow geometry, grain and exact final warp. Palette selection happens once per frame. No time-dependent color cycling is introduced in this comparison.

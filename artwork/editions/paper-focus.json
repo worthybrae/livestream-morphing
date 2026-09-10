@@ -6,6 +6,30 @@
     "description": "Lifted edges with discrete paper masks: crisp color boundaries, clean cast shadows, and the same psychedelic movement."
   },
   {
+    "id": 37,
+    "slug": "paper-acid-orchid",
+    "name": "Paper / acid orchid",
+    "description": "Violet and orchid against pale electric citron and cream. Same clean cuts, lifted shadows, and signature psychedelic movement."
+  },
+  {
+    "id": 38,
+    "slug": "paper-blue-hour",
+    "name": "Paper / blue hour",
+    "description": "Indigo, dusty blue, sea glass and warm ivory. Same clean cuts, lifted shadows, and signature psychedelic movement."
+  },
+  {
+    "id": 39,
+    "slug": "paper-ember",
+    "name": "Paper / ember",
+    "description": "Burgundy, vermilion, apricot and buttery yellow. Same clean cuts, lifted shadows, and signature psychedelic movement."
+  },
+  {
+    "id": 40,
+    "slug": "paper-rose-garden",
+    "name": "Paper / rose garden",
+    "description": "Deep green, jade, blush pink and unbleached paper. Same clean cuts, lifted shadows, and signature psychedelic movement."
+  },
+  {
     "id": 32,
     "slug": "paper-cutouts",
     "name": "Paper / cutouts",
