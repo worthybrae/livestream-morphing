@@ -271,6 +271,7 @@ impl Forms {
             49 => palette_knife::<1>(frame, luma, edition, environment),
             50 => palette_knife::<2>(frame, luma, edition, environment),
             51 => palette_knife::<3>(frame, luma, edition, environment),
+            52 => palette_knife::<4>(frame, luma, edition, environment),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -656,6 +657,25 @@ fn knife_day_tint([hour, cloud, rain]: [f32; 3]) -> [f32; 3] {
         + overcast[k] * cloud * 0.45 + wet[k] * rain)
 }
 
+fn knife_night_strength(hour: f32) -> f32 {
+    let hour = hour.rem_euclid(24.);
+    let smooth = |t: f32| { let t = t.clamp(0., 1.); t*t*(3.-2.*t) };
+    1. - smooth((hour - 4.5) / 3.5) + smooth((hour - 18.) / 3.)
+}
+
+// A hue-preserving soft shoulder, with positive slope even in the brightest
+// highlights. Build 256 entries once; pixels need no divisions or extra pass.
+fn knife_highlight_table(night: f32) -> [(f32, f32); 256] {
+    std::array::from_fn(|i| {
+        let peak = i as f32;
+        let excess = (peak - 150.).max(0.);
+        let compressed = peak - excess + excess / (1. + excess / 95.);
+        let gain = if i == 0 { 1. } else { 1. + night * (compressed / peak - 1.) };
+        let tint = 1. - night * ((peak - 160.) / 95.).clamp(0., 1.) * 0.85;
+        (gain, tint)
+    })
+}
+
 // MODE 0 retains the reference pixels. New studies share its optimized geometry.
 fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u32, environment: [f32; 3]) {
     let w = frame.width as usize;
@@ -676,18 +696,24 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
     let source = if MODE > 0 { frame.data.clone() } else { Vec::new() };
     // A few RGB levels of warmth/coolness, never a replacement palette.
     let warmth = (1. - environment[1]) * 3. - environment[2] * 2.;
-    let weather = if MODE == 3 { knife_day_tint(environment) } else { [warmth, warmth * 0.15, -warmth] };
+    let weather = if MODE >= 3 { knife_day_tint(environment) } else { [warmth, warmth * 0.15, -warmth] };
+    let highlights = if MODE == 4 { knife_highlight_table(knife_night_strength(environment[0])) } else { [(1., 1.); 256] };
     let source_color = |x: usize, y: usize, radius: usize| {
         let points = [(x,y), (x.saturating_sub(radius),y), ((x+radius).min(w-1),y),
                       (x,y.saturating_sub(radius)), (x,(y+radius).min(h-1))];
-        std::array::from_fn(|k| points.iter().map(|&(xx,yy)| source[(yy*w+xx)*3+k] as f32).sum::<f32>() * 0.2 + weather[k])
+        let rgb: [f32; 3] = std::array::from_fn(|k| points.iter().map(|&(xx,yy)| source[(yy*w+xx)*3+k] as f32).sum::<f32>() * 0.2);
+        let (gain, tint) = if MODE == 4 { highlights[rgb[0].max(rgb[1]).max(rgb[2]) as usize] } else { (1., 1.) };
+        std::array::from_fn(|k| rgb[k] * gain + weather[k] * tint)
     };
     for i in 0..w * h {
         if MODE == 0 {
             let c = color_at(luma[i]);
             put(frame, i, blend(c, [73., 65., 77.], 0.25));
         } else {
-            put(frame, i, std::array::from_fn(|k| source[i*3+k] as f32 * 0.92 + weather[k]));
+            let (gain, tint) = if MODE == 4 {
+                highlights[*source[i*3..i*3+3].iter().max().unwrap() as usize]
+            } else { (1., 1.) };
+            put(frame, i, std::array::from_fn(|k| source[i*3+k] as f32 * gain * 0.92 + weather[k] * tint));
         }
     }
     let sizes = if edition == 45 {
@@ -1178,6 +1204,23 @@ mod sampling_tests {
 #[cfg(test)]
 mod knife_batch_tests {
     use super::*;
+    #[test]
+    fn night_highlights_are_monotonic_and_leave_day_and_shadows_alone() {
+        let day = knife_highlight_table(knife_night_strength(12.));
+        assert!(day.iter().all(|&(gain,tint)| gain == 1. && tint == 1.));
+        let night = knife_highlight_table(knife_night_strength(0.));
+        assert!(night[..151].iter().all(|&(gain,tint)| gain == 1. && tint == 1.));
+        assert!(night[255].0 * 255. < 205.);
+        for i in 1..256 { assert!(night[i].0 * i as f32 > night[i-1].0 * (i-1) as f32); }
+        assert_eq!(knife_night_strength(0.), knife_night_strength(24.));
+        for h in 0..240 { assert!((0.0..=1.0).contains(&knife_night_strength(h as f32 / 10.))); }
+        let luma = vec![0.4; 96*54];
+        let mut a = RawFrame::filled(96, 54, 235, 195, 110);
+        let mut b = a.clone();
+        palette_knife::<3>(&mut a, &luma, 51, [12., 0.3, 0.]);
+        palette_knife::<4>(&mut b, &luma, 52, [12., 0.3, 0.]);
+        assert_eq!(a.data, b.data);
+    }
     #[test]
     fn clock_tint_is_continuous_cyclic_and_weather_modulated() {
         assert_eq!(knife_day_tint([0., 0., 0.]), knife_day_tint([24., 0., 0.]));

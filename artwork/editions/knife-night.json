@@ -1,0 +1,24 @@
+[
+  {
+    "id": 51,
+    "slug": "night-before",
+    "name": "Night / Original lights",
+    "description": "Recorded night footage with the blue clock tint and unchanged highlights.",
+    "params": {
+      "hour": 22,
+      "cloud": 0.98,
+      "rain": 0
+    }
+  },
+  {
+    "id": 52,
+    "slug": "night-soft-lights",
+    "name": "Night / Soft lights",
+    "description": "Bright headlights and lamps compressed into softer paint, preserving their source hue. Dark areas retain their contrast. Recorded footage, fixed 10 PM tint.",
+    "params": {
+      "hour": 22,
+      "cloud": 0.98,
+      "rain": 0
+    }
+  }
+]

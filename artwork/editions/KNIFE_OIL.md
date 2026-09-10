@@ -21,3 +21,11 @@ Validation: 125 Rust tests passed, including source hue retention for identical 
 A stronger tint follows smooth clock anchors: blue night, rose dawn, warm daytime, amber evening, violet twilight. Camera RGB and oil-relief texture remain the base. Clouds soften the warm shift and rain adds coolness. The tint is calculated once per frame; the stroke shader and psychedelic warp are unchanged. The midnight boundary is continuous. These clock anchors are artistic and do not claim to track seasonal sunrise/sunset.
 
 `knife-daylight.json` contains three fixed-hour comparisons plus a 24-hour cycle compressed into the 24-second recorded clip. Weather is explicitly illustrative. Production still uses edition 46, and this preview does not add a live clock/weather fetcher to it.
+
+## Softer night lights (edition 52)
+
+A smooth highlight shoulder compresses bright source colors before depositing paint. At full night, an RGB peak of 255 becomes about 200 before texture lighting. Peaks up to 150 stay unchanged. Scaling all channels together preserves the light's source hue. The blue clock tint is reduced on highlights to preserve warm lamps. This is brightness-based, not lamp/object detection; other bright surfaces are compressed too.
+
+The adjustment fades out between 4:30 and 8 AM and in between 6 and 9 PM using the same illustrative London clock convention. At midday it is byte-identical to edition 51. A 256-entry table is computed once per frame. No new blur or bloom pass is added. The lookup is used both for underpaint and stroke colors; knife texture and final psychedelic warp remain unchanged.
+
+The `knife-night.json` before/after pair uses 18 seconds of raw night footage captured from the existing stream; source provenance is saved alongside it. Both treatments use identical fixed clock/weather values. Validation: 127 Rust tests passed, including a monotonic highlight curve, unchanged shadows and daytime output, bounded night strength, and parallel rendering equivalence. Local previews only; production is unchanged.
