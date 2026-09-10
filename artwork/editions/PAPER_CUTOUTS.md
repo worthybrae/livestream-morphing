@@ -6,3 +6,11 @@ Edition 32 keeps cobalt, vermilion, rose, and warm cream as solid shapes above a
 The material uses one registered tonal stack and two translated luminance samples per pixel. It avoids the independent layer sampling used by editions 26/27. The exact shared psychedelic warp remains unchanged, applied once after the material: amplitude 0.012, frequency 8, eight-second cycle, source frame time. No history or trails.
 
 Local study only. Render with render.py and paper-focus.json, selecting paper-cutouts; compare with the retained originals at the same source resolution, frame cadence, and CRF. Local timings do not establish production monthly cost.
+
+## Close variations
+
+- Edition 33, lifted edges: the same palette and tonal shapes with 6×4.5px shadows at 1080p and slightly stronger edge depth.
+- Edition 34, terracotta: the original shallow depth in petrol, terracotta, peach and unbleached cream.
+- Edition 35, sundial: a 24-second lighting orbit moves shadows and edge illumination around the same cutouts. Lighting direction is computed once per frame; it adds no extra per-pixel samples.
+
+All three reuse the same two-sample construction, source-timed animation, and final signature warp. They do not use persistent trails or change production settings.

@@ -258,7 +258,7 @@ impl Forms {
                 }
             }
             26 | 27 => paper_relief(frame, luma, edition, seconds),
-            32 => paper_cutouts(frame, luma),
+            32..=35 => paper_cutouts(frame, luma, edition, seconds),
             28..=31 => filaments(frame, luma, edition, seconds),
             _ => unreachable!(),
         }
@@ -383,20 +383,39 @@ fn paper_relief(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) 
 }
 // A single tonal stack gives bold, registered cutouts. Depth is confined to edges;
 // the shared final warp supplies all motion without separating the paper layers.
-fn paper_cutouts(frame: &mut RawFrame, luma: &[f32]) {
+fn paper_cutouts(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
     let w = frame.width as usize;
     let h = frame.height as usize;
     let scale = w as f32 / 1920.;
-    let colors = [
-        [19., 27., 49.],
-        [37., 72., 180.],
-        [220., 65., 49.],
-        [235., 155., 148.],
-        [246., 225., 184.],
-    ];
+    let colors = if edition == 34 {
+        [
+            [25., 42., 53.],
+            [54., 108., 126.],
+            [204., 99., 66.],
+            [227., 173., 137.],
+            [245., 231., 199.],
+        ]
+    } else {
+        [
+            [19., 27., 49.],
+            [37., 72., 180.],
+            [220., 65., 49.],
+            [235., 155., 148.],
+            [246., 225., 184.],
+        ]
+    };
     let thresholds = [0.10, 0.22, 0.37, 0.55];
-    let shadow = ShiftSample::new(w, h, 0., 0., 4. * scale, 3. * scale);
-    let rim = ShiftSample::new(w, h, 0., 0., -1.2 * scale, -0.9 * scale);
+    let (dx, dy, strength) = if edition == 35 {
+        // Light travels slowly; geometry and the signature warp remain untouched.
+        let phase = seconds * std::f32::consts::TAU / 24.;
+        (phase.cos() * 6., phase.sin() * 4.5, 0.26)
+    } else if edition == 33 {
+        (6., 4.5, 0.28)
+    } else {
+        (4., 3., 0.22)
+    };
+    let shadow = ShiftSample::new(w, h, 0., 0., dx * scale, dy * scale);
+    let rim = ShiftSample::new(w, h, 0., 0., -dx * 0.3 * scale, -dy * 0.3 * scale);
     // Continuous layer coordinate also antialiases the cuts and their shadows.
     let level = |l: f32| -> f32 {
         thresholds
@@ -410,7 +429,7 @@ fn paper_cutouts(frame: &mut RawFrame, luma: &[f32]) {
             let layer = level(luma[i]);
             let n = (layer as usize).min(3);
             let c = blend(colors[n], colors[n + 1], layer - n as f32);
-            let shade = (level(shadow.get(luma, x, y)) - layer).clamp(0., 1.) * 0.22;
+            let shade = (level(shadow.get(luma, x, y)) - layer).clamp(0., 1.) * strength;
             let edge = (layer - level(rim.get(luma, x, y))).clamp(0., 1.) * 0.16;
             let c = blend(blend(c, [10., 15., 29.], shade), [255., 242., 213.], edge);
             let fiber = (hash(x / 2, y / 2) - 0.5) * 0.65;

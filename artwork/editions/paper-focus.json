@@ -6,6 +6,24 @@
     "description": "Bold cobalt, vermilion, rose, and cream shapes with shallow cast shadows and a fine lit edge. The original psychedelic movement carries the whole paper stage."
   },
   {
+    "id": 33,
+    "slug": "paper-lift",
+    "name": "Paper / lifted edges",
+    "description": "The cutout palette with slightly deeper edge shadows, as if the paper were lifted from its backing."
+  },
+  {
+    "id": 34,
+    "slug": "paper-terracotta",
+    "name": "Paper / terracotta",
+    "description": "Petrol blue, warm terracotta, peach and unbleached cream, with the original shallow cutout depth."
+  },
+  {
+    "id": 35,
+    "slug": "paper-sundial",
+    "name": "Paper / sundial",
+    "description": "A light circles the cutouts slowly, shifting the cast shadows and illuminated edges over 24 seconds. The psychedelic movement stays exactly the same."
+  },
+  {
     "id": 24,
     "slug": "paper-theatre",
     "name": "Paper / original",
