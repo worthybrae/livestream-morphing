@@ -273,6 +273,7 @@ impl Forms {
             51 => palette_knife::<3>(frame, luma, edition, environment),
             52 => palette_knife::<4>(frame, luma, edition, environment),
             53 => palette_knife::<5>(frame, luma, edition, environment),
+            54 => palette_knife::<6>(frame, luma, edition, environment),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -685,6 +686,20 @@ fn knife_atmosphere(rgb: [f32; 3], grade: [f32; 3], gain: f32, tint: f32, weathe
         + weather[k]*tint*grade[2])
 }
 
+// Continuous, bounded alignment: faint gradients cannot flip a whole stroke.
+// Deterministic anchors keep the paint surface coherent without frame blending.
+fn painted_stroke_direction(dx: f32, dy: f32, seed: f32) -> f32 {
+    let base = (seed - 0.5) * 2.6;
+    let (sn, cs) = base.sin_cos();
+    let a = -dy*cs + dx*sn;
+    let b = dy*sn + dx*cs;
+    base + 0.85 * (2.*a*b) / (a*a + b*b + 0.008)
+}
+fn painted_detail_opacity(gradient: f32) -> f32 {
+    let t = ((gradient - 0.035) / 0.09).clamp(0., 1.);
+    t*t*(3.-2.*t)
+}
+
 // MODE 0 retains the reference pixels. New studies share its optimized geometry.
 fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u32, environment: [f32; 3]) {
     let w = frame.width as usize;
@@ -714,7 +729,7 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                       (x,y.saturating_sub(radius)), (x,(y+radius).min(h-1))];
         let rgb: [f32; 3] = std::array::from_fn(|k| points.iter().map(|&(xx,yy)| source[(yy*w+xx)*3+k] as f32).sum::<f32>() * 0.2);
         let (gain, tint) = if MODE >= 4 { highlights[rgb[0].max(rgb[1]).max(rgb[2]) as usize] } else { (1., 1.) };
-        if MODE == 5 { knife_atmosphere(rgb, grade, gain, tint, weather) }
+        if MODE >= 5 { knife_atmosphere(rgb, grade, gain, tint, weather) }
         else { std::array::from_fn(|k| rgb[k] * gain + weather[k] * tint) }
     };
     for i in 0..w * h {
@@ -725,7 +740,7 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
             let (gain, tint) = if MODE >= 4 {
                 highlights[*source[i*3..i*3+3].iter().max().unwrap() as usize]
             } else { (1., 1.) };
-            if MODE == 5 {
+            if MODE >= 5 {
                 let c = knife_atmosphere(std::array::from_fn(|k| source[i*3+k] as f32), grade, gain, tint, weather);
                 put(frame, i, c.map(|v| v*0.92));
             } else {
@@ -753,17 +768,20 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                 let dx = luma[y * w + (x + d).min(w - 1)] - luma[y * w + x.saturating_sub(d)];
                 let dy = luma[(y + d).min(h - 1) * w + x] - luma[y.saturating_sub(d) * w + x];
                 let gradient = dx.abs() + dy.abs();
-                if coat == 2 && gradient < 0.065 {
+                let opacity = if MODE == 6 && coat == 2 { painted_detail_opacity(gradient) } else { 1. };
+                if (MODE == 6 && opacity <= 0.) || (MODE != 6 && coat == 2 && gradient < 0.065) {
                     continue;
                 }
-                let angle = if gradient > 0.03 {
+                let angle = if MODE == 6 {
+                    painted_stroke_direction(dx, dy, seed)
+                } else if gradient > 0.03 {
                     dy.atan2(dx) + 1.57 + (seed - 0.5) * 0.45
                 } else {
                     (seed - 0.5) * 2.6
                 };
                 let (sn, cs) = angle.sin_cos();
-                let length = (size * scale).max(1.) * (0.8 + seed * 0.75);
-                let width = (size * scale).max(1.) * (0.35 + hash(gx, gy + 41) * 0.25);
+                let length = (size * scale).max(1.) * (0.8 + seed * 0.75) * if MODE == 6 { 1.12 } else { 1. };
+                let width = (size * scale).max(1.) * (0.35 + hash(gx, gy + 41) * 0.25) * if MODE == 6 { 0.92 } else { 1. };
                 let bx = cs.abs() * length + sn.abs() * width;
                 let by = sn.abs() * length + cs.abs() * width;
                 let c = if MODE == 0 { color_at(luma[i]) } else { source_color(x, y, (step / 4).max(1)) };
@@ -820,6 +838,7 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                             coat,
                             tint,
                             c,
+                            opacity,
                         );
                     }
                 }
@@ -845,6 +864,7 @@ fn knife_pixels<const MODE: u8>(
     coat: usize,
     tint: f32,
     c: [f32; 3],
+    opacity: f32,
 ) {
     use wide::{f32x4 as F, CmpGt, CmpLt};
     let ox = F::new(std::array::from_fn(|k| (x + k) as f32 - cx));
@@ -859,6 +879,15 @@ fn knife_pixels<const MODE: u8>(
     }
     let cover = (-distance * width).max(F::ZERO).min(F::ONE) * 0.94;
     let scrape = knife_noise4(u * 4. + seed * 19., v * 13. + coat as f32 * 37.);
+    let cover = if MODE == 6 {
+        // Rounded, slightly ragged tips inside the original convex bounds.
+        // The same pigment field supplies dry-brush breakup near the edge.
+        let curved_v = v + (F::ONE - u*u).max(F::ZERO) * ((seed-0.5)*0.22);
+        let rounded = (u*u + curved_v*curved_v*0.65 - 0.92) * 0.5;
+        let bristles = (scrape - 0.35).max(F::ZERO) * 0.12;
+        let edge = distance.max(rounded + bristles);
+        (-edge * width).max(F::ZERO).min(F::ONE) * (0.94 * opacity)
+    } else { cover };
     let ridge = v.cmp_gt(F::splat(0.58)).blend(
         (v - 0.58) * 35.,
         v.cmp_lt(F::splat(-0.65)).blend(F::splat(-9.), F::ZERO),
@@ -1222,6 +1251,20 @@ mod sampling_tests {
 mod knife_batch_tests {
     use super::*;
     #[test]
+    fn painted_strokes_do_not_pop_at_old_gradient_thresholds() {
+        for seed in [0., 0.2, 0.5, 0.8, 1.] {
+            for threshold in [0., 0.03, 0.035, 0.065, 0.125] {
+                let a = painted_stroke_direction(threshold-0.0001, 0.01, seed);
+                let b = painted_stroke_direction(threshold+0.0001, 0.01, seed);
+                assert!((a-b).abs() < 0.005);
+                assert!((painted_detail_opacity(threshold-0.0001)
+                    - painted_detail_opacity(threshold+0.0001)).abs() < 0.005);
+            }
+        }
+        assert_eq!(painted_detail_opacity(0.), 0.);
+        assert_eq!(painted_detail_opacity(1.), 1.);
+    }
+    #[test]
     fn atmosphere_is_darker_and_grayer_at_night_and_richer_by_day() {
         let range = |c: [f32; 3]| c.iter().copied().fold(f32::NEG_INFINITY, f32::max)
             - c.iter().copied().fold(f32::INFINITY, f32::min);
@@ -1342,6 +1385,7 @@ mod knife_batch_tests {
                             coat,
                             tint,
                             c,
+                            1.,
                         );
                         for k in 0..count {
                             let ox = (x + k) as f32 - cx;

@@ -35,3 +35,9 @@ The `knife-night.json` before/after pair uses 18 seconds of raw night footage ca
 Uses the same smooth night strength as the soft-light treatment. Night reduces source saturation to 22% and exposure to 62%, while reducing the old blue/violet clock tint to a trace. Day uses 140% source saturation and 104% exposure, retaining restrained clock/weather color. Night highlight compression remains enabled. The paint texture is laid over these graded pigments, so it stays visible in the darker image. This changes saturation and brightness rather than inverting RGB values.
 
 `knife-atmosphere.json` supplies actual night footage, actual day footage, and an explicitly illustrative 24-hour cycle on one daytime clip. New edition only; previous studies and production are unchanged.
+
+## Painted flow (edition 54)
+
+Longer, narrower marks with rounded, curved, bristled tips, clipped inside the original convex footprint. The existing pigment field supplies the breakup; no extra noise field is generated. Raised pigment channels remain. Fine detail opacity now ramps continuously over a contrast interval instead of appearing at 0.065. Stroke orientation uses bounded continuous alignment around deterministic anchors, removing the old weak-gradient angle switch. These measures reduce structural popping while retaining independent frames, parallel rendering, and the exact final psychedelic warp. There is no temporal image blending; source movement and color still update each frame.
+
+This is a new material rather than a change to existing previews. It inherits edition 53's dark gray night / richer day grading and softened lights. All 129 Rust tests passed, including continuity at old gradient thresholds and encoded serial/parallel equivalence. Judge the before/after in motion; continuity tests are not a claim that all temporal artifacts have been removed.

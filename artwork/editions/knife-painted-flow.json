@@ -1,0 +1,35 @@
+[
+  {
+    "id": 53,
+    "slug": "paint-before",
+    "name": "Oil / Current knife",
+    "description": "The current charcoal-to-color treatment for comparison.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 54,
+    "slug": "painted-flow",
+    "name": "Oil / Painted flow",
+    "description": "Longer curved, bristled marks with raised pigment. Stroke directions respond gently and fine detail fades in gradually. Same source colors and psychedelic movement.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 54,
+    "slug": "painted-flow-cycle",
+    "name": "Oil / Painted flow through the day",
+    "description": "Illustrative 24-hour cycle in 24 seconds: the new stroke surface moves from charcoal night to richer daylight. Fixed weather.",
+    "params": {
+      "day_cycle": 1,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  }
+]
