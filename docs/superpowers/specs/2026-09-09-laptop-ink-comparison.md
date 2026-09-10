@@ -26,3 +26,7 @@ Selected candidate: 1.273 s decode, 0.935 s effects, 0.823 s encode, effect p50 
 Offline width limit now allows 1920 for reference tests. `RENDER_FRAME_STEP` now selects decoded frames before RGB scaling/allocation. The 720-source-frame safety limit still counts all input frames. Production still uses step 1, its current width, and default stroke_body 0; no live settings or deployments were changed.
 
 Before production rollout, get the user's response to the new visual sample and the 15 fps tradeoff, then implement source-timed output cadence in production (including odd segment frame counts and cross-segment phase), permit 1280 output width, and verify consecutive segments and production performance. The existing offline cadence comparison only claims correct duration for this evenly divisible 180-frame sample.
+
+## User refinement: no persistence
+
+The user prefers the smoother lines but dislikes their persistence. The selected laptop preset now sets `trail_strength` to 0, so only current-frame contours contribute to the output. Stroke body, thresholds, smoothing, colors, resolution, and preview cadence are unchanged. Regenerated the native six-second sample at `artifacts/living-ink/laptop-720p-no-trails.mp4`; earlier sample measurements above refer to the previous preset with trails. Production remains unchanged.
