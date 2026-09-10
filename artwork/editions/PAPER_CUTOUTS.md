@@ -48,3 +48,9 @@ This is a material-quality experiment with additional rasterization cost; measur
 Editions 45/46 construct the scene from three scales of overlapping opaque knife deposits. Tapered angular faces, clipped corners, pigment variation and raised lips replace the paper-mask-plus-texture model. Smaller strokes are reserved for areas with source contrast. Both use Rose garden-related pigments and the unchanged final psychedelic warp. 45 has broader marks; 46 is finer. Initial evaluation uses a single frame sampled three seconds into the same reference footage, not a new full video render.
 
 Fine knife (46) selected for a full 719-frame motion study, `garden-fine-knife`, using the unchanged renderer. Local command time 54.6s for 24s footage at 1080p/29.97, CRF23. This establishes a motion and performance baseline; not live-ready on the measured setup.
+
+## Building paint / cached knife
+
+Edition 47 tests the selected Fine knife direction with a precomputed footprint bank (three coats, four shape variants, 24 axial orientations). Coverage and ridge/pigment lighting are reused across frames. Direction interpolates between adjacent stamps; weak gradients blend toward a stable seeded direction instead of abruptly switching at a threshold. Finest detail fades in across a contrast range, and five source samples stabilize stroke color.
+
+The lower coat remains present. Upper deposits are revealed at staggered phases over a nine-second cycle, with a smooth return; this suggests repainting without a camera-frame feedback buffer. Source colors always use the current frame. It is not unbounded paint accumulation or retained video history. Worker order remains irrelevant. The exact final psychedelic warp is unchanged. Compare against edition 46: the finite footprint bank changes individual marks slightly, so the optimization is not pixel-identical.

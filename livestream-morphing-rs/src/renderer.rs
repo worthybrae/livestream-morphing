@@ -118,7 +118,7 @@ mod tests {
             frames.push(frame);
         }
         let input=codec::encode_segment(&frames,30,0).unwrap();
-        for edition in [15., 17., 18., 19., 20., 21., 22., 23., 24., 25., 26., 27., 28., 29., 30., 31., 32., 33., 34., 35., 36., 37., 38., 39., 40., 41., 42., 43., 44., 45., 46.] {
+        for edition in [15., 17., 18., 19., 20., 21., 22., 23., 24., 25., 26., 27., 28., 29., 30., 31., 32., 33., 34., 35., 36., 37., 38., 39., 40., 41., 42., 43., 44., 45., 46., 47.] {
             let configured=|| {let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();p.update_params(&id,&crate::registry::ParamValues::from([("edition".into(),edition)]));p};
             let serial=render(&input,64,1,0,700,&mut configured(),1).unwrap();
             let parallel=render(&input,64,1,0,700,&mut configured(),3).unwrap();

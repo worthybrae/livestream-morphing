@@ -6,6 +6,7 @@ pub(super) struct Forms {
     size: (usize, usize),
     glass: Vec<(u32, u8)>,
     sites: Vec<(usize, usize, f32)>,
+    knife: super::knife_layers::KnifeLayers,
 }
 fn hash(x: usize, y: usize) -> f32 {
     let mut v = (x as u32).wrapping_mul(374761393) ^ (y as u32).wrapping_mul(668265263);
@@ -264,6 +265,7 @@ impl Forms {
                     }
                 }
             }
+            47 => self.knife.draw(frame, luma, seconds),
             45 | 46 => palette_knife(frame, luma, edition),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
