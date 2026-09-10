@@ -258,7 +258,7 @@ impl Forms {
                 }
             }
             26 | 27 => paper_relief(frame, luma, edition, seconds),
-            28 | 29 => filaments(frame, luma, edition, seconds),
+            28..=31 => filaments(frame, luma, edition, seconds),
             _ => unreachable!(),
         }
     }
@@ -414,6 +414,19 @@ fn stroke(
         }
     }
 }
+// Independent phase per strand; smooth oscillations have no resets or accumulated history.
+fn strand_motion(seed: f32, along: f32, seconds: f32, edition: u32) -> (f32, f32, f32) {
+    let phase = seed * std::f32::consts::TAU;
+    let expressive = edition == 31;
+    let speed = if expressive { 1.15 } else { 0.8 };
+    let sway = (seconds * speed * 0.63 + phase).sin() * (if expressive { 5. } else { 3. });
+    let ripple = (seconds * speed + phase + along * std::f32::consts::TAU * 1.2).sin()
+        * (if expressive { 11. } else { 6. });
+    let breath = 0.5
+        + 0.5 * (seconds * speed * 0.84 + phase * 1.7 - along * std::f32::consts::TAU * 0.9).sin();
+    let width = 0.45 + breath * (if expressive { 2.7 } else { 1.7 });
+    (sway, ripple, width)
+}
 fn filaments(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
     let w = frame.width as usize;
     let h = frame.height as usize;
@@ -421,8 +434,18 @@ fn filaments(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
     for p in frame.data.chunks_exact_mut(3) {
         p.copy_from_slice(&[7, 13, 22]);
     }
-    let silk = edition == 29;
-    let spacing = ((if silk { 30. } else { 22. }) * scale).max(3.) as usize;
+    let animated = edition >= 30;
+    let silk = edition == 29 || animated;
+    let spacing = ((if edition == 31 {
+        40.
+    } else if animated {
+        32.
+    } else if silk {
+        30.
+    } else {
+        22.
+    }) * scale)
+        .max(3.) as usize;
     let span = (3. * scale).max(1.) as usize;
     // Smooth orientation fields are evaluated once per coordinate, not per stroke step.
     let horizontal: Vec<_> = (0..w)
@@ -458,6 +481,7 @@ fn filaments(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
                 12 + (seed * 25.) as usize
             };
             let mut velocity = (vertical[y as usize] * 0.7, horizontal[x as usize] * 0.7);
+            let mut previous_drawn = None;
             for step in 0..steps {
                 let ix = x.clamp(0., (w - 1) as f32) as usize;
                 let iy = y.clamp(0., (h - 1) as f32) as usize;
@@ -482,19 +506,39 @@ fn filaments(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
                 let taper = (t * 8.).min((1. - t) * 6.).min(1.).max(0.);
                 let pulse = (t - seconds / 12. - seed).rem_euclid(1.);
                 let head = (1. - (pulse - 0.5).abs() * 5.).max(0.);
-                let radius = (if silk {
+                let radius = (if animated {
+                    strand_motion(seed, t, seconds, edition).2
+                } else if silk {
                     0.8 + head * 0.7
                 } else {
                     0.6 + l * 0.7
                 }) * scale
                     * taper;
+                let (draw_a, draw_b) = if animated {
+                    let normal = (-velocity.1 / norm, velocity.0 / norm);
+                    let offset = |fraction: f32| {
+                        let (sway, ripple, _) = strand_motion(seed, fraction, seconds, edition);
+                        (
+                            normal.0 * ripple * scale + sway * scale,
+                            normal.1 * ripple * scale + sway * 0.55 * scale,
+                        )
+                    };
+                    let a = offset(t);
+                    let b = offset((step + 1) as f32 / steps as f32);
+                    let start = previous_drawn.unwrap_or((x + a.0, y + a.1));
+                    let end = (next.0 + b.0, next.1 + b.1);
+                    previous_drawn = Some(end);
+                    (start, end)
+                } else {
+                    ((x, y), next)
+                };
                 stroke(
                     frame,
-                    (x, y),
-                    next,
+                    draw_a,
+                    draw_b,
                     radius,
                     color,
-                    strength * taper * (0.5 + head * 0.45),
+                    strength * taper * (if animated { 0.85 } else { 0.5 + head * 0.45 }),
                 );
                 x = next.0;
                 y = next.1;
@@ -509,6 +553,23 @@ fn filaments(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
 #[cfg(test)]
 mod sampling_tests {
     use super::*;
+    #[test]
+    fn strand_motion_changes_position_and_width_smoothly_with_independent_phases() {
+        for edition in [30, 31] {
+            let a = strand_motion(0.2, 0.4, 1., edition);
+            let b = strand_motion(0.2, 0.4, 1.001, edition);
+            assert_ne!(a, b);
+            assert!(
+                (a.0 - b.0).abs() < 0.02 && (a.1 - b.1).abs() < 0.02 && (a.2 - b.2).abs() < 0.02
+            );
+            assert_ne!(a, strand_motion(0.7, 0.4, 1., edition));
+            assert_ne!(a, strand_motion(0.2, 0.4, 2., edition));
+            for i in 0..500 {
+                let (_, _, width) = strand_motion(0.2, 0.4, i as f32 * 0.1, edition);
+                assert!((0.45..=3.16).contains(&width));
+            }
+        }
+    }
     #[test]
     fn precomputed_translations_preserve_bilinear_samples_at_borders_and_fractional_offsets() {
         let (w, h) = (19, 13);

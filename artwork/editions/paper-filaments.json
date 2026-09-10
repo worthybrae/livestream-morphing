@@ -1,5 +1,17 @@
 [
   {
+    "id": 30,
+    "slug": "breathing-strands",
+    "name": "Filaments / breathing strands",
+    "description": "Every strand sways and ripples continuously while its thickness breathes. Individual phases keep the movement from pulsing in unison."
+  },
+  {
+    "id": 31,
+    "slug": "liquid-strands",
+    "name": "Filaments / liquid strands",
+    "description": "A more expressive version: broader moving bulges, stronger lateral waves, and fewer strands to give the motion room."
+  },
+  {
     "id": 28,
     "slug": "contour-script",
     "name": "Filaments / contour script",

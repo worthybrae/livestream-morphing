@@ -1,8 +1,11 @@
 # Paper and filaments: second studies
 
-This collection develops the two materials selected by the artist. The originals remain beside four new studies. These are local recorded previews; no public stream is changed.
+This collection develops the two materials selected by the artist. The originals remain beside six new studies. These are local recorded previews; no public stream is changed.
 
 ## Filaments
+
+Following feedback that the strands should constantly move and oscillate in thickness, Breathing strands and Liquid strands add independent motion to each line. Each strand sways, carries a traveling lateral ripple, and changes thickness continuously with a seed-specific phase. Liquid strands uses wider thickness variation and larger excursions, with fewer lines to give the movement room. These smooth periodic functions do not accumulate history or replace the final signature warp.
+
 
 Contour script replaces the original uniform diagonal drift with a smooth orientation field and stronger guidance from image brightness gradients. Strokes vary in length, taper at both ends, and fade into dark areas rather than filling the entire frame evenly. Ivory and blue replace the broader spectrum.
 
@@ -18,6 +21,6 @@ Nocturne keeps the same construction in petrol blue, muted jade, copper, and war
 
 ## Signature and validation
 
-All materials finish with the exact same psychedelic warp: amplitude 0.012, frequency 8, period 8 seconds, applied once using source-frame time. The new studies do not change the original materials' calculations.
+All eight studies finish with the exact same psychedelic warp: amplitude 0.012, frequency 8, period 8 seconds, applied once using source-frame time. The new studies do not change the original materials' calculations.
 
 The collection uses one 719-frame source recording for every film: 1920 × 1080 at 30000/1001 fps, roughly 24 seconds. The recording is not a seamless loop. Reproduce with the existing render/gallery/verify scripts and `--catalog artwork/editions/paper-filaments.json`. Native determinism and serial/parallel equivalence tests cover the new material IDs.
