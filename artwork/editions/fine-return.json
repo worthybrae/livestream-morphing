@@ -1,0 +1,31 @@
+[
+  {
+    "id": 46,
+    "slug": "live-fine-knife",
+    "name": "Reference / Live Fine knife",
+    "description": "The current production style on the same recorded clip.",
+    "params": {}
+  },
+  {
+    "id": 60,
+    "slug": "fine-return",
+    "name": "Oil / Fine knife revisited",
+    "description": "Original fine stroke sizes, detail density and pigment texture. A few longer curved accents in quiet areas. Source colors with the agreed dark-night/rich-day treatment; original psychedelic movement.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 60,
+    "slug": "fine-return-cycle",
+    "name": "Oil / Fine knife day cycle",
+    "description": "The refined small-stroke treatment through an illustrative 24-hour cycle in 24 seconds. Fixed weather; recorded footage.",
+    "params": {
+      "day_cycle": 1,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  }
+]

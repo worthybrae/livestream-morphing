@@ -59,3 +59,9 @@ Conservative scanline bounds expand to include the curved footprint. Sampled bou
 Responds to the user's painting reference by contrasting broad loaded paint, short dabs and fine dragged marks. Width and length use independent stable seeds within three brush families. Ed58 coat spacings are80/30/8; ed59 uses150/58/12 for a more abstract surface. Medium coats become lighter in low-detail regions, and fine accents use a fixed55% (ed58) or34% (ed59) site density, allowing broad paint fields to survive overpainting. The detail response remains continuous. Curved paths, pigment drag, regional directions, source colors, night/day grading and psychedelic warp are inherited. Raised shoulders are strengthened slightly.
 
 Local comparisons use the same daytime clip. The source colors are retained; the reference's blue palette is not copied. Ed59 intentionally trades more scene detail for visible paint scale. Production unchanged.
+
+## Fine knife revisited (edition 60)
+
+Returns to the original Fine knife geometry (36/18/8), full detail-site density, gradient-driven angles and original pigment/ridge texture. Retains source RGB and the accepted dark-gray-night/richer-day grading. Only20% of coarse stroke identities are eligible for a curved accent, and this fades to zero by gradient0.05. Eligible strokes lengthen up to45% with a gentle0.18-width bend. There is no regional direction field, large paint patch, or pigment dragging. The exact final psychedelic warp remains.
+
+The comparison includes edition46 as it appears in production, rendered on the same clip. Edition60 is a local preview; production is unchanged.131 tests passed, including serial/parallel equivalence for the new edition.
