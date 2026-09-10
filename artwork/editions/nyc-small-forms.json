@@ -1,0 +1,35 @@
+[
+  {
+    "id": 60,
+    "slug": "fine-return",
+    "name": "Reference / Fine knife revisited",
+    "description": "The previous small-stroke study, on the same footage. New York capture; local-time tint at 06:07 PM. Weather held fixed for comparison.",
+    "params": {
+      "hour": 18.12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 64,
+    "slug": "nyc-fine-detail",
+    "name": "New York / Fine detail",
+    "description": "Fine knife pigment and texture, with continuous stroke alignment and smaller detail accents. New York evening tint. Same psychedelic wave.",
+    "params": {
+      "hour": 18.12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 65,
+    "slug": "nyc-small-forms",
+    "name": "New York / Small forms",
+    "description": "Broad knife passages with compact source-colored dabs for tiny contrast islands. Fine detail uses its own lightly smoothed source layer; no semantic recognition. Same time tint and psychedelic wave.",
+    "params": {
+      "hour": 18.12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  }
+]

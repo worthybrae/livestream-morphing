@@ -81,3 +81,11 @@ Fine knife revisited retains its pigment, small geometry and original psychedeli
 LIVE_STYLE=fine_knife_nyc selects this edition. STREAM_URL uses the verified unsigned EarthCam 50683 chunklist prefix. EarthCam Origin and Referer headers replace Abbey Road headers. Five frame workers and two encode threads remain; a six-worker/one-encoder comparison was slower locally.
 
 Production verification of the generic x86 build measured roughly 7.8–8.2s per 6s segment. The Railway-only Docker build now targets x86-64-v2 (SSE4.2-class CPUs, supported by the observed production CPU) so wide SIMD operations use hardware rounding and integer arithmetic. Other-architecture builders must override RUSTFLAGS. Validate production timing after deploy; local ARM timing is not a substitute.
+
+## Small forms (edition 65)
+
+Uses the Fine knife coarse/middle passes, with a separate radius-one luminance layer for details. On a four-pixel grid, small contrast islands receive compact source-colored dabs instead of long knife strokes. Broad smoothing no longer erases the detail signal before these marks are chosen. This is size/contrast-based reconstruction, not semantic person/building segmentation. Day/night grading and the final wave remain unchanged.
+
+The target-specific Railway build runs the Rust tests before building its release binary.
+
+The first dot-only pass also dotted long rails and building edges. A local Hessian compactness check now separates compact contrast islands from elongated edges: the latter receive restrained short thin marks. The analysis is lightweight and deterministic per frame. Broad paint remains unchanged.
