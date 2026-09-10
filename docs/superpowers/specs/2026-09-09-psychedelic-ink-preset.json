@@ -1,0 +1,11 @@
+{
+  "smoothing": 1,
+  "fine_threshold": 12,
+  "broad_threshold": 12,
+  "fine_weight": 1,
+  "broad_weight": 0,
+  "stroke_body": 0.4,
+  "charcoal": 48,
+  "highlight": 245,
+  "trail_strength": 0
+}

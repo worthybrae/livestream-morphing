@@ -46,21 +46,21 @@ impl Effect for Distortion {
         let hf = h as f32;
         let time = (ctx.frame_number % cycle_length) as f32 * (2.0 * PI / cycle_length as f32);
 
+        // Coordinates are separable: calculate each column once per frame.
+        let columns: Vec<_> = (0..w).map(|x| {
+            let offset = (time + x as f32 * frequency / wf).sin() * wf * amplitude;
+            let src = (x as f32 + offset).clamp(0.0, wf - 1.0);
+            let x0 = src.floor() as u32;
+            (x0, (x0 + 1).min(w - 1), src.fract())
+        }).collect();
         for y in 0..h {
             let y_offset = (time + y as f32 * frequency / hf).sin() * hf * amplitude;
+            let src_y = (y as f32 + y_offset).clamp(0.0, hf - 1.0);
+            let y0 = src_y.floor() as u32;
+            let y1 = (y0 + 1).min(h - 1);
+            let fy = src_y.fract();
             for x in 0..w {
-                let x_offset = (time + x as f32 * frequency / wf).sin() * wf * amplitude;
-
-                let src_x = (x as f32 + x_offset).clamp(0.0, wf - 1.0);
-                let src_y = (y as f32 + y_offset).clamp(0.0, hf - 1.0);
-
-                // Bilinear interpolation
-                let x0 = src_x.floor() as u32;
-                let y0 = src_y.floor() as u32;
-                let x1 = (x0 + 1).min(w - 1);
-                let y1 = (y0 + 1).min(h - 1);
-                let fx = src_x.fract();
-                let fy = src_y.fract();
+                let (x0, x1, fx) = columns[x as usize];
 
                 let dst_idx = ((y * w + x) * 3) as usize;
                 for c in 0..3 {

@@ -18,6 +18,11 @@ pub fn render(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::
     if args.get(3).map(|s| s.as_str())==Some("legacy") {
         for effect in ["distortion","grayscale","quantize","edges","canvas_texture"] { pipeline.add_effect(effect)?; }
     } else {
+        if args.get(3).map(|s|s.as_str())==Some("psychedelic") {
+            let warp=pipeline.add_effect("distortion")?;
+            let params=serde_json::from_str(r#"{"amplitude":0.012,"frequency":8,"cycle_length":240}"#)?;
+            pipeline.update_params(&warp,&params);
+        }
         let slot=pipeline.add_effect("living_ink")?;
         if let Some(path)=args.get(4) {
             let params=serde_json::from_slice(&std::fs::read(path)?)?;
