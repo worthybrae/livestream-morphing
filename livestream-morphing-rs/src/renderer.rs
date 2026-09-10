@@ -3,6 +3,8 @@ use crate::{codec, effects::RawFrame, pipeline::Pipeline};
 use std::{sync::mpsc, time::Instant};
 type Error=Box<dyn std::error::Error+Send+Sync>;
 pub struct Rendered {
+    #[cfg(test)]
+    pub painted_frames: Vec<Vec<u8>>,
     pub bytes:Vec<u8>, pub fps:f64, pub frames:usize, pub width:u32, pub height:u32,
     pub first_seconds:Option<f64>, pub times:Vec<f64>, pub decode_ms:f64, pub encode_ms:f64,
 }
@@ -47,6 +49,8 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
         }
         // Keep cleanup inside the scope: drop channels before joining even on decode/encode failure.
         let result=(|| -> Result<Rendered,Error> {
+            #[cfg(test)]
+            let mut painted_frames=Vec::new();
             let mut encoder=None;
             let mut times=Vec::new(); let mut dimensions=(0,0); let mut submitted=0usize;
             let mut encode_ms=0.0; let mut callback_ms=0.0;
@@ -67,6 +71,8 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
                 if workers.is_empty() {
                     let t=Instant::now(); pipeline.process_frame_timed(&mut frame,number,(1.0/out_fps) as f32);
                     times.push(t.elapsed().as_secs_f64()*1000.0);
+                    #[cfg(test)]
+                    painted_frames.push(frame.data.clone());
                     let t=Instant::now(); encoder.as_mut().unwrap().push(&frame)?;
                     encode_ms+=t.elapsed().as_secs_f64()*1000.0;
                 } else {
@@ -77,6 +83,8 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
                     worker.input.send(Job {frame,number,dt:(1.0/out_fps) as f32})?;
                     if let Some(done)=done {
                         times.push(done.milliseconds);
+                        #[cfg(test)]
+                        painted_frames.push(done.frame.data.clone());
                         let t=Instant::now(); encoder.as_mut().unwrap().push(&done.frame)?;
                         encode_ms+=t.elapsed().as_secs_f64()*1000.0;
                     }
@@ -87,7 +95,9 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
             for index in submitted.saturating_sub(count)..submitted {
                 if workers.is_empty() {break;}
                 let done=workers[index%count].output.recv()?; times.push(done.milliseconds);
-                let t=Instant::now(); encoder.as_mut().unwrap().push(&done.frame)?;
+                #[cfg(test)]
+                        painted_frames.push(done.frame.data.clone());
+                        let t=Instant::now(); encoder.as_mut().unwrap().push(&done.frame)?;
                 encode_ms+=t.elapsed().as_secs_f64()*1000.0;
             }
             let t=Instant::now(); let bytes=encoder.ok_or("No decoded frames")?.finish()?;
@@ -95,7 +105,7 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
             let fps=info.fps/step as f64;
             if !workers.is_empty() {pipeline.clear_enabled_history();}
             pipeline.source_end=info.first_seconds.map(|first|first+info.frames as f64/fps);
-            Ok(Rendered {bytes,fps,frames:info.frames,width:dimensions.0,height:dimensions.1,first_seconds:info.first_seconds,times,decode_ms,encode_ms})
+            Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,frames:info.frames,width:dimensions.0,height:dimensions.1,first_seconds:info.first_seconds,times,decode_ms,encode_ms})
         })();
         drop(workers);
         result
@@ -126,7 +136,7 @@ mod tests {
             let serial=render(&input,64,1,0,700,&mut configured(),1).unwrap();
             for workers in [3,5,6] {
                 let parallel=render(&input,64,1,0,700,&mut configured(),workers).unwrap();
-                assert_eq!(serial.frames,9);assert_eq!(serial.bytes,parallel.bytes);
+                assert_eq!(serial.frames,9);assert_eq!(serial.painted_frames,parallel.painted_frames);
             }
         }
     }
@@ -145,7 +155,7 @@ mod tests {
             let serial=render(&input,64,1,90000,71,&mut configured(trails),1).unwrap();
             let parallel=render(&input,64,1,90000,71,&mut configured(trails),3).unwrap();
             assert_eq!(serial.frames,7); assert_eq!(parallel.frames,7);
-            assert_eq!(serial.bytes,parallel.bytes);
+            assert_eq!(serial.painted_frames,parallel.painted_frames);
         }
     }
     #[test]
@@ -165,7 +175,7 @@ mod tests {
             }
             let a=render(input,64,1,segment as i64*90000,segment as u64*30,&mut serial,1).unwrap();
             let b=render(input,64,1,segment as i64*90000,segment as u64*30,&mut parallel,3).unwrap();
-            assert_eq!(a.bytes,b.bytes,"segment {segment}");
+            assert_eq!(a.painted_frames,b.painted_frames,"segment {segment}");
         }
     }
     #[test]

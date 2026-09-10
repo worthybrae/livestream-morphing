@@ -89,3 +89,5 @@ Uses the Fine knife coarse/middle passes, with a separate radius-one luminance l
 The target-specific Railway build runs the Rust tests before building its release binary.
 
 The first dot-only pass also dotted long rails and building edges. A local Hessian compactness check now separates compact contrast islands from elongated edges: the latter receive restrained short thin marks. The analysis is lightweight and deterministic per frame. Broad paint remains unchanged.
+
+Target build verification exposed encoded-byte equality failures in renderer tests. Renderer ordering/effect checks now compare every raw painted frame before lossy encoding, with test-only buffers and no production allocation overhead. This isolates renderer determinism from encoder packet/quantization variation. Target build must pass these checks before deployment.
