@@ -73,3 +73,9 @@ Recorded comparison against edition 60, all at noon with cloud 0.3. Loaded brush
 The three new modes anchor stroke angles, sizes and curves to spatial identities rather than changing gradients. Source pigment and detail opacity still respond to video. All retain source RGB, the existing day/night/weather grading and the unchanged final psychedelic warp. Preview weather is fixed, not a live weather integration. These are local studies, not production changes.
 
 The New York comparison uses a separately captured Times Square sample from the supplied EarthCam playlist (camera 50683), 1920 × 1080 at 30 fps. The catalog records the America/New_York local hour at capture; weather inputs remain illustrative. Signed playlist credentials are not saved in the repository.
+
+## New York live refinement (edition 64)
+
+Fine knife revisited retains its pigment, small geometry and original psychedelic wave. Continuous bounded gradient alignment removes the previous angle threshold. Fine accents use 6px sites rather than 8px; opacity ramps above gradient 0.065 so quiet regions avoid unnecessary detail work. The live pipeline snapshots America/New_York time each segment. Weather remains at the existing default, not a live weather feed.
+
+LIVE_STYLE=fine_knife_nyc selects this edition. STREAM_URL uses the verified unsigned EarthCam 50683 chunklist prefix. EarthCam Origin and Referer headers replace Abbey Road headers. Five frame workers and two encode threads remain; a six-worker/one-encoder comparison was slower locally.

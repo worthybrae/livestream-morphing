@@ -283,6 +283,7 @@ impl Forms {
             61 => palette_knife::<13>(frame, luma, edition, environment),
             62 => palette_knife::<14>(frame, luma, edition, environment),
             63 => palette_knife::<15>(frame, luma, edition, environment),
+            64 => palette_knife::<16>(frame, luma, edition, environment),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -772,7 +773,8 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
         }
     }
     let geometry = if MODE >= 12 { 0 } else { MODE };
-    let sizes = if MODE == 13 { [42., 19., 7.] }
+    let sizes = if MODE == 16 { [36., 18., 6.] }
+    else if MODE == 13 { [42., 19., 7.] }
     else if MODE == 14 { [66., 26., 8.] }
     else if MODE == 15 { [82., 32., 7.] }
     else if geometry == 11 { [150., 58., 12.] }
@@ -800,14 +802,19 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                 let dx = luma[y * w + (x + d).min(w - 1)] - luma[y * w + x.saturating_sub(d)];
                 let dy = luma[(y + d).min(h - 1) * w + x] - luma[y.saturating_sub(d) * w + x];
                 let gradient = dx.abs() + dy.abs();
-                let accent = if MODE == 12 && coat == 0 && seed < 0.20 {
+                let accent = if (MODE == 12 || MODE == 16) && coat == 0 && seed < 0.20 {
                     let t = (1.-gradient/0.05).clamp(0.,1.);
                     t*t*(3.-2.*t)
                 } else { 0. };
                 // Preserve broad paint fields. Fine accents have stable sparse
                 // placement; their opacity still responds continuously to detail.
                 if geometry >= 10 && coat == 2 && hash(gx+913, gy+227) > if geometry == 10 { 0.55 } else { 0.34 } { continue; }
-                let opacity = if MODE >= 13 {
+                let opacity = if MODE == 16 {
+                    if coat == 2 {
+                        let t=((gradient-0.065)/0.065).clamp(0.,1.);
+                        t*t*(3.-2.*t)
+                    } else { 1. }
+                } else if MODE >= 13 {
                     if coat == 0 { 1. }
                     else if MODE == 14 { (0.22 + painted_detail_opacity(gradient)*0.66) * if seed < 0.40 { 1. } else { 0.35 } }
                     else if MODE == 15 { painted_detail_opacity(gradient) * if coat == 1 { 0.65 } else { 0.95 } }
@@ -816,10 +823,12 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                     let base = if geometry == 10 { 0.55 } else { 0.30 };
                     base + painted_detail_opacity(gradient)*(1.-base)
                 } else if geometry >= 6 && coat == 2 { painted_detail_opacity(gradient) } else { 1. };
-                if (geometry >= 6 && opacity <= 0.) || (MODE < 13 && geometry < 6 && coat == 2 && gradient < 0.065) {
+                if ((geometry >= 6 || MODE == 16) && opacity <= 0.) || (MODE < 13 && geometry < 6 && coat == 2 && gradient < 0.065) {
                     continue;
                 }
-                let angle = if MODE >= 13 {
+                let angle = if MODE == 16 {
+                    painted_stroke_direction(dx, dy, seed)
+                } else if MODE >= 13 {
                     // Fixed stroke identities: no per-frame rotation or changing silhouette.
                     (paint_noise(cx / (220.*scale).max(1.), cy / (220.*scale).max(1.))-0.5)*1.8 + (seed-0.5)*0.9
                 } else if geometry >= 9 {
@@ -835,7 +844,7 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                 let (sn, cs) = angle.sin_cos();
                 let length = (size * scale).max(1.) * (0.8 + seed * 0.75) * if geometry >= 6 { 1.12 } else { 1. };
                 let width = (size * scale).max(1.) * (0.35 + hash(gx, gy + 41) * 0.25) * if geometry >= 6 { 0.92 } else { 1. };
-                let (length, width) = if MODE >= 13 {
+                let (length, width) = if (13..=15).contains(&MODE) {
                     let r = hash(gx+417, gy+coat*97);
                     ((size*scale).max(1.)*(0.65+r*0.95), (size*scale).max(1.)*(0.32+seed*0.32))
                 } else if geometry >= 10 {
@@ -850,7 +859,7 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                     ((size*scale).max(1.)*l, (size*scale).max(1.)*w)
                 } else { (length, width) };
                 let length = length * (1. + accent*0.45);
-                let reach = if MODE >= 13 || geometry >= 9 { width*1.5 } else { width*(1.+accent*0.2) };
+                let reach = if (13..=15).contains(&MODE) || geometry >= 9 { width*1.5 } else { width*(1.+accent*0.2) };
                 let bx = cs.abs() * length + sn.abs() * reach;
                 let by = sn.abs() * length + cs.abs() * reach;
                 let c = if MODE == 0 { color_at(luma[i]) } else { source_color(x, y, (step / 4).max(1)) };
@@ -876,7 +885,7 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                     (-ua + 0.18 * va, -ub + 0.18 * vb, 1.),
                     (-ua - 0.18 * va, -ub - 0.18 * vb, 1.),
                 ]
-                .map(|(a, b, c)| (a, b, c + if MODE >= 13 || geometry >= 9 { 0.6 } else { accent as f64*0.2 }, if a.abs() > 1e-12 { 1. / a } else { 0. }));
+                .map(|(a, b, c)| (a, b, c + if (13..=15).contains(&MODE) || geometry >= 9 { 0.6 } else { accent as f64*0.2 }, if a.abs() > 1e-12 { 1. / a } else { 0. }));
                 for yy in (cy - by).max(0.) as usize..=(cy + by).min((h - 1) as f32) as usize {
                     let mut left = -bx as f64;
                     let mut right = bx as f64;
@@ -952,14 +961,14 @@ fn knife_pixels<const MODE: u8>(
     let oy = y as f32 - cy;
     let u = (ox * cs + F::splat(oy * sn)) / F::splat(length);
     let v = (-ox * sn + F::splat(oy * cs)) / F::splat(width);
-    let v = if MODE >= 13 {
+    let v = if (13..=15).contains(&MODE) {
         v - (F::ONE-u*u).max(F::ZERO)*((seed-0.5)*0.45)
-    } else if MODE == 12 {
+    } else if MODE == 12 || MODE == 16 {
         v - (F::ONE-u*u).max(F::ZERO) * (accent*0.18)
     } else if material >= 9 {
         v - (F::ONE-u*u).max(F::ZERO) * ((seed-0.5)*0.85) * (F::ONE + u*0.4)
     } else { v };
-    let distance = if MODE >= 13 {
+    let distance = if (13..=15).contains(&MODE) {
         // Loaded heel, pressure belly, narrowing dry tip. Shape is fixed over time.
         let t = (u+1.)*0.5;
         let heel = ((u+1.)*9.).max(F::ZERO).min(F::ONE);
@@ -978,7 +987,7 @@ fn knife_pixels<const MODE: u8>(
     }
     let cover = (-distance * width).max(F::ZERO).min(F::ONE) * 0.94;
     let scrape = knife_noise4(u * (if material >= 9 { 1.3 } else { 4. }) + seed * 19., v * (if material >= 9 { 19. } else { 13. }) + coat as f32 * 37.);
-    let cover = if MODE >= 13 {
+    let cover = if MODE == 16 { cover * opacity } else if MODE >= 13 {
         let t = (u+1.)*0.5;
         let phase = v*(12.+seed*9.) + seed*31.;
         let bristle = ((phase-phase.floor())-0.5).abs()*2.;
@@ -1003,7 +1012,7 @@ fn knife_pixels<const MODE: u8>(
         (v - 0.58) * 35.,
         v.cmp_lt(F::splat(-0.65)).blend(F::splat(-9.), F::ZERO),
     );
-    let light = if MODE >= 13 {
+    let light = if (13..=15).contains(&MODE) {
         let phase = v*(12.+seed*9.) + seed*31.;
         let groove = ((phase-phase.floor())-0.5).abs()*2.;
         let belly = (F::ONE-u*u).max(F::ZERO);

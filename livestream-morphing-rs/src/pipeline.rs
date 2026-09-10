@@ -235,10 +235,10 @@ pub struct AppState {
 // unset value retains the original line drawing for other environments.
 fn startup_pipeline(style: &str) -> Pipeline {
     let mut p=Pipeline::new();
-    if style=="fine_knife" {
+    if style=="fine_knife" || style=="fine_knife_nyc" {
         let slot=p.add_effect("ink_editions").expect("editions registered");
         p.update_params(&slot,&ParamValues::from([
-            ("edition".into(),46.),("detail".into(),1.),("pigment".into(),1.)
+            ("edition".into(),if style=="fine_knife_nyc" {64.} else {46.}),("detail".into(),1.),("pigment".into(),1.)
         ]));
     } else {
         let slot=p.add_effect("living_ink").expect("living ink registered");
@@ -370,6 +370,12 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
     let previous_stats=state.stats.lock().unwrap().clone();
     let rendered={
         let mut pipeline=state.pipeline.lock().unwrap();
+        // Snapshot city time once per segment; worker pipelines share this grade.
+        let local = chrono::Utc::now().with_timezone(&chrono_tz::America::New_York);
+        use chrono::Timelike;
+        for slot in pipeline.slots.iter_mut().filter(|s| s.effect_id == "ink_editions" && s.params.get("edition") == Some(&64.)) {
+            slot.params.insert("hour".into(), local.hour() as f32 + local.minute() as f32/60. + local.second() as f32/3600.);
+        }
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
         if previous_stats.segment_completed_at>0 && now.saturating_sub(previous_stats.segment_completed_at)>FRESH_SEGMENT_MS {pipeline.reset();}
         match crate::renderer::render(bytes,width,1,pts,previous_stats.rendered_frames,&mut pipeline,workers) {
@@ -601,6 +607,12 @@ mod tests {
         let mut blank=crate::effects::RawFrame::filled(64,32,20,20,20);
         p.process_frame(&mut blank,2);
         assert!(blank.data.iter().all(|v|*v==24));
+    }
+
+    #[test]
+    fn new_york_startup_selects_refined_paint() {
+        let slots=startup_pipeline("fine_knife_nyc").view();
+        assert_eq!(slots[0].params["edition"],64.);
     }
 
     #[test]

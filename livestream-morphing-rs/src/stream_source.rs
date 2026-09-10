@@ -5,8 +5,8 @@ const DEFAULT_STREAM_URL: &str =
 
 fn earthcam_headers() -> reqwest::header::HeaderMap {
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("Origin", "https://www.abbeyroad.com".parse().unwrap());
-    headers.insert("Referer", "https://www.abbeyroad.com/".parse().unwrap());
+    headers.insert("Origin", "https://www.earthcam.com".parse().unwrap());
+    headers.insert("Referer", "https://www.earthcam.com/".parse().unwrap());
     headers.insert(
         "User-Agent",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
