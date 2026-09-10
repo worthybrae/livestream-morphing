@@ -270,6 +270,7 @@ impl Forms {
             45 | 46 => palette_knife::<0>(frame, luma, edition, environment),
             49 => palette_knife::<1>(frame, luma, edition, environment),
             50 => palette_knife::<2>(frame, luma, edition, environment),
+            51 => palette_knife::<3>(frame, luma, edition, environment),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -630,6 +631,31 @@ fn paper_cutouts(
     }
 }
 // Opaque angular deposits construct the image, without paper-layer masks.
+// Smooth, circular London clock palette. Computed once per frame, independent
+// of the painting/warp phase. These are artistic clock anchors, not solar events.
+fn knife_day_tint([hour, cloud, rain]: [f32; 3]) -> [f32; 3] {
+    let stops = [
+        (0., [-13., -5., 27.]),
+        (4., [-13., -5., 27.]),
+        (6.5, [32., 3., 12.]),
+        (10., [15., 12., -9.]),
+        (15., [15., 12., -9.]),
+        (18.5, [37., 1., -16.]),
+        (21., [8., -14., 30.]),
+        (24., [-13., -5., 27.]),
+    ];
+    let hour = hour.rem_euclid(24.);
+    let pair = stops.windows(2).find(|p| hour < p[1].0).unwrap();
+    let t = (hour - pair[0].0) / (pair[1].0 - pair[0].0);
+    let base = blend(pair[0].1, pair[1].1, t * t * (3. - 2. * t));
+    let cloud = cloud.clamp(0., 1.);
+    let rain = rain.clamp(0., 1.);
+    let overcast = [-5., 1., 10.];
+    let wet = [-5., -1., 8.];
+    std::array::from_fn(|k| base[k] * (1. - cloud * 0.22)
+        + overcast[k] * cloud * 0.45 + wet[k] * rain)
+}
+
 // MODE 0 retains the reference pixels. New studies share its optimized geometry.
 fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u32, environment: [f32; 3]) {
     let w = frame.width as usize;
@@ -650,7 +676,7 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
     let source = if MODE > 0 { frame.data.clone() } else { Vec::new() };
     // A few RGB levels of warmth/coolness, never a replacement palette.
     let warmth = (1. - environment[1]) * 3. - environment[2] * 2.;
-    let weather = [warmth, warmth * 0.15, -warmth];
+    let weather = if MODE == 3 { knife_day_tint(environment) } else { [warmth, warmth * 0.15, -warmth] };
     let source_color = |x: usize, y: usize, radius: usize| {
         let points = [(x,y), (x.saturating_sub(radius),y), ((x+radius).min(w-1),y),
                       (x,y.saturating_sub(radius)), (x,(y+radius).min(h-1))];
@@ -1152,6 +1178,28 @@ mod sampling_tests {
 #[cfg(test)]
 mod knife_batch_tests {
     use super::*;
+    #[test]
+    fn clock_tint_is_continuous_cyclic_and_weather_modulated() {
+        assert_eq!(knife_day_tint([0., 0., 0.]), knife_day_tint([24., 0., 0.]));
+        for h in [0., 4., 6.5, 10., 15., 18.5, 21., 24.] {
+            let before = knife_day_tint([h - 0.001, 0.5, 0.3]);
+            let after = knife_day_tint([h + 0.001, 0.5, 0.3]);
+            assert!(before.iter().zip(after).all(|(a,b)| (a-b).abs() < 0.01));
+        }
+        let day = knife_day_tint([12., 0., 0.]);
+        let night = knife_day_tint([0., 0., 0.]);
+        assert!(day[0] > day[2] && night[2] > night[0]);
+        let rainy = knife_day_tint([12., 1., 1.]);
+        assert!(rainy[0] < day[0] && rainy[2] > day[2]);
+        for h in 0..240 {
+            for cloud in [0., 1.] {
+                for rain in [0., 1.] {
+                    assert!(knife_day_tint([h as f32 / 10., cloud, rain]).iter()
+                        .all(|v| v.is_finite() && v.abs() < 40.));
+                }
+            }
+        }
+    }
     #[test]
     fn source_pigments_survive_reconstruction_and_weather_is_restrained() {
         // Identical geometry/luminance isolates RGB retention from edge detection.

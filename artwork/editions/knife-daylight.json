@@ -1,0 +1,50 @@
+[
+  {
+    "id": 51,
+    "slug": "knife-dawn",
+    "name": "Oil / Rose dawn",
+    "description": "Illustrative London clock tint at 6:30 AM. Camera colors beneath expressive colored light, with oil relief and the original psychedelic movement. Fixed light cloud; not live weather.",
+    "params": {
+      "hour": 6.5,
+      "cloud": 0.3,
+      "rain": 0,
+      "day_cycle": 0
+    }
+  },
+  {
+    "id": 51,
+    "slug": "knife-golden-hour",
+    "name": "Oil / Amber evening",
+    "description": "Illustrative London clock tint at 6:30 PM. Camera colors beneath expressive colored light, with oil relief and the original psychedelic movement. Fixed light cloud; not live weather.",
+    "params": {
+      "hour": 18.5,
+      "cloud": 0.3,
+      "rain": 0,
+      "day_cycle": 0
+    }
+  },
+  {
+    "id": 51,
+    "slug": "knife-blue-night",
+    "name": "Oil / Blue night",
+    "description": "Illustrative London clock tint at midnight. Camera colors beneath expressive colored light, with oil relief and the original psychedelic movement. Fixed light cloud; not live weather.",
+    "params": {
+      "hour": 0,
+      "cloud": 0.3,
+      "rain": 0,
+      "day_cycle": 0
+    }
+  },
+  {
+    "id": 51,
+    "slug": "knife-day-cycle",
+    "name": "Oil / A London day",
+    "description": "Illustration: 24 hours compressed into 24 seconds. Camera colors beneath expressive colored light, with oil relief and the original psychedelic movement. Fixed light cloud; not live weather.",
+    "params": {
+      "hour": 0,
+      "cloud": 0.3,
+      "rain": 0,
+      "day_cycle": 1
+    }
+  }
+]
