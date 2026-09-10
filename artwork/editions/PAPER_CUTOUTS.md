@@ -66,7 +66,7 @@ Convex scanline bounds skip pixels outside the knife face, with a two-pixel guar
 
 ## SIMD Fine knife
 
-The original 45/46 knife renderer now evaluates four pixels at once using `wide` 0.7's native vector operations. Pigment hashes, smooth noise interpolation, coverage, and ridge lighting keep the scalar equations and operation order. Empty batches in the conservative scanline guard exit before texture work. There is no resolution reduction, dropped source frame, cached orientation bank, approximate reciprocal, temporal blend, or change to the final signature warp.
+The original 45/46 knife renderer now evaluates four pixels at once using `wide` 0.7's native vector operations. Pigment hashes, smooth noise interpolation, coverage, and ridge lighting keep the scalar equations and operation order. Empty batches in the conservative scanline guard exit before texture work. There is no resolution reduction, dropped source frame, cached orientation bank, approximate pigment values, temporal blend, or change to the final signature warp.
 
 Frame workers receive their next painting job before the previous result is encoded. Output still drains in source order with bounded jobs; stateful effects retain their serial path. The local renderer accepts `--workers 1..6` (default 3) and records that choice in its metrics. The public stream configuration is unchanged.
 
@@ -87,3 +87,21 @@ At three workers, native wall time fell 38.5%. The five-worker long run processe
 The final 719-frame five-worker MP4 is byte-identical to the original Fine knife reference. 122 Rust tests pass, including scalar pixel parity and ordered serial/parallel output at three, five, and six workers. Experiments with automatic batching, vectorized byte conversion, and a vectorized underpainting did not improve measured performance and were not retained. No production deployment or change to live worker configuration.
 
 Artifacts: `/Users/worthy/Test/living-ink-paper-filaments-2026-09-10/fine-knife-throughput/` and `fine-knife-throughput-long/`; `comparison.json` records source/binary/video hashes and measurements. Reproduce with `render.py OUTPUT --source SOURCE --catalog artwork/editions/paper-focus.json --slugs garden-fine-knife --crf 23 --workers 5`.
+
+
+## Exact pigment normalization / headroom pass
+
+Fine knife's four pigment hashes per pixel batch return a 16-bit integer divided by 65,535. The new normalization multiplies by the rounded reciprocal, then corrects the 512 inputs that otherwise round one ULP low. The product bit pattern `(bits & 0x1ff01) == 0x8000` identifies those cases; subtracting the all-ones comparison mask increments those results by one ULP. A test exhaustively checks all 65,536 possible inputs against the original division, bit for bit. Knife-local noise coordinates also use the finite/in-range SIMD integer conversion path.
+
+Conservative scanline clipping computes each plane reciprocal once per stroke instead of dividing on every row. The two-pixel guard remains, and the original pixel coverage equations still decide which pixels are painted. The final psychedelic warp, resolution, cadence, palette, stroke shapes, and texture remain unchanged.
+
+Discarded experiments: eight-pixel batches, one encoder thread, and a separate bounded encoding queue were slower in local measurements. Encoding and frame scheduling remain as before this pass. `render.py --encode-threads` exposes the existing native setting for reproducible experiments; its default remains two.
+
+
+| 48-second clip, same five workers / two encoder threads | Native time | Processing fps |
+|---|---:|---:|
+| Fresh baseline | 45.21 s | 31.81 |
+| Exact normalization, final | 40.78 s | 35.26 |
+| Final repeat | 41.37 s | 34.76 |
+
+Both final runs produce byte-identical MP4s to the baseline (all 1,438 frames). Throughput is roughly 16–18% above the 29.97-fps source cadence without adding workers; the fresh baseline was 31.81 processing fps. Peak RSS remains about 485 MiB. All 123 Rust tests pass. These are local ARM64 Docker results; production performance and monthly cost remain unverified. No deployment. Measurements and hashes: `/Users/worthy/Test/living-ink-paper-filaments-2026-09-10/headroom-final/comparison.json`.

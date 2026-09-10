@@ -696,13 +696,14 @@ fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
                     (ua - 0.18 * va, ub - 0.18 * vb, 1.),
                     (-ua + 0.18 * va, -ub + 0.18 * vb, 1.),
                     (-ua - 0.18 * va, -ub - 0.18 * vb, 1.),
-                ];
+                ]
+                .map(|(a, b, c)| (a, b, c, if a.abs() > 1e-12 { 1. / a } else { 0. }));
                 for yy in (cy - by).max(0.) as usize..=(cy + by).min((h - 1) as f32) as usize {
                     let mut left = -bx as f64;
                     let mut right = bx as f64;
-                    for &(a, b, c) in &planes {
+                    for &(a, b, c, inverse) in &planes {
                         if a.abs() > 1e-12 {
-                            let edge = (c - b * (yy as f64 - cy as f64)) / a;
+                            let edge = (c - b * (yy as f64 - cy as f64)) * inverse;
                             if a > 0. {
                                 right = right.min(edge);
                             } else {
@@ -743,7 +744,7 @@ fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
 }
 
 // Explicit four-lane SIMD keeps pigment hashing, lighting, and coverage packed
-// on both ARM and x86. No fast-math or approximate reciprocal is used.
+// on both ARM and x86. Pigment normalization preserves division results exactly.
 #[inline]
 fn knife_pixels(
     pixels: &mut [u8],
@@ -800,8 +801,9 @@ fn knife_noise4(x: wide::f32x4, y: wide::f32x4) -> wide::f32x4 {
     use wide::{f32x4 as F, u32x4 as U};
     let floor_x = x.floor();
     let floor_y = y.floor();
-    let ix = U::new(floor_x.trunc_int().to_array().map(|v| v as u32));
-    let iy = U::new(floor_y.trunc_int().to_array().map(|v| v as u32));
+    // Knife-local coordinates are finite and far inside the i32 range.
+    let ix = U::new(floor_x.fast_trunc_int().to_array().map(|v| v as u32));
+    let iy = U::new(floor_y.fast_trunc_int().to_array().map(|v| v as u32));
     let tx = x - floor_x;
     let ty = y - floor_y;
     let tx = tx * tx * (F::splat(3.) - tx * 2.);
@@ -811,11 +813,23 @@ fn knife_noise4(x: wide::f32x4, y: wide::f32x4) -> wide::f32x4 {
             ^ ((iy + U::splat(dy)) * U::splat(668265263));
         let v = (v ^ (v >> 13u32)) * U::splat(1274126177);
         let v = (v ^ (v >> 16u32)) & U::splat(65535);
-        F::new(v.to_array().map(|v| v as f32)) / F::splat(65535.)
+        normalize_pigment_hash(v)
     };
     let a = h(0, 0) * (F::ONE - tx) + h(1, 0) * tx;
     let b = h(0, 1) * (F::ONE - tx) + h(1, 1) * tx;
     a * (F::ONE - ty) + b * ty
+}
+
+// Exact n/65535 for integer n in 0..=65535. A rounded reciprocal is
+// one ULP low for 512 inputs. Their product bits match this mask; correcting
+// those cases avoids the SIMD divide without changing any pigment value.
+#[inline]
+fn normalize_pigment_hash(value: wide::u32x4) -> wide::f32x4 {
+    use wide::{f32x4 as F, u32x4 as U, CmpEq};
+    let scaled = F::new(value.to_array().map(|v| v as f32)) * (1. / 65535.);
+    let bits = U::new(scaled.to_array().map(f32::to_bits));
+    let correction = (bits & U::splat(0x1ff01)).cmp_eq(U::splat(0x8000));
+    F::new((bits - correction).to_array().map(f32::from_bits))
 }
 
 // Two coats of separately deposited paint. Marks are clipped to the paper masks,
@@ -1108,6 +1122,21 @@ mod sampling_tests {
 #[cfg(test)]
 mod knife_batch_tests {
     use super::*;
+    #[test]
+    fn pigment_normalization_is_exact_for_the_entire_hash_domain() {
+        for start in (0u32..65536).step_by(4) {
+            let values = std::array::from_fn(|k| start + k as u32);
+            let actual = normalize_pigment_hash(wide::u32x4::new(values)).to_array();
+            for k in 0..4 {
+                assert_eq!(
+                    actual[k].to_bits(),
+                    (values[k] as f32 / 65535.).to_bits(),
+                    "hash {}",
+                    values[k]
+                );
+            }
+        }
+    }
     #[test]
     fn batched_pixels_match_scalar_at_edges_and_partial_rows() {
         for trial in 0..256 {
