@@ -84,7 +84,7 @@ impl KnifeLayers {
             }
         }
     }
-    pub(super) fn draw(&mut self, frame: &mut RawFrame, luma: &[f32], seconds: f32) {
+    pub(super) fn draw(&mut self, frame: &mut RawFrame, luma: &[f32], seconds: f32, opaque: bool) {
         let w = frame.width as usize;
         let h = frame.height as usize;
         self.prepare(w);
@@ -95,6 +95,11 @@ impl KnifeLayers {
             }
         }
         let scale = w as f32 / 1920.;
+        let radius = (80. * scale).ceil() as i32 + 4;
+        let side = (radius * 2 + 1) as usize;
+        let mut coverage = vec![0f32; if opaque { side * side } else { 0 }];
+        let mut lighting = coverage.clone();
+        let mut touched = Vec::new();
         for (coat, size) in [36., 18., 8.].iter().enumerate() {
             let step = (size * scale).max(2.) as usize;
             for gy in (0..h).step_by(step) {
@@ -154,7 +159,26 @@ impl KnifeLayers {
                             }
                             let wipe = smooth((phase * 2.6 - 0.3 - (p.along + 1.) * 0.5) * 5.);
                             let deposit = if coat == 0 { 1. } else { 0.5 + 0.5 * wipe };
-                            let alpha = p.alpha * detail * weight * deposit;
+                            let alpha = if opaque {
+                                let reveal = if coat == 0 {
+                                    1.
+                                } else {
+                                    smooth((0.55 + phase * 0.6 - p.along) * 12.)
+                                };
+                                p.alpha * detail * weight * reveal
+                            } else {
+                                p.alpha * detail * weight * deposit
+                            };
+                            if opaque {
+                                let j = (p.y as i32 + radius) as usize * side
+                                    + (p.x as i32 + radius) as usize;
+                                if coverage[j] == 0. && alpha > 0. {
+                                    touched.push(j);
+                                }
+                                coverage[j] += alpha;
+                                lighting[j] += alpha * p.light;
+                                continue;
+                            }
                             let i = (yy as usize * w + xx as usize) * 3;
                             for k in 0..3 {
                                 let old = frame.data[i + k] as f32;
@@ -162,6 +186,23 @@ impl KnifeLayers {
                                 frame.data[i + k] =
                                     (old + (target - old) * alpha).clamp(0., 255.) as u8;
                             }
+                        }
+                    }
+                    if opaque {
+                        for j in touched.drain(..) {
+                            let alpha = coverage[j].min(1.);
+                            let xx = x as i32 + (j % side) as i32 - radius;
+                            let yy = y as i32 + (j / side) as i32 - radius;
+                            let i = (yy as usize * w + xx as usize) * 3;
+                            let light = lighting[j] / coverage[j] * 1.5;
+                            for k in 0..3 {
+                                let old = frame.data[i + k] as f32;
+                                frame.data[i + k] = (old + (c[k] + light + tint - old) * alpha)
+                                    .clamp(0., 255.)
+                                    as u8;
+                            }
+                            coverage[j] = 0.;
+                            lighting[j] = 0.;
                         }
                     }
                 }
@@ -182,13 +223,13 @@ mod tests {
         let mut a = RawFrame::new(192, 108);
         let mut b = a.clone();
         let mut c = a.clone();
-        painter.draw(&mut a, &luma, 1.);
-        painter.draw(&mut b, &luma, 4.);
-        KnifeLayers::default().draw(&mut c, &luma, 4.);
+        painter.draw(&mut a, &luma, 1., false);
+        painter.draw(&mut b, &luma, 4., false);
+        KnifeLayers::default().draw(&mut c, &luma, 4., false);
         assert_eq!(b.data, c.data);
         assert_ne!(a.data, b.data);
         let mut repeat = RawFrame::new(192, 108);
-        painter.draw(&mut repeat, &luma, 13.);
+        painter.draw(&mut repeat, &luma, 13., false);
         let error: u64 = b
             .data
             .iter()

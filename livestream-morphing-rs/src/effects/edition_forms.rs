@@ -265,7 +265,7 @@ impl Forms {
                     }
                 }
             }
-            47 => self.knife.draw(frame, luma, seconds),
+            47 | 48 => self.knife.draw(frame, luma, seconds, edition == 48),
             45 | 46 => palette_knife(frame, luma, edition),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
