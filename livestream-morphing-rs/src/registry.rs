@@ -46,6 +46,8 @@ pub trait Effect: Send {
     fn params(&self) -> Vec<ParamDef>;
     /// Allocate scratch buffers for the given frame dimensions.
     fn init(&mut self, width: u32, height: u32);
+    /// Discard temporal history after frames were processed by an independent instance.
+    fn clear_history(&mut self) {}
     /// Apply the effect to a frame in-place.
     fn apply(&mut self, frame: &mut crate::effects::RawFrame, params: &ParamValues, ctx: &FrameCtx);
 }

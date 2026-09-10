@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Hls from 'hls.js'
 import { useEffects } from './hooks/useEffects'
+import { usePipeline } from './hooks/usePipeline'
 import './living-ink.css'
 
 type Metrics = { width: number; height: number; frames: number; source_fps: number; frame_p50_ms: number; frame_p95_ms: number; total_ms: number; duration_seconds: number; bytes: number }
@@ -8,6 +9,8 @@ type Saved = { name: string; version: string; params: Record<string, number> }
 
 export default function App() {
   const effects = useEffects()
+  const { slots } = usePipeline()
+  const preset = slots.find(slot => slot.effect_id === 'living_ink')
   const ink = effects.find(e => e.id === 'living_ink')
   const [params, setParams] = useState<Record<string, number>>({})
   const [url, setUrl] = useState('')
@@ -19,7 +22,7 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem('living-ink-presets') || '[]') } catch { return [] }
   })
   const video = useRef<HTMLVideoElement>(null)
-  const draft = Object.fromEntries((ink?.params ?? []).map(p => [p.id, params[p.id] ?? p.default]))
+  const draft = Object.fromEntries((ink?.params ?? []).map(p => [p.id, params[p.id] ?? preset?.params[p.id] ?? p.default]))
 
   useEffect(() => {
     const el = video.current
@@ -59,10 +62,10 @@ export default function App() {
     <header className="ink-header"><span>W / LIVING INK</span><span>ABBEY ROAD · STUDY 01</span><span>LOCAL STUDIO</span></header>
     <div className="ink-workspace">
       <section className="ink-preview">
-        <div className="ink-caption"><span>A STREET, REMEMBERED BRIEFLY.</span><span>{metrics ? `${metrics.width} × ${metrics.height}` : 'CAPTURED SOURCE'}</span></div>
+        <div className="ink-caption"><span>A STREET IN MOTION.</span><span>{metrics ? `${metrics.width} × ${metrics.height}` : 'CAPTURED SOURCE'}</span></div>
         <div className="ink-picture">
           <video ref={video} controls autoPlay loop muted playsInline aria-label="Rust-rendered Living Ink preview" hidden={!url} />
-          {!url && <p>Light becomes a line.<br />Movement leaves a trace.<small>Render a captured clip to begin.</small></p>}
+          {!url && <p>Light becomes a line.<br />Movement bends the line.<small>Render a captured clip to begin.</small></p>}
         </div>
         <p className="ink-message" role="status">{message}</p>
         <div className="ink-equation"><span>THE MODEL</span><code>contour = thin(∇ smooth(luminance))<br />memory = max(departed contour, memory × 2<sup>−Δt / half-life</sup>)<br />painting = charcoal + max(contour, memory × strength)</code></div>
@@ -78,7 +81,7 @@ export default function App() {
         <h1>The marks</h1><p>Keep the street quiet. Let motion carry the light.</p>
         {(ink?.params ?? []).map(p => <label className="ink-slider" key={p.id}><span>{p.name}<output>{draft[p.id].toFixed(p.step < 1 ? 2 : 0)}</output></span><input type="range" min={p.min} max={p.max} step={p.step} value={draft[p.id]} onChange={e => setParams(previous => ({ ...previous, [p.id]: Number(e.target.value) }))} /></label>)}
         {!ink && <p>Start the local Rust engine to load the controls.</p>}
-        <button className="ink-render" disabled={busy || !ink} onClick={() => void render()}>{busy ? 'Rendering…' : 'Render preview ↗'}</button>
+        <button className="ink-render" disabled={busy || !ink || !preset} onClick={() => void render()}>{busy ? 'Rendering…' : 'Render preview ↗'}</button>
         <div className="ink-presets"><label>PRESET NAME<input value={name} onChange={e => setName(e.target.value)} /></label><div className="ink-actions"><button onClick={save} disabled={!ink}>Save version</button><button onClick={exportPreset} disabled={!ink}>Export for production</button></div>
           {saved.length > 0 && <select aria-label="Load a saved preset" defaultValue="" onChange={e => { const p = saved[Number(e.target.value)]; if (p) { setParams(p.params); setName(p.name); setMessage('Saved version loaded into the draft. Render to preview.')} }}><option value="" disabled>Load a saved version</option>{saved.map((p, i) => <option key={p.version} value={i}>{p.name} · {new Date(p.version).toLocaleString()}</option>)}</select>}
         </div>

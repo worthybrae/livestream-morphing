@@ -27,7 +27,7 @@ async fn render(Json(params): Json<ParamValues>) -> Response {
         let out=dir.path().join("preview.ts");
         let preset=dir.path().join("params.json");
         std::fs::write(&preset,serde_json::to_vec(&params).unwrap()).map_err(|e|e.to_string())?;
-        let width=std::env::var("STUDIO_WIDTH").unwrap_or_else(|_|"640".into());
+        let width=std::env::var("STUDIO_WIDTH").unwrap_or_else(|_|"1920".into());
         let args=vec![source,out.display().to_string(),width,"ink".into(),preset.display().to_string()];
         let metrics=crate::offline::render(&args).map_err(|e|e.to_string())?;
         let bytes=std::fs::read(out).map_err(|e|e.to_string())?;

@@ -37,6 +37,14 @@ pub fn decode_sized(ts_bytes: &[u8], max_width: u32) -> Result<Decoded, Box<dyn 
 /// Keep every `step`th source frame before RGB conversion/allocation.
 /// FPS remains the source cadence; callers must account for selection in timing.
 pub fn decode_sampled(ts_bytes: &[u8], max_width: u32, step: usize) -> Result<Decoded, Box<dyn std::error::Error + Send + Sync>> {
+    let mut frames=Vec::new();
+    let info=decode_visit(ts_bytes,max_width,step,|frame,_,_,_| { frames.push(frame); Ok(()) })?;
+    Ok(Decoded {frames,fps:info.fps,first_seconds:info.first_seconds})
+}
+
+pub struct DecodeInfo { pub fps: f64, pub first_seconds: Option<f64>, pub frames: usize }
+pub fn decode_visit<F>(ts_bytes: &[u8], max_width: u32, step: usize, mut visit: F) -> Result<DecodeInfo, Box<dyn std::error::Error + Send + Sync>>
+where F: FnMut(RawFrame,f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Error + Send + Sync>> {
     let step = step.max(1);
     // Write to temp file (ffmpeg-next requires file path for input)
     let mut tmp = NamedTempFile::new()?;
@@ -75,15 +83,15 @@ pub fn decode_sampled(ts_bytes: &[u8], max_width: u32, step: usize) -> Result<De
         Flags::BILINEAR,
     )?;
 
-    let mut frames = Vec::new();
+    let mut selected_frames=0;
     let mut first_seconds = None;
     let mut source_frames = 0usize;
 
     let mut receive_frames =
-        |decoder: &mut ffmpeg::decoder::Video| -> Result<(), ffmpeg::Error> {
+        |decoder: &mut ffmpeg::decoder::Video| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut decoded = Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
-                if source_frames >= 720 { return Err(ffmpeg::Error::InvalidData); }
+                if source_frames >= 720 { return Err(ffmpeg::Error::InvalidData.into()); }
                 if first_seconds.is_none() { first_seconds = decoded.timestamp().map(|pts|pts as f64*time_base); }
                 let selected = source_frames % step == 0;
                 source_frames += 1;
@@ -100,7 +108,8 @@ pub fn decode_sampled(ts_bytes: &[u8], max_width: u32, step: usize) -> Result<De
                     data.extend_from_slice(&rgb.data(0)[offset..offset + row_bytes]);
                 }
 
-                frames.push(RawFrame { data, width, height });
+                visit(RawFrame { data, width, height },fps,source_frames-1,first_seconds)?;
+                selected_frames+=1;
             }
             Ok(())
         };
@@ -114,8 +123,8 @@ pub fn decode_sampled(ts_bytes: &[u8], max_width: u32, step: usize) -> Result<De
     decoder.send_eof()?;
     receive_frames(&mut decoder)?;
 
-    tracing::info!(frame_count = frames.len(), width, height, "Decoded segment");
-    Ok(Decoded { frames, fps, first_seconds })
+    tracing::info!(frame_count = selected_frames, width, height, "Decoded segment");
+    Ok(DecodeInfo { frames:selected_frames, fps, first_seconds })
 }
 
 /// Encode RGB24 frames into an H.264 MPEG-TS segment.
@@ -136,9 +145,21 @@ pub fn encode_timed(frames: &[RawFrame], fps: f64, pts_offset: i64) -> Result<Ve
         return Err("No frames to encode".into());
     }
 
-    let width = frames[0].width;
-    let height = frames[0].height;
+    let mut encoder=TsEncoder::new(frames[0].width,frames[0].height,fps,pts_offset)?;
+    for frame in frames { encoder.push(frame)?; }
+    encoder.finish()
+}
 
+pub struct TsEncoder {
+    tmp: NamedTempFile,
+    octx: ffmpeg::format::context::Output,
+    encoder: ffmpeg::encoder::video::Encoder,
+    scaler: ScalingContext,
+    rgb: Video,
+    width:u32, height:u32, fps:f64, pts_offset:i64, index:usize,
+}
+impl TsEncoder {
+    pub fn new(width:u32,height:u32,fps:f64,pts_offset:i64)->Result<Self,Box<dyn std::error::Error + Send + Sync>> {
     let tmp = NamedTempFile::new()?;
     let tmp_path = tmp.path().to_owned();
 
@@ -176,8 +197,10 @@ pub fn encode_timed(frames: &[RawFrame], fps: f64, pts_offset: i64) -> Result<Ve
     let mut x264_opts = ffmpeg::Dictionary::new();
     x264_opts.set("preset", "veryfast");
     x264_opts.set("crf", "30");
+    let threads=std::env::var("ENCODE_THREADS").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(2).clamp(1,4);
+    x264_opts.set("threads",&threads.to_string());
 
-    let mut encoder = encoder.open_with(x264_opts)?;
+    let encoder = encoder.open_with(x264_opts)?;
     ost.set_parameters(&encoder);
 
     let mut muxer_opts = ffmpeg::Dictionary::new();
@@ -188,7 +211,7 @@ pub fn encode_timed(frames: &[RawFrame], fps: f64, pts_offset: i64) -> Result<Ve
     octx.write_header_with(muxer_opts)?;
 
     // Scaler: RGB24 → YUV420P
-    let mut scaler = ScalingContext::get(
+    let scaler = ScalingContext::get(
         Pixel::RGB24,
         width,
         height,
@@ -198,10 +221,14 @@ pub fn encode_timed(frames: &[RawFrame], fps: f64, pts_offset: i64) -> Result<Ve
         Flags::BILINEAR,
     )?;
 
-    let row_bytes = (width * 3) as usize;
+    Ok(Self {tmp,octx,encoder,scaler,rgb:Video::new(Pixel::RGB24,width,height),width,height,fps,pts_offset,index:0})
+    }
 
-    for (i, frame) in frames.iter().enumerate() {
-        let mut rgb = Video::new(Pixel::RGB24, width, height);
+    pub fn push(&mut self, frame:&RawFrame)->Result<(),Box<dyn std::error::Error + Send + Sync>> {
+        let width=self.width; let height=self.height;
+        if (frame.width,frame.height)!=(width,height) { return Err("Encoder frame dimensions changed".into()); }
+        let row_bytes=(width*3) as usize;
+        let rgb=&mut self.rgb;
         // Copy data accounting for stride
         let stride = rgb.stride(0);
         for y in 0..height as usize {
@@ -212,38 +239,41 @@ pub fn encode_timed(frames: &[RawFrame], fps: f64, pts_offset: i64) -> Result<Ve
         }
 
         let mut yuv = Video::empty();
-        scaler.run(&rgb, &mut yuv)?;
+        self.scaler.run(rgb, &mut yuv)?;
         // PTS in 90kHz ticks: each frame = 90000/fps ticks apart
-        let frame_ticks = (i as f64 * 90000.0 / fps).round() as i64;
-        yuv.set_pts(Some(90000 + pts_offset + frame_ticks));
+        let frame_ticks = (self.index as f64 * 90000.0 / self.fps).round() as i64;
+        yuv.set_pts(Some(90000 + self.pts_offset + frame_ticks));
 
-        encoder.send_frame(&yuv)?;
+        self.encoder.send_frame(&yuv)?;
 
         let mut encoded_packet = ffmpeg::Packet::empty();
-        while encoder.receive_packet(&mut encoded_packet).is_ok() {
+        while self.encoder.receive_packet(&mut encoded_packet).is_ok() {
             encoded_packet.set_stream(0);
-            encoded_packet.write_interleaved(&mut octx)?;
+            encoded_packet.write_interleaved(&mut self.octx)?;
         }
+        self.index+=1;
+        Ok(())
     }
-
+    pub fn finish(mut self)->Result<Vec<u8>,Box<dyn std::error::Error + Send + Sync>> {
     // Flush encoder
-    encoder.send_eof()?;
+    self.encoder.send_eof()?;
     let mut encoded_packet = ffmpeg::Packet::empty();
-    while encoder.receive_packet(&mut encoded_packet).is_ok() {
+    while self.encoder.receive_packet(&mut encoded_packet).is_ok() {
         encoded_packet.set_stream(0);
-        encoded_packet.write_interleaved(&mut octx)?;
+        encoded_packet.write_interleaved(&mut self.octx)?;
     }
 
-    octx.write_trailer()?;
-    drop(octx); // Close output before reading
+    self.octx.write_trailer()?;
+    drop(self.octx); // Close output before reading
 
-    let output_bytes = std::fs::read(&tmp_path)?;
+    let output_bytes = std::fs::read(self.tmp.path())?;
     tracing::info!(
-        frame_count = frames.len(),
+        frame_count = self.index,
         size_kb = output_bytes.len() / 1024,
         "Encoded segment"
     );
     Ok(output_bytes)
+}
 }
 
 #[cfg(test)]
@@ -334,6 +364,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn incremental_decode_propagates_consumer_failure() {
+        init();
+        let frames=vec![RawFrame::filled(64,36,90,90,90);5];
+        let bytes=encode_segment(&frames,30,0).unwrap();
+        let mut seen=0;
+        let error=decode_visit(&bytes,64,1,|_,fps,index,first| {
+            assert_eq!(fps,30.0); assert_eq!(index,seen); assert!(first.is_some());
+            seen+=1;
+            if seen==2 { return Err("stop consumer".into()); }
+            Ok(())
+        }).err().unwrap();
+        assert_eq!(seen,2);
+        assert_eq!(error.to_string(),"stop consumer");
+    }
     #[test]
     fn sampled_decode_preserves_selected_pixels_and_source_timing() {
         init();

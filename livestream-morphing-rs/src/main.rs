@@ -2,6 +2,7 @@ mod api;
 mod offline;
 mod studio;
 mod codec;
+mod renderer;
 mod effects;
 mod hls;
 mod pipeline;

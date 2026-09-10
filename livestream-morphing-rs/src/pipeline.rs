@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{watch, RwLock};
 use serde::{Deserialize, Serialize};
 
-use crate::codec;
 use crate::effects::RawFrame;
 use crate::hls::HlsBuffer;
 use crate::registry::{self, default_params, Effect, FrameCtx, ParamValues};
@@ -31,7 +30,7 @@ pub struct PipelineSlotView {
 pub struct Pipeline {
     slots: Vec<PipelineSlot>,
     dimensions: Option<(u32, u32)>,
-    source_end: Option<f64>,
+    pub(crate) source_end: Option<f64>,
 }
 
 impl Pipeline {
@@ -152,6 +151,10 @@ impl Pipeline {
     /// Apply all enabled slots to a frame in order.
     pub fn process_frame(&mut self, frame: &mut RawFrame, frame_number: u32) {
         self.process_frame_timed(frame, frame_number, 1.0/30.0);
+    }
+
+    pub fn clear_enabled_history(&mut self) {
+        for slot in self.slots.iter_mut().filter(|s|s.enabled) { slot.effect.clear_history(); }
     }
 
     pub fn reset(&mut self) {
@@ -344,39 +347,30 @@ impl AppState {
 /// Shared segment processing for both ingestion paths. No duplicate RGB batch.
 fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, i64, ProcessingStats), Box<dyn std::error::Error + Send + Sync>> {
     let start=std::time::Instant::now();
-    let width=std::env::var("OUTPUT_WIDTH").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(640).clamp(320,960);
-    let decoded=codec::decode_sized(bytes,width)?;
-    let fps=decoded.fps;
-    let mut frames=decoded.frames;
-    if frames.is_empty() { return Err("No decoded frames".into()); }
-    if frames.len() as f64 / fps > 13.0 { return Err("Source segment exceeds the 13-second HLS target".into()); }
-    let mut times=Vec::with_capacity(frames.len());
+    let width=std::env::var("OUTPUT_WIDTH").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1920).clamp(320,1920);
+    let workers=std::env::var("RENDER_WORKERS").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(3).clamp(1,4);
     let previous_stats=state.stats.lock().unwrap().clone();
-    {
+    let rendered={
         let mut pipeline=state.pipeline.lock().unwrap();
-        pipeline.set_dimensions(frames[0].width,frames[0].height);
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
-        if previous_stats.segment_completed_at>0 && now.saturating_sub(previous_stats.segment_completed_at)>FRESH_SEGMENT_MS { pipeline.reset(); }
-        if let (Some(previous), Some(first)) = (pipeline.source_end, decoded.first_seconds) {
-            if (first-previous).abs() > 2.0/fps { pipeline.reset(); }
+        if previous_stats.segment_completed_at>0 && now.saturating_sub(previous_stats.segment_completed_at)>FRESH_SEGMENT_MS {pipeline.reset();}
+        match crate::renderer::render(bytes,width,1,pts,previous_stats.rendered_frames,&mut pipeline,workers) {
+            Ok(rendered) if rendered.frames as f64/rendered.fps<=13.0 => rendered,
+            Ok(_) => {pipeline.reset();return Err("Source segment exceeds the 13-second HLS target".into());}
+            Err(error) => {pipeline.reset();return Err(error);}
         }
-        pipeline.source_end = decoded.first_seconds.map(|first|first+frames.len() as f64/fps);
-        for (i,frame) in frames.iter_mut().enumerate() {
-            let t=std::time::Instant::now();
-            pipeline.process_frame_timed(frame,(previous_stats.rendered_frames+i as u64) as u32,(1.0/fps) as f32);
-            times.push(t.elapsed().as_secs_f64()*1000.0);
-        }
-    }
+    };
+    let duration=rendered.frames as f64/rendered.fps;
+    let mut times=rendered.times;
     let effects_ms=times.iter().sum::<f64>().round() as u64;
     times.sort_by(f64::total_cmp);
-    let encoded=codec::encode_timed(&frames,fps,pts)?;
-    let duration=frames.len() as f64/fps;
+    let encoded=rendered.bytes;
     let stats=ProcessingStats {
-        effects_ms, total_ms:start.elapsed().as_millis() as u64, frames:frames.len() as u64,
-        width:frames[0].width, height:frames[0].height, source_fps:fps,
-        frame_p50_ms:times[times.len()/2], frame_p95_ms:times[(times.len()*95/100).min(times.len()-1)],
-        duration_seconds:duration, rendered_frames:previous_stats.rendered_frames+frames.len() as u64,
-        encoded_bytes:encoded.len(), segment_completed_at:0,
+        effects_ms,total_ms:start.elapsed().as_millis() as u64,frames:rendered.frames as u64,
+        width:rendered.width,height:rendered.height,source_fps:rendered.fps,
+        frame_p50_ms:times[times.len()/2],frame_p95_ms:times[(times.len()*95/100).min(times.len()-1)],
+        duration_seconds:duration,rendered_frames:previous_stats.rendered_frames+rendered.frames as u64,
+        encoded_bytes:encoded.len(),segment_completed_at:0,
     };
     Ok((encoded,(duration*90000.0).round() as i64,stats))
 }
@@ -561,6 +555,16 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rejected_long_segment_clears_continuity() {
+        crate::codec::init();
+        let (state,_)=AppState::new();
+        let frames=vec![crate::effects::RawFrame::filled(64,36,180,180,180);420];
+        let bytes=crate::codec::encode_segment(&frames,30,0).unwrap();
+        let error=render_segment(&bytes,&state,0).err().unwrap();
+        assert!(error.to_string().contains("13-second"));
+        assert!(state.pipeline.lock().unwrap().source_end.is_none());
+    }
     #[test]
     fn repeated_dimensions_preserve_temporal_state_and_reset_clears_it() {
         let mut p = super::Pipeline::new();

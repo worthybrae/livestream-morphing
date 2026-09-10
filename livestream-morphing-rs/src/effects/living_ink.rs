@@ -8,6 +8,7 @@ pub struct LivingInk {
     magnitude: Vec<f32>, direction: Vec<u8>, fine_lines: Vec<f32>,
     broad_lines: Vec<f32>, previous: Vec<f32>, trail: Vec<f32>,
     has_previous: bool,
+    warp: super::distortion::Distortion,
 }
 
 // Separable box smoothing, O(pixels), independent of radius.
@@ -38,35 +39,52 @@ fn blur(src: &[f32], tmp: &mut [f32], dst: &mut [f32], w: usize, h: usize, r: us
     }
 }
 
-fn contours(src: &[f32], mag: &mut [f32], dir: &mut [u8], out: &mut [f32], w: usize, h: usize, threshold: f32, body: f32) {
+fn contours(src: &[f32], mag: &mut [f32], dir: &mut [u8], out: &mut [f32], w: usize, h: usize, threshold: f32, body: f32, subpixel: bool) {
     mag.fill(0.0); out.fill(0.0);
     if w < 3 || h < 3 { return; }
-    for y in 1..h-1 { for x in 1..w-1 {
-        let i = y*w+x;
-        let gx = -src[i-w-1]+src[i-w+1]-2.0*src[i-1]+2.0*src[i+1]-src[i+w-1]+src[i+w+1];
-        let gy = -src[i-w-1]-2.0*src[i-w]-src[i-w+1]+src[i+w-1]+2.0*src[i+w]+src[i+w+1];
-        mag[i] = (gx*gx+gy*gy).sqrt()/4.0;
-        if body == 1.0 {
-            let v = ((mag[i]-threshold)/(threshold*1.5).max(8.0)).clamp(0.0,1.0);
-            out[i] = v*v*(3.0-2.0*v);
+    let threshold_squared=threshold*threshold;
+    for y in 1..h-1 {
+        let a=&src[(y-1)*w..][..w]; let b=&src[y*w..][..w]; let c=&src[(y+1)*w..][..w];
+        let mr=&mut mag[y*w..][..w]; let dr=&mut dir[y*w..][..w]; let output=&mut out[y*w..][..w];
+        for x in 1..w-1 {
+        let gx=-a[x-1]+a[x+1]-2.0*b[x-1]+2.0*b[x+1]-c[x-1]+c[x+1];
+        let gy=-a[x-1]-2.0*a[x]-a[x+1]+c[x-1]+2.0*c[x]+c[x+1];
+        // Squared magnitudes preserve ridge ordering. Flat areas need no sqrt or direction.
+        mr[x]=(gx*gx+gy*gy)/16.0;
+        if mr[x] <= threshold_squared { continue; }
+        if body == 1.0 && !subpixel {
+            let v = ((mr[x].sqrt()-threshold)/(threshold*1.5).max(8.0)).clamp(0.0,1.0);
+            output[x] = v*v*(3.0-2.0*v);
             continue;
         }
-        dir[i] = if gy.abs() < gx.abs()*0.4142 { 0 }
+        dr[x] = if gy.abs() < gx.abs()*0.4142 { 0 }
             else if gx.abs() < gy.abs()*0.4142 { 1 }
             else if gx*gy > 0.0 { 2 } else { 3 };
     }}
-    if body == 1.0 { return; }
+    if body == 1.0 && !subpixel { return; }
     for y in 1..h-1 { for x in 1..w-1 {
         let i=y*w+x;
+        if mag[i] <= threshold_squared { continue; }
         let d = match dir[i] { 0 => 1, 1 => w, 2 => w+1, _ => w-1 };
-        let m = mag[i];
+        let squared=mag[i];
+        let m=squared.sqrt();
         // Keep a single ridge even when two pixels have identical strength.
-        let ridge = m >= mag[i-d] && m > mag[i+d];
+        let ridge = squared >= mag[i-d] && squared > mag[i+d];
         if ridge || body > 0.0 {
             let v = ((m-threshold)/(threshold*1.5).max(8.0)).clamp(0.0,1.0);
             // Preserve the smooth gradient shoulders for fuller, antialiased strokes.
             // Uniform source regions still have zero gradient and remain charcoal.
-            out[i] = v*v*(3.0-2.0*v) * if ridge { 1.0 } else { body };
+            let coverage=v*v*(3.0-2.0*v);
+            if subpixel && ridge {
+                let left=mag[i-d].sqrt(); let right=mag[i+d].sqrt();
+                let denominator=left-2.0*m+right;
+                let offset=if denominator.abs()>0.0001 { (0.5*(left-right)/denominator).clamp(-0.5,0.5) } else { 0.0 };
+                out[i]=out[i].max(coverage*(1.0-offset.abs()));
+                let neighbor=if offset<0.0 { i-d } else { i+d };
+                out[neighbor]=out[neighbor].max(coverage*offset.abs());
+            } else {
+                out[i]=out[i].max(coverage * if ridge { 1.0 } else { body });
+            }
         }
     }}
 }
@@ -77,8 +95,12 @@ impl Effect for LivingInk {
     fn params(&self) -> Vec<ParamDef> { vec![
         ParamDef::new("fine_threshold","Fine threshold",2.0,64.0,10.0,1.0),
         ParamDef::new("broad_threshold","Broad threshold",2.0,64.0,9.0,1.0),
-        ParamDef::new("fine_weight","Fine line weight",0.0,1.0,0.9,0.01),
+        ParamDef::new("fine_weight","Fine line weight",0.0,2.0,0.9,0.01),
         ParamDef::new("broad_weight","Broad line weight",0.0,1.0,0.25,0.01),
+        ParamDef::new("subpixel","Subpixel contours",0.0,1.0,0.0,1.0),
+        ParamDef::new("warp_amplitude","Flow amplitude",0.0,0.04,0.0,0.001),
+        ParamDef::new("warp_frequency","Flow frequency",1.0,20.0,8.0,0.5),
+        ParamDef::new("warp_period","Flow period (seconds)",2.0,30.0,8.0,0.5),
         ParamDef::new("stroke_body","Stroke body",0.0,1.0,0.0,0.05),
         ParamDef::new("smoothing","Smoothing radius",1.0,3.0,1.0,1.0),
         ParamDef::new("trail_strength","Trail strength",0.0,0.5,0.22,0.01),
@@ -93,6 +115,7 @@ impl Effect for LivingInk {
         self.fine_lines=vec![0.0;n]; self.broad_lines=vec![0.0;n];
         self.previous=vec![0.0;n]; self.trail=vec![0.0;n]; self.has_previous=false;
     }
+    fn clear_history(&mut self) { self.has_previous=false; self.trail.fill(0.0); }
     fn apply(&mut self, frame: &mut RawFrame, params: &ParamValues, ctx: &FrameCtx) {
         let w=frame.width as usize; let h=frame.height as usize;
         if w==0 || h==0 { return; }
@@ -106,13 +129,21 @@ impl Effect for LivingInk {
         blur(&self.luma,&mut self.scratch,&mut self.smooth,w,h,get("smoothing") as usize);
         if get("broad_weight") > 0.0 {
             blur(&self.smooth,&mut self.scratch,&mut self.broad,w,h,2);
-            contours(&self.broad,&mut self.magnitude,&mut self.direction,&mut self.broad_lines,w,h,get("broad_threshold"),get("stroke_body"));
+            contours(&self.broad,&mut self.magnitude,&mut self.direction,&mut self.broad_lines,w,h,get("broad_threshold"),get("stroke_body"),get("subpixel")>0.5);
         } else { self.broad_lines.fill(0.0); }
-        contours(&self.smooth,&mut self.magnitude,&mut self.direction,&mut self.fine_lines,w,h,get("fine_threshold"),get("stroke_body"));
+        contours(&self.smooth,&mut self.magnitude,&mut self.direction,&mut self.fine_lines,w,h,get("fine_threshold"),get("stroke_body"),get("subpixel")>0.5);
         let dt=if ctx.delta_seconds.is_finite() { ctx.delta_seconds.max(0.0) } else { 1.0/30.0 };
         let decay=2.0_f32.powf(-dt/get("trail_half_life"));
         let fine=get("fine_weight"); let broad=get("broad_weight");
         let strength=get("trail_strength"); let bg=get("charcoal"); let hi=get("highlight");
+        if strength == 0.0 {
+            for ((pixel,fine_line),broad_line) in frame.data.chunks_exact_mut(3).zip(&self.fine_lines).zip(&self.broad_lines) {
+                let coverage=(fine*fine_line).max(broad*broad_line);
+                pixel.fill((bg+(hi-bg)*coverage).round() as u8);
+            }
+            self.has_previous=false;
+            self.trail.fill(0.0);
+        } else {
         for ((((pixel,previous),trail),fine_line),broad_line) in frame.data.chunks_exact_mut(3)
             .zip(&mut self.previous).zip(&mut self.trail).zip(&self.fine_lines).zip(&self.broad_lines) {
             let line=(fine*fine_line).max(broad*broad_line);
@@ -123,6 +154,8 @@ impl Effect for LivingInk {
             *previous=line;
         }
         self.has_previous=true;
+        }
+        self.warp.apply_monochrome(frame,get("warp_amplitude"),get("warp_frequency"),((ctx.frame_number as f64*dt as f64/get("warp_period") as f64) as f32)*std::f32::consts::TAU);
     }
 }
 crate::register_effect!(LivingInk);
@@ -161,6 +194,27 @@ mod tests {
             }
             assert_eq!(actual,expected);
         }
+    }
+    #[test]
+    fn subpixel_ridge_shares_coverage_between_pixels() {
+        let (w,h)=(9,5);
+        let src: Vec<_>=(0..w*h).map(|i|if i%w>=4 {200.0} else {0.0}).collect();
+        let mut mag=vec![0.0;w*h]; let mut dir=vec![0;w*h]; let mut out=vec![0.0;w*h];
+        contours(&src,&mut mag,&mut dir,&mut out,w,h,10.0,0.0,true);
+        assert!((out[2*w+3]-0.5).abs()<0.0001);
+        assert!((out[2*w+4]-0.5).abs()<0.0001);
+        assert_eq!(out[2*w+6],0.0);
+    }
+    #[test]
+    fn disabled_trails_do_not_reappear_after_reenabling() {
+        let mut ink=LivingInk::default();
+        let mut p=default_params(&ink.params()); p.insert("trail_strength".into(),0.0);
+        let ctx=FrameCtx {frame_number:0,width:64,height:32,delta_seconds:1.0/30.0};
+        let mut f=boundary(24); ink.apply(&mut f,&p,&ctx);
+        f=boundary(40); ink.apply(&mut f,&p,&ctx);
+        p.insert("trail_strength".into(),0.22);
+        f=boundary(40); ink.apply(&mut f,&p,&ctx);
+        assert_eq!(f.data[(16*64+23)*3],24);
     }
     #[test]
     fn full_strokes_keep_flat_regions_empty_and_add_soft_shoulders() {
