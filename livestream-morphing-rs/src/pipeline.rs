@@ -231,14 +231,28 @@ pub struct AppState {
         Mutex<Option<(Arc<tokio::sync::Barrier>, Arc<tokio::sync::Barrier>)>>,
 }
 
+// A deployment setting keeps the selected artwork across restarts, while an
+// unset value retains the original line drawing for other environments.
+fn startup_pipeline(style: &str) -> Pipeline {
+    let mut p=Pipeline::new();
+    if style=="fine_knife" {
+        let slot=p.add_effect("ink_editions").expect("editions registered");
+        p.update_params(&slot,&ParamValues::from([
+            ("edition".into(),46.),("detail".into(),1.),("pigment".into(),1.)
+        ]));
+    } else {
+        let slot=p.add_effect("living_ink").expect("living ink registered");
+        let preset:ParamValues=serde_json::from_str(include_str!("living_ink_preset.json")).expect("valid built-in ink preset");
+        p.update_params(&slot,&preset);
+    }
+    p
+}
+
 impl AppState {
     pub fn new() -> (Arc<Self>, watch::Receiver<bool>) {
         let (tx, rx) = watch::channel(false);
 
-        let mut p = Pipeline::new();
-        let slot = p.add_effect("living_ink").expect("living ink registered");
-        let preset: ParamValues = serde_json::from_str(include_str!("living_ink_preset.json")).expect("valid built-in ink preset");
-        p.update_params(&slot, &preset);
+        let p = startup_pipeline(&std::env::var("LIVE_STYLE").unwrap_or_default());
 
         let state = Arc::new(Self {
             hls_buffer: RwLock::new(HlsBuffer::new(10)),
@@ -352,7 +366,7 @@ impl AppState {
 fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, i64, ProcessingStats), Box<dyn std::error::Error + Send + Sync>> {
     let start=std::time::Instant::now();
     let width=std::env::var("OUTPUT_WIDTH").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1920).clamp(320,1920);
-    let workers=std::env::var("RENDER_WORKERS").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(3).clamp(1,4);
+    let workers=std::env::var("RENDER_WORKERS").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(3).clamp(1,6);
     let previous_stats=state.stats.lock().unwrap().clone();
     let rendered={
         let mut pipeline=state.pipeline.lock().unwrap();
@@ -587,6 +601,15 @@ mod tests {
         let mut blank=crate::effects::RawFrame::filled(64,32,20,20,20);
         p.process_frame(&mut blank,2);
         assert!(blank.data.iter().all(|v|*v==24));
+    }
+
+    #[test]
+    fn fine_knife_startup_selects_the_approved_edition() {
+        let slots=startup_pipeline("fine_knife").view();
+        assert_eq!(slots.len(),1);
+        assert_eq!(slots[0].effect_id,"ink_editions");
+        assert_eq!(slots[0].params["edition"],46.);
+        assert_eq!(startup_pipeline("").view()[0].effect_id,"living_ink");
     }
 
     #[test]
