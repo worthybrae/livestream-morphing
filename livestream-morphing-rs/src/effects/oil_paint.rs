@@ -2,7 +2,7 @@
 //! fixed in image space; the signature animation is applied by Editions once.
 use super::{RawFrame, edition_forms::{knife_atmosphere, knife_day_tint,
     knife_highlight_table, knife_night_strength}};
-use wide::{f32x4 as F, CmpLt};
+use wide::{f32x8 as F, CmpLt};
 
 #[derive(Clone, Copy)]
 struct Site { x: usize, y: usize, seed: f32, variety: f32 }
@@ -193,7 +193,7 @@ impl Stroke {
             let end=right.ceil().min(maxx as f32) as usize;
             if start>end {continue;}
             let row=&mut frame.data[(y*w+start)*3..(y*w+end+1)*3];
-            for (batch,pixels) in row.chunks_mut(12).enumerate() {self.pixels(pixels,start+batch*4,y,inverse);}
+            for (batch,pixels) in row.chunks_mut(24).enumerate() {self.pixels(pixels,start+batch*8,y,inverse);}
         }
     }
     #[inline]
@@ -218,10 +218,10 @@ impl Stroke {
         let grain=(groove-0.5)*belly;
         let relief=if self.variant==2 {23.} else {16.};
         let light=shoulder*relief-valley*(relief*0.72)+grain*4.+(self.seed-0.5)*5.;
-        let mut colors=[[0.;4];3];
+        let mut colors=[[0.;8];3];
         for k in 0..3 {
-            let old=if pixels.len()==12 {
-                F::new([pixels[k] as f32,pixels[3+k] as f32,pixels[6+k] as f32,pixels[9+k] as f32])
+            let old=if pixels.len()==24 {
+                F::new([pixels[k] as f32,pixels[3+k] as f32,pixels[6+k] as f32,pixels[9+k] as f32,pixels[12+k] as f32,pixels[15+k] as f32,pixels[18+k] as f32,pixels[21+k] as f32])
             } else {F::new(std::array::from_fn(|n|pixels.get(n*3+k).copied().unwrap_or(0) as f32))};
             // Pigment-to-pigment mixing, with a little underpainting exposed at
             // the dry tip. No synthetic white outlines or dark polygon borders.
