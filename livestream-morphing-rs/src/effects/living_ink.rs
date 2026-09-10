@@ -110,10 +110,10 @@ impl Effect for LivingInk {
     ] }
     fn init(&mut self, w: u32, h: u32) {
         let n=(w*h) as usize;
-        self.luma=vec![0.0;n]; self.smooth=vec![0.0;n]; self.broad=vec![0.0;n];
+        self.luma=vec![0.0;n]; self.smooth=vec![0.0;n]; self.broad=Vec::new();
         self.scratch=vec![0.0;n]; self.magnitude=vec![0.0;n]; self.direction=vec![0;n];
-        self.fine_lines=vec![0.0;n]; self.broad_lines=vec![0.0;n];
-        self.previous=vec![0.0;n]; self.trail=vec![0.0;n]; self.has_previous=false;
+        self.fine_lines=vec![0.0;n]; self.broad_lines=Vec::new();
+        self.previous=Vec::new(); self.trail=Vec::new(); self.has_previous=false;
     }
     fn clear_history(&mut self) { self.has_previous=false; self.trail.fill(0.0); }
     fn apply(&mut self, frame: &mut RawFrame, params: &ParamValues, ctx: &FrameCtx) {
@@ -127,26 +127,37 @@ impl Effect for LivingInk {
             self.luma[i]=p[0] as f32*0.299+p[1] as f32*0.587+p[2] as f32*0.114;
         }
         blur(&self.luma,&mut self.scratch,&mut self.smooth,w,h,get("smoothing") as usize);
-        if get("broad_weight") > 0.0 {
+        let broad=get("broad_weight");
+        if broad > 0.0 {
+            self.broad.resize(w*h,0.0);
+            self.broad_lines.resize(w*h,0.0);
             blur(&self.smooth,&mut self.scratch,&mut self.broad,w,h,2);
             contours(&self.broad,&mut self.magnitude,&mut self.direction,&mut self.broad_lines,w,h,get("broad_threshold"),get("stroke_body"),get("subpixel")>0.5);
-        } else { self.broad_lines.fill(0.0); }
+        } else { self.broad=Vec::new(); self.broad_lines=Vec::new(); }
         contours(&self.smooth,&mut self.magnitude,&mut self.direction,&mut self.fine_lines,w,h,get("fine_threshold"),get("stroke_body"),get("subpixel")>0.5);
         let dt=if ctx.delta_seconds.is_finite() { ctx.delta_seconds.max(0.0) } else { 1.0/30.0 };
-        let decay=2.0_f32.powf(-dt/get("trail_half_life"));
-        let fine=get("fine_weight"); let broad=get("broad_weight");
+        let fine=get("fine_weight");
+        // Only combine scales when the optional broad pass is enabled.
+        if broad > 0.0 {
+            for (line,coarse) in self.fine_lines.iter_mut().zip(&self.broad_lines) {
+                *line=(fine * *line).max(broad*coarse);
+            }
+        }
+        let scale=if broad > 0.0 {1.0} else {fine};
         let strength=get("trail_strength"); let bg=get("charcoal"); let hi=get("highlight");
         if strength == 0.0 {
-            for ((pixel,fine_line),broad_line) in frame.data.chunks_exact_mut(3).zip(&self.fine_lines).zip(&self.broad_lines) {
-                let coverage=(fine*fine_line).max(broad*broad_line);
+            for (pixel,fine_line) in frame.data.chunks_exact_mut(3).zip(&self.fine_lines) {
+                let coverage=scale*fine_line;
                 pixel.fill((bg+(hi-bg)*coverage).round() as u8);
             }
             self.has_previous=false;
-            self.trail.fill(0.0);
+            self.previous=Vec::new(); self.trail=Vec::new();
         } else {
-        for ((((pixel,previous),trail),fine_line),broad_line) in frame.data.chunks_exact_mut(3)
-            .zip(&mut self.previous).zip(&mut self.trail).zip(&self.fine_lines).zip(&self.broad_lines) {
-            let line=(fine*fine_line).max(broad*broad_line);
+        self.previous.resize(w*h,0.0); self.trail.resize(w*h,0.0);
+        let decay=2.0_f32.powf(-dt/get("trail_half_life"));
+        for (((pixel,previous),trail),fine_line) in frame.data.chunks_exact_mut(3)
+            .zip(&mut self.previous).zip(&mut self.trail).zip(&self.fine_lines) {
+            let line=scale*fine_line;
             let departed=if self.has_previous { (*previous-line).max(0.0) } else { 0.0 };
             *trail=(*trail*decay).max(departed);
             let coverage=line.max(strength * *trail);
@@ -193,6 +204,23 @@ mod tests {
                 }
             }
             assert_eq!(actual,expected);
+        }
+    }
+    #[test]
+    fn optional_buffers_follow_enabled_features() {
+        let mut ink=LivingInk::default(); ink.init(64,32);
+        let mut params=default_params(&ink.params());
+        let ctx=FrameCtx {frame_number:0,width:64,height:32,delta_seconds:1.0/30.0};
+        for enabled in [false,true,false,true] {
+            params.insert("broad_weight".into(),if enabled {0.25} else {0.0});
+            params.insert("trail_strength".into(),if enabled {0.22} else {0.0});
+            let mut frame=boundary(24); ink.apply(&mut frame,&params,&ctx);
+            let expected=if enabled {64*32} else {0};
+            for buffer in [&ink.broad,&ink.broad_lines,&ink.previous,&ink.trail] {
+                assert_eq!(buffer.len(),expected);
+                if !enabled {assert_eq!(buffer.capacity(),0);}
+            }
+            assert!(frame.data.iter().any(|v|*v>100));
         }
     }
     #[test]
