@@ -42,3 +42,7 @@ Compare the moving films for material quality, texture shimmer, and compression 
 Edition 44 replaces the continuous diagonal texture with two coats of individually rasterized paint marks. Seeded positions and irregular footprints overlap; each mark has its own pigment load, internal ridges and lighting. Broad source gradients guide direction where present; quieter areas use varied seeded angles. Every deposit is clipped to its source paper layer. These are source-responsive procedural marks, not tracked physical strokes. All construction still precedes the exact final warp. No accumulated history.
 
 This is a material-quality experiment with additional rasterization cost; measure before considering live adoption.
+
+## Palette knife still studies
+
+Editions 45/46 construct the scene from three scales of overlapping opaque knife deposits. Tapered angular faces, clipped corners, pigment variation and raised lips replace the paper-mask-plus-texture model. Smaller strokes are reserved for areas with source contrast. Both use Rose garden-related pigments and the unchanged final psychedelic warp. 45 has broader marks; 46 is finer. Initial evaluation uses a single frame sampled three seconds into the same reference footage, not a new full video render.

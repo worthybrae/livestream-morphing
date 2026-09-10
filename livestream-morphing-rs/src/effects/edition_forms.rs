@@ -264,6 +264,7 @@ impl Forms {
                     }
                 }
             }
+            45 | 46 => palette_knife(frame, luma, edition),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -622,6 +623,96 @@ fn paper_cutouts(
         }
     }
 }
+// Opaque angular deposits construct the image, without paper-layer masks.
+fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
+    let w = frame.width as usize;
+    let h = frame.height as usize;
+    let scale = w as f32 / 1920.;
+    let palette = [
+        [23., 43., 44.],
+        [48., 91., 79.],
+        [113., 153., 116.],
+        [224., 155., 170.],
+        [247., 229., 194.],
+    ];
+    let color_at = |l: f32| {
+        let z = (l * 5.8).clamp(0., 4.);
+        let n = (z as usize).min(3);
+        blend(palette[n], palette[n + 1], z - n as f32)
+    };
+    for i in 0..w * h {
+        let c = color_at(luma[i]);
+        put(frame, i, blend(c, [73., 65., 77.], 0.25));
+    }
+    let sizes = if edition == 45 {
+        [48., 25., 12.]
+    } else {
+        [36., 18., 8.]
+    };
+    for (coat, size) in sizes.iter().enumerate() {
+        let step = (size * scale).max(2.) as usize;
+        for gy in (0..h).step_by(step) {
+            for gx in (0..w).step_by(step) {
+                let seed = hash(gx + coat * 791, gy + 29);
+                let cx = (gx as f32 + (seed - 0.5) * step as f32).clamp(0., (w - 1) as f32);
+                let cy =
+                    (gy as f32 + (hash(gx + 83, gy) - 0.5) * step as f32).clamp(0., (h - 1) as f32);
+                let x = cx as usize;
+                let y = cy as usize;
+                let i = y * w + x;
+                let d = step.max(2);
+                let dx = luma[y * w + (x + d).min(w - 1)] - luma[y * w + x.saturating_sub(d)];
+                let dy = luma[(y + d).min(h - 1) * w + x] - luma[y.saturating_sub(d) * w + x];
+                let gradient = dx.abs() + dy.abs();
+                if coat == 2 && gradient < 0.065 {
+                    continue;
+                }
+                let angle = if gradient > 0.03 {
+                    dy.atan2(dx) + 1.57 + (seed - 0.5) * 0.45
+                } else {
+                    (seed - 0.5) * 2.6
+                };
+                let (sn, cs) = angle.sin_cos();
+                let length = (size * scale).max(1.) * (0.8 + seed * 0.75);
+                let width = (size * scale).max(1.) * (0.35 + hash(gx, gy + 41) * 0.25);
+                let bx = cs.abs() * length + sn.abs() * width;
+                let by = sn.abs() * length + cs.abs() * width;
+                let c = color_at(luma[i]);
+                let tint = (seed - 0.5) * 16.;
+                for yy in (cy - by).max(0.) as usize..=(cy + by).min((h - 1) as f32) as usize {
+                    for xx in (cx - bx).max(0.) as usize..=(cx + bx).min((w - 1) as f32) as usize {
+                        let ox = xx as f32 - cx;
+                        let oy = yy as f32 - cy;
+                        let u = (ox * cs + oy * sn) / length;
+                        let v = (-ox * sn + oy * cs) / width;
+                        // Tapered knife face and clipped corners, not circular dabs.
+                        let side = v.abs() - (0.9 - 0.2 * u);
+                        let end = u.abs() + v.abs() * 0.18 - 1.;
+                        let distance = side.max(end);
+                        if distance >= 0. {
+                            continue;
+                        }
+                        let cover = (-distance * width).clamp(0., 1.);
+                        let scrape = paint_noise(u * 4. + seed * 19., v * 13. + coat as f32 * 37.);
+                        let ridge = if v > 0.58 {
+                            (v - 0.58) * 35.
+                        } else if v < -0.65 {
+                            -9.
+                        } else {
+                            0.
+                        };
+                        let light = tint + ridge + (scrape - 0.5) * 9.;
+                        let color = std::array::from_fn(|k| c[k] + light);
+                        let j = yy * w + xx;
+                        let old = std::array::from_fn(|k| frame.data[j * 3 + k] as f32);
+                        put(frame, j, blend(old, color, cover * 0.94));
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Two coats of separately deposited paint. Marks are clipped to the paper masks,
 // and their orientation follows coarse source gradients with a stable seed offset.
 fn painted_dabs(frame: &mut RawFrame, luma: &[f32], layers: &[f32]) {
