@@ -29,3 +29,9 @@ A smooth highlight shoulder compresses bright source colors before depositing pa
 The adjustment fades out between 4:30 and 8 AM and in between 6 and 9 PM using the same illustrative London clock convention. At midday it is byte-identical to edition 51. A 256-entry table is computed once per frame. No new blur or bloom pass is added. The lookup is used both for underpaint and stroke colors; knife texture and final psychedelic warp remain unchanged.
 
 The `knife-night.json` before/after pair uses 18 seconds of raw night footage captured from the existing stream; source provenance is saved alongside it. Both treatments use identical fixed clock/weather values. Validation: 127 Rust tests passed, including a monotonic highlight curve, unchanged shadows and daytime output, bounded night strength, and parallel rendering equivalence. Local previews only; production is unchanged.
+
+## Charcoal night / colorful day (edition 53)
+
+Uses the same smooth night strength as the soft-light treatment. Night reduces source saturation to 22% and exposure to 62%, while reducing the old blue/violet clock tint to a trace. Day uses 140% source saturation and 104% exposure, retaining restrained clock/weather color. Night highlight compression remains enabled. The paint texture is laid over these graded pigments, so it stays visible in the darker image. This changes saturation and brightness rather than inverting RGB values.
+
+`knife-atmosphere.json` supplies actual night footage, actual day footage, and an explicitly illustrative 24-hour cycle on one daytime clip. New edition only; previous studies and production are unchanged.

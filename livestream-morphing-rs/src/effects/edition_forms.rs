@@ -272,6 +272,7 @@ impl Forms {
             50 => palette_knife::<2>(frame, luma, edition, environment),
             51 => palette_knife::<3>(frame, luma, edition, environment),
             52 => palette_knife::<4>(frame, luma, edition, environment),
+            53 => palette_knife::<5>(frame, luma, edition, environment),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -676,6 +677,14 @@ fn knife_highlight_table(night: f32) -> [(f32, f32); 256] {
     })
 }
 
+// Source-based saturation/exposure, before paint relief. Keep a trace of
+// source hue at night rather than recoloring the whole street purple.
+fn knife_atmosphere(rgb: [f32; 3], grade: [f32; 3], gain: f32, tint: f32, weather: [f32; 3]) -> [f32; 3] {
+    let gray = rgb[0]*0.299 + rgb[1]*0.587 + rgb[2]*0.114;
+    std::array::from_fn(|k| (gray + (rgb[k]-gray)*grade[0]) * gain * grade[1]
+        + weather[k]*tint*grade[2])
+}
+
 // MODE 0 retains the reference pixels. New studies share its optimized geometry.
 fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u32, environment: [f32; 3]) {
     let w = frame.width as usize;
@@ -697,23 +706,31 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
     // A few RGB levels of warmth/coolness, never a replacement palette.
     let warmth = (1. - environment[1]) * 3. - environment[2] * 2.;
     let weather = if MODE >= 3 { knife_day_tint(environment) } else { [warmth, warmth * 0.15, -warmth] };
-    let highlights = if MODE == 4 { knife_highlight_table(knife_night_strength(environment[0])) } else { [(1., 1.); 256] };
+    let highlights = if MODE >= 4 { knife_highlight_table(knife_night_strength(environment[0])) } else { [(1., 1.); 256] };
+    let night = knife_night_strength(environment[0]);
+    let grade = [1.4 - night*1.18, 1.04 - night*0.42, 0.75 - night*0.68];
     let source_color = |x: usize, y: usize, radius: usize| {
         let points = [(x,y), (x.saturating_sub(radius),y), ((x+radius).min(w-1),y),
                       (x,y.saturating_sub(radius)), (x,(y+radius).min(h-1))];
         let rgb: [f32; 3] = std::array::from_fn(|k| points.iter().map(|&(xx,yy)| source[(yy*w+xx)*3+k] as f32).sum::<f32>() * 0.2);
-        let (gain, tint) = if MODE == 4 { highlights[rgb[0].max(rgb[1]).max(rgb[2]) as usize] } else { (1., 1.) };
-        std::array::from_fn(|k| rgb[k] * gain + weather[k] * tint)
+        let (gain, tint) = if MODE >= 4 { highlights[rgb[0].max(rgb[1]).max(rgb[2]) as usize] } else { (1., 1.) };
+        if MODE == 5 { knife_atmosphere(rgb, grade, gain, tint, weather) }
+        else { std::array::from_fn(|k| rgb[k] * gain + weather[k] * tint) }
     };
     for i in 0..w * h {
         if MODE == 0 {
             let c = color_at(luma[i]);
             put(frame, i, blend(c, [73., 65., 77.], 0.25));
         } else {
-            let (gain, tint) = if MODE == 4 {
+            let (gain, tint) = if MODE >= 4 {
                 highlights[*source[i*3..i*3+3].iter().max().unwrap() as usize]
             } else { (1., 1.) };
-            put(frame, i, std::array::from_fn(|k| source[i*3+k] as f32 * gain * 0.92 + weather[k] * tint));
+            if MODE == 5 {
+                let c = knife_atmosphere(std::array::from_fn(|k| source[i*3+k] as f32), grade, gain, tint, weather);
+                put(frame, i, c.map(|v| v*0.92));
+            } else {
+                put(frame, i, std::array::from_fn(|k| source[i*3+k] as f32 * gain * 0.92 + weather[k] * tint));
+            }
         }
     }
     let sizes = if edition == 45 {
@@ -1204,6 +1221,21 @@ mod sampling_tests {
 #[cfg(test)]
 mod knife_batch_tests {
     use super::*;
+    #[test]
+    fn atmosphere_is_darker_and_grayer_at_night_and_richer_by_day() {
+        let range = |c: [f32; 3]| c.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+            - c.iter().copied().fold(f32::INFINITY, f32::min);
+        for rgb in [[160.,80.,60.], [70.,150.,85.], [75.,90.,160.]] {
+            let day = knife_atmosphere(rgb, [1.4,1.04,0.75],1.,1.,[0.;3]);
+            let night = knife_atmosphere(rgb, [0.22,0.62,0.07],1.,1.,[0.;3]);
+            assert!(range(day) > range(rgb));
+            assert!(range(night) < range(rgb)*0.2);
+            let luminance = |c: [f32; 3]| c[0]*0.299 + c[1]*0.587 + c[2]*0.114;
+            assert!(luminance(night) < luminance(day)*0.7);
+        }
+        let gray = knife_atmosphere([100.;3], [0.22,0.62,0.07],1.,1.,[0.;3]);
+        assert!(range(gray) < 0.001);
+    }
     #[test]
     fn night_highlights_are_monotonic_and_leave_day_and_shadows_alone() {
         let day = knife_highlight_table(knife_night_strength(12.));

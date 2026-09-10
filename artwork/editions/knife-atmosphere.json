@@ -1,0 +1,38 @@
+[
+  {
+    "id": 53,
+    "slug": "charcoal-night",
+    "name": "Oil / Charcoal night",
+    "description": "Actual night footage with darker, nearly gray pigment and softened lamps. Oil relief and the signature psychedelic movement remain. Fixed weather for comparison.",
+    "params": {
+      "hour": 22,
+      "cloud": 0.3,
+      "rain": 0,
+      "day_cycle": 0
+    }
+  },
+  {
+    "id": 53,
+    "slug": "colorful-day",
+    "name": "Oil / Colorful day",
+    "description": "Daytime footage with richer source colors and gentle warmth. Oil relief and the signature psychedelic movement remain. Fixed weather for comparison.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0,
+      "day_cycle": 0
+    }
+  },
+  {
+    "id": 53,
+    "slug": "day-night-cycle",
+    "name": "Oil / From charcoal to color",
+    "description": "Illustration: 24 hours in 24 seconds on the same daytime footage. Watch dark, muted night give way to richer daylight. Oil relief and the signature psychedelic movement remain. Fixed weather for comparison.",
+    "params": {
+      "hour": 0,
+      "cloud": 0.3,
+      "rain": 0,
+      "day_cycle": 1
+    }
+  }
+]
