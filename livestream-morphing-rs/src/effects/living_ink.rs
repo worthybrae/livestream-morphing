@@ -20,11 +20,20 @@ fn blur(src: &[f32], tmp: &mut [f32], dst: &mut [f32], w: usize, h: usize, r: us
             sum += src[y*w+(x+r+1).min(w-1)] - src[y*w+x.saturating_sub(r)];
         }
     }
-    for x in 0..w {
-        let mut sum = (0..=2*r).map(|k| tmp[k.saturating_sub(r).min(h-1)*w+x]).sum::<f32>();
-        for y in 0..h {
-            dst[y*w+x] = sum/n;
-            sum += tmp[(y+r+1).min(h-1)*w+x] - tmp[y.saturating_sub(r)*w+x];
+    // Walk contiguous rows so each cache line is used before advancing.
+    // Summation order for each pixel is identical to the column-wise pass.
+    let mut sums = vec![0.0; w];
+    for k in 0..=2*r {
+        let row=&tmp[k.saturating_sub(r).min(h-1)*w..][..w];
+        for (sum,value) in sums.iter_mut().zip(row) { *sum += value; }
+    }
+    for y in 0..h {
+        let above=&tmp[y.saturating_sub(r)*w..][..w];
+        let below=&tmp[(y+r+1).min(h-1)*w..][..w];
+        let out=&mut dst[y*w..][..w];
+        for (((value,sum),a),b) in out.iter_mut().zip(&mut sums).zip(above).zip(below) {
+            *value=*sum/n;
+            *sum += b-a;
         }
     }
 }
@@ -92,15 +101,14 @@ impl Effect for LivingInk {
         let decay=2.0_f32.powf(-dt/get("trail_half_life"));
         let fine=get("fine_weight"); let broad=get("broad_weight");
         let strength=get("trail_strength"); let bg=get("charcoal"); let hi=get("highlight");
-        for i in 0..w*h {
-            let line=(fine*self.fine_lines[i]).max(broad*self.broad_lines[i]);
-            // Only departed contours deposit pigment; stable scenery never builds up.
-            let departed=if self.has_previous { (self.previous[i]-line).max(0.0) } else { 0.0 };
-            self.trail[i]=(self.trail[i]*decay).max(departed);
-            let coverage=line.max(strength*self.trail[i]);
-            let value=(bg+(hi-bg)*coverage).round() as u8;
-            frame.data[i*3..i*3+3].fill(value);
-            self.previous[i]=line;
+        for ((((pixel,previous),trail),fine_line),broad_line) in frame.data.chunks_exact_mut(3)
+            .zip(&mut self.previous).zip(&mut self.trail).zip(&self.fine_lines).zip(&self.broad_lines) {
+            let line=(fine*fine_line).max(broad*broad_line);
+            let departed=if self.has_previous { (*previous-line).max(0.0) } else { 0.0 };
+            *trail=(*trail*decay).max(departed);
+            let coverage=line.max(strength * *trail);
+            pixel.fill((bg+(hi-bg)*coverage).round() as u8);
+            *previous=line;
         }
         self.has_previous=true;
     }
@@ -124,6 +132,23 @@ mod tests {
         ink.apply(f, &default_params(&ink.params()), &FrameCtx {
             frame_number: 0, width: f.width, height: f.height, delta_seconds: dt,
         });
+    }
+    #[test]
+    fn cache_friendly_blur_matches_column_reference() {
+        for (w,h,r) in [(2,2,3),(7,9,1),(64,32,2)] {
+            let src: Vec<f32> = (0..w*h).map(|i| ((i*71)%256) as f32).collect();
+            let mut tmp=vec![0.0;w*h]; let mut actual=vec![0.0;w*h];
+            blur(&src,&mut tmp,&mut actual,w,h,r);
+            let mut expected=vec![0.0;w*h]; let n=(2*r+1) as f32;
+            for x in 0..w {
+                let mut sum=(0..=2*r).map(|k|tmp[k.saturating_sub(r).min(h-1)*w+x]).sum::<f32>();
+                for y in 0..h {
+                    expected[y*w+x]=sum/n;
+                    sum += tmp[(y+r+1).min(h-1)*w+x]-tmp[y.saturating_sub(r)*w+x];
+                }
+            }
+            assert_eq!(actual,expected);
+        }
     }
     #[test]
     fn living_ink_uniform_input_is_charcoal() {
