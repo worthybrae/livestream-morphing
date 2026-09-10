@@ -1,0 +1,38 @@
+[
+  {
+    "id": 46,
+    "slug": "knife-reference",
+    "name": "Fine knife / Rose garden",
+    "description": "The current live treatment, for comparison."
+  },
+  {
+    "id": 49,
+    "slug": "knife-street-colors",
+    "name": "Fine knife / Street colors",
+    "description": "Colors sampled from the camera, with the original knife texture. Neutral weather for this recorded comparison.",
+    "params": {
+      "cloud": 1,
+      "rain": 0
+    }
+  },
+  {
+    "id": 50,
+    "slug": "knife-oil-relief",
+    "name": "Fine knife / Oil relief",
+    "description": "Source colors with raised blade shoulders, scraped pigment channels and deeper paint creases. Neutral weather for this recorded comparison.",
+    "params": {
+      "cloud": 1,
+      "rain": 0
+    }
+  },
+  {
+    "id": 50,
+    "slug": "knife-rain-light",
+    "name": "Fine knife / Rain light",
+    "description": "The same oil relief under an illustrative overcast, rainy tint. A subtle color shift, not live weather.",
+    "params": {
+      "cloud": 1,
+      "rain": 1
+    }
+  }
+]

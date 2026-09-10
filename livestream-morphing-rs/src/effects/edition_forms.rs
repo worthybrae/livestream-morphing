@@ -267,7 +267,9 @@ impl Forms {
                 }
             }
             47 | 48 => self.knife.draw(frame, luma, seconds, edition == 48),
-            45 | 46 => palette_knife(frame, luma, edition),
+            45 | 46 => palette_knife::<0>(frame, luma, edition, environment),
+            49 => palette_knife::<1>(frame, luma, edition, environment),
+            50 => palette_knife::<2>(frame, luma, edition, environment),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -628,7 +630,8 @@ fn paper_cutouts(
     }
 }
 // Opaque angular deposits construct the image, without paper-layer masks.
-fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
+// MODE 0 retains the reference pixels. New studies share its optimized geometry.
+fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u32, environment: [f32; 3]) {
     let w = frame.width as usize;
     let h = frame.height as usize;
     let scale = w as f32 / 1920.;
@@ -644,9 +647,22 @@ fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
         let n = (z as usize).min(3);
         blend(palette[n], palette[n + 1], z - n as f32)
     };
+    let source = if MODE > 0 { frame.data.clone() } else { Vec::new() };
+    // A few RGB levels of warmth/coolness, never a replacement palette.
+    let warmth = (1. - environment[1]) * 3. - environment[2] * 2.;
+    let weather = [warmth, warmth * 0.15, -warmth];
+    let source_color = |x: usize, y: usize, radius: usize| {
+        let points = [(x,y), (x.saturating_sub(radius),y), ((x+radius).min(w-1),y),
+                      (x,y.saturating_sub(radius)), (x,(y+radius).min(h-1))];
+        std::array::from_fn(|k| points.iter().map(|&(xx,yy)| source[(yy*w+xx)*3+k] as f32).sum::<f32>() * 0.2 + weather[k])
+    };
     for i in 0..w * h {
-        let c = color_at(luma[i]);
-        put(frame, i, blend(c, [73., 65., 77.], 0.25));
+        if MODE == 0 {
+            let c = color_at(luma[i]);
+            put(frame, i, blend(c, [73., 65., 77.], 0.25));
+        } else {
+            put(frame, i, std::array::from_fn(|k| source[i*3+k] as f32 * 0.92 + weather[k]));
+        }
     }
     let sizes = if edition == 45 {
         [48., 25., 12.]
@@ -681,7 +697,7 @@ fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
                 let width = (size * scale).max(1.) * (0.35 + hash(gx, gy + 41) * 0.25);
                 let bx = cs.abs() * length + sn.abs() * width;
                 let by = sn.abs() * length + cs.abs() * width;
-                let c = color_at(luma[i]);
+                let c = if MODE == 0 { color_at(luma[i]) } else { source_color(x, y, (step / 4).max(1)) };
                 let tint = (seed - 0.5) * 16.;
                 // Clip scanlines to the convex knife face, retaining a two-pixel
                 // guard for floating-point boundary rounding. Pixel math is unchanged.
@@ -721,7 +737,7 @@ fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
                     }
                     let row = &mut frame.data[(yy * w + start) * 3..(yy * w + end + 1) * 3];
                     for (batch, pixels) in row.chunks_mut(12).enumerate() {
-                        knife_pixels(
+                        knife_pixels::<MODE>(
                             pixels,
                             start + batch * 4,
                             yy,
@@ -746,7 +762,7 @@ fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
 // Explicit four-lane SIMD keeps pigment hashing, lighting, and coverage packed
 // on both ARM and x86. Pigment normalization preserves division results exactly.
 #[inline]
-fn knife_pixels(
+fn knife_pixels<const MODE: u8>(
     pixels: &mut [u8],
     x: usize,
     y: usize,
@@ -778,7 +794,21 @@ fn knife_pixels(
         (v - 0.58) * 35.,
         v.cmp_lt(F::splat(-0.65)).blend(F::splat(-9.), F::ZERO),
     );
-    let light = F::splat(tint) + ridge + (scrape - 0.5) * 9.;
+    let light = if MODE < 2 {
+        F::splat(tint) + ridge + (scrape - 0.5) * 9.
+    } else {
+        // Blade-local channels give thick paint a directional surface. Reuse
+        // existing pigment noise; no extra noise field or full-frame lighting pass.
+        let phase = v * 5.5 + scrape * 0.7 + seed * 7.;
+        let fraction = phase - phase.floor();
+        let groove = (fraction - 0.5).abs() * 4. - 1.;
+        let shoulder = (F::ONE - (v - 0.55).abs() * 6.).max(F::ZERO);
+        let valley = (F::ONE - (v + 0.62).abs() * 8.).max(F::ZERO);
+        let body = (F::ONE - u.abs()).max(F::ZERO);
+        let lighting = 0.65 + (cs * 0.7 - sn * 0.7).abs() * 0.35;
+        F::splat(tint * 0.6) + shoulder * (26. * lighting) - valley * 17.
+            + groove * body * 9. + (scrape - 0.5) * 15.
+    };
     let mut colors = [[0.; 4]; 3];
     for channel in 0..3 {
         let old = F::new(std::array::from_fn(|k| {
@@ -1123,6 +1153,24 @@ mod sampling_tests {
 mod knife_batch_tests {
     use super::*;
     #[test]
+    fn source_pigments_survive_reconstruction_and_weather_is_restrained() {
+        // Identical geometry/luminance isolates RGB retention from edge detection.
+        let luma = vec![0.4; 96 * 54];
+        for rgb in [[170, 65, 40], [40, 150, 65], [40, 65, 170]] {
+            let make = || RawFrame::filled(96, 54, rgb[0], rgb[1], rgb[2]);
+            let mut neutral = make();
+            let mut rainy = make();
+            palette_knife::<2>(&mut neutral, &luma, 50, [14., 1., 0.]);
+            palette_knife::<2>(&mut rainy, &luma, 50, [14., 1., 1.]);
+            let dominant = rgb.iter().enumerate().max_by_key(|(_,v)| *v).unwrap().0;
+            for p in neutral.data.chunks_exact(3) {
+                assert!((0..3).all(|k| k == dominant || p[dominant] > p[k]));
+            }
+            assert_ne!(neutral.data, rainy.data);
+            assert!(neutral.data.iter().zip(&rainy.data).all(|(a,b)| a.abs_diff(*b) <= 4));
+        }
+    }
+    #[test]
     fn pigment_normalization_is_exact_for_the_entire_hash_domain() {
         for start in (0u32..65536).step_by(4) {
             let values = std::array::from_fn(|k| start + k as u32);
@@ -1157,7 +1205,7 @@ mod knife_batch_tests {
                             .map(|k| ((k * 71 + trial * 13) % 256) as u8)
                             .collect();
                         let mut expected = actual.clone();
-                        knife_pixels(
+                        knife_pixels::<0>(
                             &mut actual,
                             x,
                             y,
