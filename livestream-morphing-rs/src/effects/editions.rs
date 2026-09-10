@@ -36,6 +36,79 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     t * t * (3. - 2. * t)
 }
 
+// Five pigments calculated once per frame, never a hue transform over every pixel.
+fn mineral_palette(
+    hour: f32,
+    cloud: f32,
+    rain: f32,
+    seconds: f32,
+    motion: f32,
+    atmosphere: bool,
+) -> [[f32; 3]; 5] {
+    let stone = [
+        [20., 35., 46.],
+        [47., 83., 93.],
+        [132., 145., 129.],
+        [203., 191., 151.],
+        [237., 225., 194.],
+    ];
+    let clay = [
+        [34., 26., 42.],
+        [84., 62., 87.],
+        [157., 118., 124.],
+        [221., 178., 134.],
+        [245., 224., 190.],
+    ];
+    let moss = [
+        [14., 37., 36.],
+        [41., 80., 64.],
+        [119., 145., 97.],
+        [206., 200., 145.],
+        [234., 231., 197.],
+    ];
+    let sets = [stone, clay, moss];
+    let phase = repeat(seconds / 48., 1.) * 3.;
+    let index = phase.floor() as usize;
+    let weight = smoothstep(0., 1., phase.fract());
+    let mut palette = stone;
+    for k in 0..5 {
+        palette[k] = mix(
+            stone[k],
+            mix(sets[index][k], sets[(index + 1) % 3][k], weight),
+            motion,
+        );
+    }
+    if atmosphere {
+        let daylight = smoothstep(5., 9., hour) * (1. - smoothstep(17., 21., hour));
+        let twilight = (1. - (daylight * 2. - 1.).abs()) * (1. - cloud);
+        let night = [
+            [8., 14., 30.],
+            [26., 41., 65.],
+            [65., 91., 112.],
+            [133., 157., 173.],
+            [194., 215., 224.],
+        ];
+        let rain_palette = [
+            [14., 27., 38.],
+            [40., 64., 82.],
+            [100., 128., 145.],
+            [175., 194., 198.],
+            [221., 235., 230.],
+        ];
+        for k in 0..5 {
+            let day = mix(palette[k], clay[k], twilight * 0.70);
+            let c = mix(night[k], day, daylight);
+            let muted = (c[0] + c[1] + c[2]) / 3.;
+            palette[k] = mix(
+                mix(c, [muted * 0.94, muted, muted * 1.04], cloud * 0.55),
+                rain_palette[k],
+                rain * 0.55,
+            );
+        }
+    }
+    palette
+}
+
 impl Effect for Editions {
     fn id(&self) -> &'static str {
         "ink_editions"
@@ -45,7 +118,13 @@ impl Effect for Editions {
     }
     fn params(&self) -> Vec<ParamDef> {
         vec![
-            ParamDef::new("edition", "Edition", 0., 16., 0., 1.),
+            ParamDef::new("edition", "Edition", 0., 21., 0., 1.),
+            ParamDef::new("hour", "London hour", 0., 24., 14., 0.25),
+            ParamDef::new("cloud", "Cloud cover", 0., 1., 0.3, 0.05),
+            ParamDef::new("rain", "Wet atmosphere", 0., 1., 0., 0.05),
+            ParamDef::new("color_motion", "Palette breathing", 0., 1., 1., 0.05),
+            ParamDef::new("material_motion", "Thread movement", 0., 2., 1., 0.1),
+            ParamDef::new("day_cycle", "Simulate day in 24 seconds", 0., 1., 0., 1.),
             ParamDef::new("detail", "Detail", 0.5, 2., 1., 0.05),
             ParamDef::new("pigment", "Pigment", 0.5, 1.5, 1., 0.05),
         ]
@@ -73,7 +152,7 @@ impl Effect for Editions {
                 .filter(|x| x.is_finite())
                 .unwrap_or(default)
         };
-        let edition = get("edition", 0.).round().clamp(0., 16.) as u32;
+        let edition = get("edition", 0.).round().clamp(0., 21.) as u32;
         let detail = get("detail", 1.).clamp(0.5, 2.);
         let pigment = get("pigment", 1.).clamp(0.5, 1.5);
         for (i, p) in frame.data.chunks_exact(3).enumerate() {
@@ -86,14 +165,24 @@ impl Effect for Editions {
             &mut self.smooth,
             w,
             h,
-            if edition == 5 { 6 } else { 2 },
+            if edition == 5 || edition == 20 {
+                6
+            } else if edition >= 17 {
+                3
+            } else {
+                2
+            },
         );
         let mut ink_params: ParamValues =
             serde_json::from_str(include_str!("../living_ink_preset.json")).unwrap();
+        ink_params.insert("trail_strength".into(), 0.);
         ink_params.insert("warp_amplitude".into(), 0.); // apply signature once, after the material
         ink_params.insert("charcoal".into(), 0.);
         ink_params.insert("highlight".into(), 255.);
-        ink_params.insert("fine_threshold".into(), 16. / detail);
+        ink_params.insert(
+            "fine_threshold".into(),
+            (if edition == 20 { 25. } else { 16. }) / detail,
+        );
         ink_params.insert(
             "fine_weight".into(),
             if edition == 3 || edition == 7 {
@@ -109,6 +198,23 @@ impl Effect for Editions {
         if edition == 8 {
             super::living_ink::blur(&self.luma, &mut self.scratch, &mut self.glow, w, h, 3);
         }
+        let seconds = ctx.frame_number as f64 * ctx.delta_seconds.max(0.) as f64;
+        let palette = mineral_palette(
+            if get("day_cycle", 0.) >= 0.5 {
+                repeat(seconds as f32, 24.)
+            } else {
+                get("hour", 14.).clamp(0., 24.)
+            },
+            get("cloud", 0.3).clamp(0., 1.),
+            get("rain", 0.).clamp(0., 1.),
+            seconds as f32,
+            get("color_motion", 1.).clamp(0., 1.),
+            edition == 18,
+        );
+        let thread_travel = seconds as f32 * 2.4 * get("material_motion", 1.).clamp(0., 2.);
+        let breathing = (seconds as f32 * std::f32::consts::TAU / 16.).sin();
+        let w = frame.width as usize;
+        let h = frame.height as usize;
         let scale = w as f32 / 1920.;
         for y in 0..h {
             for x in 0..w {
@@ -280,6 +386,58 @@ impl Effect for Editions {
                             (thread * (0.20 + l * 0.50) + weave * 0.11 + line * 0.72) * pigment,
                         )
                     }
+                    17 | 18 => {
+                        let tone = smoothstep(0.03, 0.65, l);
+                        let base = if tone < 0.22 {
+                            palette[0]
+                        } else if tone < 0.48 {
+                            palette[1]
+                        } else if tone < 0.73 {
+                            palette[2]
+                        } else {
+                            palette[3]
+                        };
+                        mix(base, palette[4], line * 0.70 * pigment)
+                    }
+                    // A traveling loom: material phase changes, final signature geometry does not.
+                    19 => {
+                        let elevation = l * (32. + breathing * 3.);
+                        let distance = (repeat(sy + elevation - thread_travel, 11.) - 5.5).abs();
+                        let thread = 1. - smoothstep(0.55, 1.5, distance);
+                        mix(
+                            [10., 17., 22.],
+                            [201., 216., 207.],
+                            (thread * (0.24 + l * 0.65) + line * 0.30) * pigment,
+                        )
+                    }
+                    // Broad reflection bands over smoothed normals; no dense topographic contours.
+                    20 => {
+                        let reflection = (l * 0.75 + dx * 18. - dy * 12. + 0.15).clamp(0., 1.);
+                        let silver = smoothstep(0.22, 0.43, reflection)
+                            * (1. - smoothstep(0.48, 0.66, reflection));
+                        let glint = smoothstep(0.69, 0.78, reflection);
+                        let base =
+                            mix([9., 17., 23.], [123., 151., 159.], l * 0.22 + silver * 0.65);
+                        mix(
+                            base,
+                            [234., 239., 229.],
+                            (glint * 0.78 + line * 0.40) * pigment,
+                        )
+                    }
+                    // Larger antialiased dots: squared-distance screen avoids per-pixel square roots.
+                    21 => {
+                        let cx = repeat(sx + sy * 0.20, 12.) - 6.;
+                        let cy = repeat(sy, 12.) - 6.;
+                        let radius = 4.4 * smoothstep(0.18, 0.94, darkness);
+                        let inner = (radius - 0.65).max(0.);
+                        let outer = radius + 0.65;
+                        let dots = 1. - smoothstep(inner * inner, outer * outer, cx * cx + cy * cy);
+                        mix(
+                            [231., 222., 201.],
+                            [32., 46., 53.],
+                            (dots * 0.70 + line * 0.60) * pigment,
+                        )
+                    }
                     // Mineral blocks: a small fixed palette turns broad light into cut paper.
                     _ => {
                         let tone = smoothstep(0.03, 0.65, l);
@@ -300,7 +458,6 @@ impl Effect for Editions {
                 }
             }
         }
-        let seconds = ctx.frame_number as f64 * ctx.delta_seconds.max(0.) as f64;
         self.warp.apply_rgb_at_phase(
             frame,
             0.012,
@@ -335,6 +492,33 @@ mod tests {
         }
     }
     #[test]
+    fn pigments_cycle_continuously_and_environment_changes_the_same_material() {
+        let a = mineral_palette(14., 0.3, 0., 0., 1., false);
+        assert_eq!(a, mineral_palette(14., 0.3, 0., 48., 1., false));
+        assert_ne!(a, mineral_palette(14., 0.3, 0., 16., 1., false));
+        assert_eq!(
+            mineral_palette(14., 0., 0., 0., 0., false),
+            mineral_palette(14., 0., 0., 22., 0., false)
+        );
+        let noon = mineral_palette(14., 0., 0., 0., 0., true);
+        let night = mineral_palette(0., 0., 0., 0., 0., true);
+        assert_ne!(noon, night);
+        assert_eq!(night, mineral_palette(24., 0., 0., 0., 0., true));
+        assert_ne!(noon, mineral_palette(14., 1., 1., 0., 0., true));
+        for hour in [0., 7., 14., 19., 24.] {
+            for cloud in [0., 1.] {
+                for rain in [0., 1.] {
+                    for color in mineral_palette(hour, cloud, rain, 13., 1., true) {
+                        for value in color {
+                            assert!(value.is_finite() && (0.0..=255.0).contains(&value));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn rgb_signature_matches_existing_monochrome_geometry_byte_for_byte() {
         let mut original = image();
         for p in original.data.chunks_exact_mut(3) {
@@ -352,7 +536,7 @@ mod tests {
     #[test]
     fn every_material_is_distinct_deterministic_and_keeps_moving() {
         let mut results = std::collections::HashSet::new();
-        for edition in 0..=16 {
+        for edition in 0..=21 {
             let params = ParamValues::from([("edition".into(), edition as f32)]);
             let mut a = image();
             let mut b = image();

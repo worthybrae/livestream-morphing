@@ -1,0 +1,131 @@
+[
+  {
+    "id": 16,
+    "slug": "mineral-original",
+    "name": "Mineral / original",
+    "description": "The original slate, lichen, and paper palette, for comparison.",
+    "params": {},
+    "frames": 1438
+  },
+  {
+    "id": 17,
+    "slug": "mineral-breathing",
+    "name": "Mineral / breathing pigments",
+    "description": "Stone moves slowly through clay and moss. A 48-second palette cycle; the signature wave stays unchanged.",
+    "params": {},
+    "frames": 1438
+  },
+  {
+    "id": 18,
+    "slug": "mineral-dawn",
+    "name": "Mineral / dawn",
+    "description": "Simulated 7 am: warm edges emerging from cool shadows.",
+    "params": {
+      "hour": 7,
+      "cloud": 0.15,
+      "color_motion": 0.25
+    }
+  },
+  {
+    "id": 18,
+    "slug": "mineral-overcast",
+    "name": "Mineral / overcast",
+    "description": "Simulated 1 pm under full cloud: muted pigments and cooler paper.",
+    "params": {
+      "hour": 13,
+      "cloud": 1,
+      "color_motion": 0.25
+    }
+  },
+  {
+    "id": 18,
+    "slug": "mineral-rain",
+    "name": "Mineral / rain",
+    "description": "Simulated rainy afternoon: slate, wet blue, and pale reflected light.",
+    "params": {
+      "hour": 13,
+      "cloud": 0.85,
+      "rain": 1,
+      "color_motion": 0.2
+    }
+  },
+  {
+    "id": 18,
+    "slug": "mineral-night",
+    "name": "Mineral / night",
+    "description": "Simulated 11 pm: indigo, steel, and soft luminous highlights.",
+    "params": {
+      "hour": 23,
+      "cloud": 0.3,
+      "rain": 0.1,
+      "color_motion": 0.35
+    }
+  },
+  {
+    "id": 18,
+    "slug": "mineral-day-cycle",
+    "name": "Mineral / a day in 24 seconds",
+    "description": "Accelerated time-of-day study, not actual conditions: midnight through dawn, afternoon, and dusk.",
+    "params": {
+      "day_cycle": 1,
+      "color_motion": 0.15
+    }
+  },
+  {
+    "id": 15,
+    "slug": "woven-original",
+    "name": "Woven / original",
+    "description": "The original fixed loom, for comparison.",
+    "params": {}
+  },
+  {
+    "id": 19,
+    "slug": "woven-travel",
+    "name": "Woven / traveling threads",
+    "description": "Threads move through the landscape while the relief rises and falls. No accumulated trails.",
+    "params": {}
+  },
+  {
+    "id": 5,
+    "slug": "isobars-original",
+    "name": "Isobars / original",
+    "description": "The original dense brightness contours, for comparison.",
+    "params": {}
+  },
+  {
+    "id": 20,
+    "slug": "chrome",
+    "name": "Glass / cold chrome",
+    "description": "Smoothed reflection bands and quiet silver highlights replace the crowded contours.",
+    "params": {}
+  },
+  {
+    "id": 13,
+    "slug": "halftone-original",
+    "name": "Halftone / original",
+    "description": "The original fine engraved screen, for comparison.",
+    "params": {}
+  },
+  {
+    "id": 21,
+    "slug": "halftone-coarse",
+    "name": "Halftone / open screen",
+    "description": "Larger, softer dots with cleaner contour strokes and less fine texture to encode.",
+    "params": {}
+  },
+  {
+    "id": 18,
+    "slug": "mineral-weather-now",
+    "name": "Mineral / today\u2019s palette",
+    "description": "London time and a MET Norway forecast sampled on 10 September 2026, applied to recorded footage. This is not historical weather for the recording.",
+    "params": {
+      "edition": 18,
+      "detail": 1,
+      "pigment": 1,
+      "hour": 14.883333333333333,
+      "cloud": 1,
+      "rain": 0,
+      "color_motion": 0.25
+    }
+  }
+]

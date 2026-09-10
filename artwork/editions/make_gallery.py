@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import json,pathlib,argparse,html,subprocess
-p=argparse.ArgumentParser();p.add_argument('output');a=p.parse_args();root=pathlib.Path(a.output).resolve()
-items=json.loads((pathlib.Path(__file__).parent/'catalog.json').read_text())
+p=argparse.ArgumentParser();p.add_argument('output');p.add_argument('--catalog',default=str(pathlib.Path(__file__).parent/'catalog.json'));a=p.parse_args();root=pathlib.Path(a.output).resolve()
+items=json.loads(pathlib.Path(a.catalog).read_text())
 items=[i for i in items if all((root/folder/f'{i["slug"]}.{extension}').exists() for folder,extension in [('videos','mp4'),('stills','png'),('metrics','json')])]
 for i in items:
  metrics=root/'metrics'/f'{i["slug"]}.json'

@@ -118,10 +118,12 @@ mod tests {
             frames.push(frame);
         }
         let input=codec::encode_segment(&frames,30,0).unwrap();
-        let configured=|| {let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();p.update_params(&id,&crate::registry::ParamValues::from([("edition".into(),15.)]));p};
-        let serial=render(&input,64,1,0,700,&mut configured(),1).unwrap();
-        let parallel=render(&input,64,1,0,700,&mut configured(),3).unwrap();
-        assert_eq!(serial.frames,9);assert_eq!(serial.bytes,parallel.bytes);
+        for edition in [15., 17., 18., 19., 20., 21.] {
+            let configured=|| {let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();p.update_params(&id,&crate::registry::ParamValues::from([("edition".into(),edition)]));p};
+            let serial=render(&input,64,1,0,700,&mut configured(),1).unwrap();
+            let parallel=render(&input,64,1,0,700,&mut configured(),3).unwrap();
+            assert_eq!(serial.frames,9);assert_eq!(serial.bytes,parallel.bytes);
+        }
     }
 
     #[test]
