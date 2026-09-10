@@ -47,3 +47,9 @@ This is a new material rather than a change to existing previews. It inherits ed
 The previous pass was visually too subtle. These studies use three clearly different stroke families: broad loaded marks, very long narrow strokes, and short rounded dabs. Family and size variation are fixed by the stroke seed, so they do not randomize across frames. Edition 55 uses coat spacings 60/26/8 at 1080p; edition 56 increases these to 80/32/10 for larger gestures. Existing gradual orientation/detail response, source colors, day/night grading, softened lights, and final psychedelic warp are retained. Internal groove spacing also varies by stroke identity.
 
 The larger spacing reduces stroke counts; geometry and overdraw still determine actual speed. Compare the rendered benchmarks rather than assuming cheaper or faster production. These are local previews.
+
+## Brushed passages (edition 57)
+
+Replaces the straight knife silhouette with a curved brush path, variable pressure, rounded ends and broken bristle coverage. Nearby strokes use a smooth regional direction field with restrained individual variation. Two extra source samples per stroke supply pigment dragged along its length. Anisotropic pigment noise runs along the bristles and contributes to edge breakup and paint load. Stroke identity, curve and regional field are deterministic; source gradients still produce gradual responses. Existing day/night grading and final psychedelic warp remain.
+
+Conservative scanline bounds expand to include the curved footprint. Sampled boundary checks across the full seed range verified containment, and the 130-test suite passed including serial/parallel equivalence for edition 57. Compare against edition 55 using the same source. Local preview only; no production change.

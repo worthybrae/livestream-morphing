@@ -1,0 +1,24 @@
+[
+  {
+    "id": 55,
+    "slug": "previous-mixed-brushes",
+    "name": "Previous / Mixed brushes",
+    "description": "Previous straight marks for comparison.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  },
+  {
+    "id": 57,
+    "slug": "brushed-passages",
+    "name": "Oil / Brushed passages",
+    "description": "Curved paths with changing pressure, ragged bristle edges and dragged source pigment. Nearby strokes share a flowing direction. The dark-night/colorful-day treatment and psychedelic movement remain.",
+    "params": {
+      "hour": 12,
+      "cloud": 0.3,
+      "rain": 0
+    }
+  }
+]
