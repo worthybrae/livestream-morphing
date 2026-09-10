@@ -12,7 +12,7 @@ pub struct LivingInk {
 }
 
 // Separable box smoothing, O(pixels), independent of radius.
-fn blur(src: &[f32], tmp: &mut [f32], dst: &mut [f32], w: usize, h: usize, r: usize) {
+pub(crate) fn blur(src: &[f32], tmp: &mut [f32], dst: &mut [f32], w: usize, h: usize, r: usize) {
     let n = (2*r+1) as f32;
     for y in 0..h {
         let mut sum = (0..=2*r).map(|k| src[y*w+k.saturating_sub(r).min(w-1)]).sum::<f32>();

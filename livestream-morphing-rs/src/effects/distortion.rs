@@ -36,6 +36,34 @@ impl Distortion {
         }
         std::mem::swap(&mut frame.data,dst);
     }
+    /// Identical signature coordinates and bilinear weights, with independent pigments.
+    pub fn apply_rgb_at_phase(&mut self, frame: &mut RawFrame, amplitude: f32, frequency: f32, phase: f32) {
+        if amplitude == 0.0 || frame.width == 0 || frame.height == 0 { return; }
+        let w=frame.width as usize; let h=frame.height as usize;
+        if self.scratch.as_ref().map(|s|(s.width,s.height)) != Some((frame.width,frame.height)) {
+            self.init(frame.width,frame.height);
+        }
+        let dst=&mut self.scratch.as_mut().unwrap().data;
+        let columns: Vec<_>=(0..w).map(|x| {
+            let sx=(x as f32+(phase+x as f32*frequency/w as f32).sin()*w as f32*amplitude).clamp(0.0,(w-1) as f32);
+            let x0=sx as usize;
+            (x0*3,(x0+1).min(w-1)*3,sx.fract())
+        }).collect();
+        for (y,row) in dst.chunks_exact_mut(w*3).enumerate() {
+            let sy=(y as f32+(phase+y as f32*frequency/h as f32).sin()*h as f32*amplitude).clamp(0.0,(h-1) as f32);
+            let y0=sy as usize; let fy=sy.fract();
+            let a=&frame.data[y0*w*3..][..w*3];
+            let b=&frame.data[(y0+1).min(h-1)*w*3..][..w*3];
+            for (pixel,&(x0,x1,fx)) in row.chunks_exact_mut(3).zip(&columns) {
+                for c in 0..3 {
+                    let val=a[x0+c] as f32*(1.0-fx)*(1.0-fy)+a[x1+c] as f32*fx*(1.0-fy)
+                        +b[x0+c] as f32*(1.0-fx)*fy+b[x1+c] as f32*fx*fy;
+                    pixel[c]=val.clamp(0.0,255.0) as u8;
+                }
+            }
+        }
+        std::mem::swap(&mut frame.data,dst);
+    }
 }
 
 impl Effect for Distortion {

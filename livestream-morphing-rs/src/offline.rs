@@ -3,7 +3,7 @@ use crate::pipeline::Pipeline;
 use std::time::Instant;
 
 pub fn render(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
-    if args.len()<3 { return Err("usage: morphing render INPUT OUTPUT WIDTH [legacy] [PRESET.json]".into()); }
+    if args.len()<3 { return Err("usage: morphing render INPUT OUTPUT WIDTH [ink|legacy|psychedelic|edition] [PRESET.json]".into()); }
     let input=std::fs::read(&args[0])?;
     let width=args[2].parse::<u32>()?.clamp(64,1920);
     // Local comparison only; production cadence is unchanged.
@@ -18,14 +18,14 @@ pub fn render(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::
             let params=serde_json::from_str(r#"{"amplitude":0.012,"frequency":8,"cycle_length":240}"#)?;
             pipeline.update_params(&warp,&params);
         }
-        let slot=pipeline.add_effect("living_ink")?;
+        let slot=pipeline.add_effect(if args.get(3).map(|s|s.as_str())==Some("edition") {"ink_editions"} else {"living_ink"})?;
         if let Some(path)=args.get(4) {
             let params=serde_json::from_slice(&std::fs::read(path)?)?;
             pipeline.update_params(&slot,&params);
         }
     }
     let workers=std::env::var("RENDER_WORKERS").ok().and_then(|s|s.parse().ok()).unwrap_or(3);
-    let rendered=crate::renderer::render(&input,width,step,0,0,&mut pipeline,workers)?;
+    let rendered=crate::renderer::render_bounded(&input,width,step,0,0,&mut pipeline,workers,18000)?;
     let mut timings=rendered.times;
     let effects_ms: f64=timings.iter().sum();
     timings.sort_by(f64::total_cmp);

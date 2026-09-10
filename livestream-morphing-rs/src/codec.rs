@@ -43,7 +43,12 @@ pub fn decode_sampled(ts_bytes: &[u8], max_width: u32, step: usize) -> Result<De
 }
 
 pub struct DecodeInfo { pub fps: f64, pub first_seconds: Option<f64>, pub frames: usize }
-pub fn decode_visit<F>(ts_bytes: &[u8], max_width: u32, step: usize, mut visit: F) -> Result<DecodeInfo, Box<dyn std::error::Error + Send + Sync>>
+pub fn decode_visit<F>(ts_bytes: &[u8], max_width: u32, step: usize, visit: F) -> Result<DecodeInfo, Box<dyn std::error::Error + Send + Sync>>
+where F: FnMut(RawFrame,f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Error + Send + Sync>> {
+    decode_visit_bounded(ts_bytes,max_width,step,720,visit)
+}
+
+pub fn decode_visit_bounded<F>(ts_bytes: &[u8], max_width: u32, step: usize, frame_limit: usize, mut visit: F) -> Result<DecodeInfo, Box<dyn std::error::Error + Send + Sync>>
 where F: FnMut(RawFrame,f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Error + Send + Sync>> {
     let step = step.max(1);
     // Write to temp file (ffmpeg-next requires file path for input)
@@ -91,7 +96,7 @@ where F: FnMut(RawFrame,f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Er
         |decoder: &mut ffmpeg::decoder::Video| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut decoded = Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
-                if source_frames >= 720 { return Err(ffmpeg::Error::InvalidData.into()); }
+                if source_frames >= frame_limit { return Err(ffmpeg::Error::InvalidData.into()); }
                 if first_seconds.is_none() { first_seconds = decoded.timestamp().map(|pts|pts as f64*time_base); }
                 let selected = source_frames % step == 0;
                 source_frames += 1;
@@ -196,7 +201,8 @@ impl TsEncoder {
 
     let mut x264_opts = ffmpeg::Dictionary::new();
     x264_opts.set("preset", "veryfast");
-    x264_opts.set("crf", "30");
+    let crf=std::env::var("ENCODE_CRF").ok().and_then(|value|value.parse::<u8>().ok()).unwrap_or(30).clamp(18,40);
+    x264_opts.set("crf", &crf.to_string());
     let threads=std::env::var("ENCODE_THREADS").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(2).clamp(1,4);
     x264_opts.set("threads",&threads.to_string());
 
@@ -279,6 +285,16 @@ impl TsEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_local_exports_do_not_relax_the_live_segment_limit() {
+        init();
+        let frames=vec![RawFrame::filled(32,18,80,90,100);725];
+        let bytes=encode_segment(&frames,30,0).unwrap();
+        assert!(decode_visit(&bytes,32,1,|_,_,_,_|Ok(())).is_err());
+        let local=decode_visit_bounded(&bytes,32,1,18000,|_,_,_,_|Ok(())).unwrap();
+        assert_eq!(local.frames,725);
+    }
 
     #[test]
     fn independently_muxed_segments_keep_continuous_timestamps() {

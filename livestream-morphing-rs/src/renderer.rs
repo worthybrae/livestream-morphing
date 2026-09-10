@@ -11,10 +11,16 @@ struct Done { frame:RawFrame, milliseconds:f64 }
 struct Worker { input:mpsc::SyncSender<Job>, output:mpsc::Receiver<Done> }
 
 pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut Pipeline,requested_workers:usize)->Result<Rendered,Error> {
+    render_bounded(input,width,step,pts,offset,pipeline,requested_workers,720)
+}
+
+/// Longer local artwork exports keep the same bounded number of frames in flight.
+/// Public ingestion continues to use `render`, with the original segment limit.
+pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut Pipeline,requested_workers:usize,frame_limit:usize)->Result<Rendered,Error> {
     let step=step.max(1);
     // Effects with temporal state must stay serial. This whitelist is intentionally narrow.
     let config=pipeline.view();
-    let independent=config.iter().filter(|s|s.enabled).all(|s|s.effect_id=="living_ink" && s.params.get("trail_strength").copied().unwrap_or(0.22)==0.0);
+    let independent=config.iter().filter(|s|s.enabled).all(|s|s.effect_id=="ink_editions" || (s.effect_id=="living_ink" && s.params.get("trail_strength").copied().unwrap_or(0.22)==0.0));
     let count=if independent {requested_workers.clamp(1,4)} else {1};
     std::thread::scope(|scope| {
         let mut workers=Vec::new();
@@ -45,7 +51,7 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
             let mut times=Vec::new(); let mut dimensions=(0,0); let mut submitted=0usize;
             let mut encode_ms=0.0; let mut callback_ms=0.0;
             let decode_start=Instant::now();
-            let info=codec::decode_visit(input,width,step,|mut frame,fps,_,first| {
+            let info=codec::decode_visit_bounded(input,width,step,frame_limit,|mut frame,fps,_,first| {
                 let start=Instant::now(); let out_fps=fps/step as f64;
                 if encoder.is_none() {
                     dimensions=(frame.width,frame.height);
@@ -102,6 +108,22 @@ mod tests {
             ("trail_strength".into(),trails),("warp_amplitude".into(),0.012),("subpixel".into(),1.0)
         ])); p
     }
+    #[test]
+    fn edition_parallel_output_matches_serial_output() {
+        codec::init();
+        let mut frames=Vec::new();
+        for index in 0..9 {
+            let mut frame=RawFrame::filled(64,36,35,45,55);
+            for y in 8..28 {for x in (8+index)..(25+index) {frame.data[(y*64+x)*3..(y*64+x)*3+3].fill(220);}}
+            frames.push(frame);
+        }
+        let input=codec::encode_segment(&frames,30,0).unwrap();
+        let configured=|| {let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();p.update_params(&id,&crate::registry::ParamValues::from([("edition".into(),15.)]));p};
+        let serial=render(&input,64,1,0,700,&mut configured(),1).unwrap();
+        let parallel=render(&input,64,1,0,700,&mut configured(),3).unwrap();
+        assert_eq!(serial.frames,9);assert_eq!(serial.bytes,parallel.bytes);
+    }
+
     #[test]
     fn parallel_frames_match_serial_order_and_warp_phase() {
         codec::init();

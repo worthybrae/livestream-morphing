@@ -1,0 +1,104 @@
+[
+  {
+    "id": 0,
+    "slug": "graphite",
+    "name": "Graphite weather",
+    "description": "Fine graphite and crossed hatching on warm paper."
+  },
+  {
+    "id": 1,
+    "slug": "silver",
+    "name": "Silver street",
+    "description": "Light catches the edges of a street pressed into dark metal."
+  },
+  {
+    "id": 2,
+    "slug": "cyanotype",
+    "name": "Blue hour",
+    "description": "A cyanotype held between deep blue shadow and pale light."
+  },
+  {
+    "id": 3,
+    "slug": "copper",
+    "name": "Copper current",
+    "description": "Copper strokes glint against an almost black ground."
+  },
+  {
+    "id": 4,
+    "slug": "porcelain",
+    "name": "Porcelain road",
+    "description": "Black lines move across a cool, unbroken paper field."
+  },
+  {
+    "id": 5,
+    "slug": "isobars",
+    "name": "Street pressure",
+    "description": "Brightness becomes a shifting topographic map."
+  },
+  {
+    "id": 6,
+    "slug": "glass",
+    "name": "Night glass",
+    "description": "Blue-green outlines catch small amber reflections."
+  },
+  {
+    "id": 7,
+    "slug": "risograph",
+    "name": "Red registration",
+    "description": "Vermilion contours printed over grainy blue shadows."
+  },
+  {
+    "id": 8,
+    "slug": "phosphor",
+    "name": "Phosphor garden",
+    "description": "Mineral-green light traces the street without leaving a trail."
+  },
+  {
+    "id": 9,
+    "slug": "aquatint",
+    "name": "Dust in motion",
+    "description": "Dry ink and stippled shadow on a warm paper surface."
+  },
+  {
+    "id": 10,
+    "slug": "solar",
+    "name": "Solar silver",
+    "description": "Folded tonal light turns the road into a silver negative."
+  },
+  {
+    "id": 11,
+    "slug": "cinnabar",
+    "name": "Cinnabar crossing",
+    "description": "Ivory threads pass through deep red shadow."
+  },
+  {
+    "id": 12,
+    "slug": "iris",
+    "name": "Iris after dark",
+    "description": "Violet ink opens into pale green along the brightest ridges."
+  },
+  {
+    "id": 13,
+    "slug": "halftone",
+    "name": "Printed air",
+    "description": "An engraved dot screen holds the shadows while hairline contours carry the light."
+  },
+  {
+    "id": 14,
+    "slug": "woodcut",
+    "name": "Black river",
+    "description": "The street becomes a carved block: black masses, pale cuts, and slow liquid motion."
+  },
+  {
+    "id": 15,
+    "slug": "woven",
+    "name": "A street, woven",
+    "description": "Fine horizontal threads bend around the light in the road."
+  },
+  {
+    "id": 16,
+    "slug": "mineral",
+    "name": "Mineral morning",
+    "description": "A fixed palette of slate, lichen, and paper turns light into cut shapes."
+  }
+]
