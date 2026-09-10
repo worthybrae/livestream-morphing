@@ -62,3 +62,28 @@ Edition 48 restores paint opacity while retaining edition 47's smooth detail/ori
 ## Appearance-preserving Fine knife optimization
 
 Convex scanline bounds skip pixels outside the knife face, with a two-pixel guard and intersection with the original bounding box. Per-pixel paint calculations and draw order remain unchanged. Full 719-frame output at 1080p/29.97, CRF23 was byte-identical to the original Fine knife MP4. Native wall time improved from 52.96s to 46.60s in local runs (full command 54.6s to 48.2s). Still slower than real time; not a production cost guarantee. A separate pigment-lattice cache experiment preserved bytes but showed no speed improvement and was discarded.
+
+
+## SIMD Fine knife
+
+The original 45/46 knife renderer now evaluates four pixels at once using `wide` 0.7's native vector operations. Pigment hashes, smooth noise interpolation, coverage, and ridge lighting keep the scalar equations and operation order. Empty batches in the conservative scanline guard exit before texture work. There is no resolution reduction, dropped source frame, cached orientation bank, approximate reciprocal, temporal blend, or change to the final signature warp.
+
+Frame workers receive their next painting job before the previous result is encoded. Output still drains in source order with bounded jobs; stateful effects retain their serial path. The local renderer accepts `--workers 1..6` (default 3) and records that choice in its metrics. The public stream configuration is unchanged.
+
+Validation includes scalar-versus-SIMD byte comparisons over varied pixel colors, stroke angles, widths, and partial batches, plus the existing serial/parallel frame-order tests. Benchmark timings below are local ARM64 Docker measurements, not Railway measurements or a monthly-price estimate.
+
+The optional five/six-worker settings are local benchmarking controls; public ingestion retains its existing four-worker cap and three-worker default. Raising a benchmark worker count is not included in the same-worker optimization savings.
+
+
+| Local run | Painting workers | Frames | Native render time | Processing fps |
+|---|---:|---:|---:|---:|
+| Previous scanline optimization | 3 | 719 | 46.60 s | 15.43 |
+| SIMD + empty-batch rejection + scheduling | 3 | 719 | 28.64 s | 25.10 |
+| Same optimized renderer, more concurrency | 5 | 719 | 22.22 s | 32.36 |
+| Longer footage, optimized renderer | 5 | 1,438 | 47.18 s | 30.48 |
+
+At three workers, native wall time fell 38.5%. The five-worker long run processed 47.98 seconds of footage slightly faster than real time, but its margin is only about 1.7%; this is not sufficient evidence for a robust production service. Peak RSS in that run was 498,640 KiB. Five workers use more concurrency and memory; that gain is separate from the optimization itself. All outputs retain 1920×1080, 30000/1001 fps and CRF23.
+
+The final 719-frame five-worker MP4 is byte-identical to the original Fine knife reference. 122 Rust tests pass, including scalar pixel parity and ordered serial/parallel output at three, five, and six workers. Experiments with automatic batching, vectorized byte conversion, and a vectorized underpainting did not improve measured performance and were not retained. No production deployment or change to live worker configuration.
+
+Artifacts: `/Users/worthy/Test/living-ink-paper-filaments-2026-09-10/fine-knife-throughput/` and `fine-knife-throughput-long/`; `comparison.json` records source/binary/video hashes and measurements. Reproduce with `render.py OUTPUT --source SOURCE --catalog artwork/editions/paper-focus.json --slugs garden-fine-knife --crf 23 --workers 5`.

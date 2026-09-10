@@ -8,6 +8,7 @@ pub(super) struct Forms {
     sites: Vec<(usize, usize, f32)>,
     knife: super::knife_layers::KnifeLayers,
 }
+#[inline(always)]
 fn hash(x: usize, y: usize) -> f32 {
     let mut v = (x as u32).wrapping_mul(374761393) ^ (y as u32).wrapping_mul(668265263);
     v = (v ^ (v >> 13)).wrapping_mul(1274126177);
@@ -468,6 +469,7 @@ mod garden_tests {
 }
 
 // Smooth deterministic pigment field, elongated by the brush coordinate mapping.
+#[inline(always)]
 fn paint_noise(x: f32, y: f32) -> f32 {
     let ix = x.floor() as i32;
     let iy = y.floor() as i32;
@@ -713,37 +715,107 @@ fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
                     let end = (cx as f64 + right + 2.).ceil().max(0.).min((w - 1) as f64) as usize;
                     let start = start.max((cx - bx).max(0.) as usize);
                     let end = end.min((cx + bx).min((w - 1) as f32) as usize);
-                    for xx in start..=end {
-                        let ox = xx as f32 - cx;
-                        let oy = yy as f32 - cy;
-                        let u = (ox * cs + oy * sn) / length;
-                        let v = (-ox * sn + oy * cs) / width;
-                        // Tapered knife face and clipped corners, not circular dabs.
-                        let side = v.abs() - (0.9 - 0.2 * u);
-                        let end = u.abs() + v.abs() * 0.18 - 1.;
-                        let distance = side.max(end);
-                        if distance >= 0. {
-                            continue;
-                        }
-                        let cover = (-distance * width).clamp(0., 1.);
-                        let scrape = paint_noise(u * 4. + seed * 19., v * 13. + coat as f32 * 37.);
-                        let ridge = if v > 0.58 {
-                            (v - 0.58) * 35.
-                        } else if v < -0.65 {
-                            -9.
-                        } else {
-                            0.
-                        };
-                        let light = tint + ridge + (scrape - 0.5) * 9.;
-                        let color = std::array::from_fn(|k| c[k] + light);
-                        let j = yy * w + xx;
-                        let old = std::array::from_fn(|k| frame.data[j * 3 + k] as f32);
-                        put(frame, j, blend(old, color, cover * 0.94));
+                    if start > end {
+                        continue;
+                    }
+                    let row = &mut frame.data[(yy * w + start) * 3..(yy * w + end + 1) * 3];
+                    for (batch, pixels) in row.chunks_mut(12).enumerate() {
+                        knife_pixels(
+                            pixels,
+                            start + batch * 4,
+                            yy,
+                            cx,
+                            cy,
+                            cs,
+                            sn,
+                            length,
+                            width,
+                            seed,
+                            coat,
+                            tint,
+                            c,
+                        );
                     }
                 }
             }
         }
     }
+}
+
+// Explicit four-lane SIMD keeps pigment hashing, lighting, and coverage packed
+// on both ARM and x86. No fast-math or approximate reciprocal is used.
+#[inline]
+fn knife_pixels(
+    pixels: &mut [u8],
+    x: usize,
+    y: usize,
+    cx: f32,
+    cy: f32,
+    cs: f32,
+    sn: f32,
+    length: f32,
+    width: f32,
+    seed: f32,
+    coat: usize,
+    tint: f32,
+    c: [f32; 3],
+) {
+    use wide::{f32x4 as F, CmpGt, CmpLt};
+    let ox = F::new(std::array::from_fn(|k| (x + k) as f32 - cx));
+    let oy = y as f32 - cy;
+    let u = (ox * cs + F::splat(oy * sn)) / F::splat(length);
+    let v = (-ox * sn + F::splat(oy * cs)) / F::splat(width);
+    let distance = (v.abs() - (F::splat(0.9) - u * 0.2)).max(u.abs() + v.abs() * 0.18 - 1.);
+    // The conservative scanline guard also produces wholly empty batches.
+    // Reject those before evaluating pigment or reading destination colors.
+    if distance.cmp_lt(F::ZERO).none() {
+        return;
+    }
+    let cover = (-distance * width).max(F::ZERO).min(F::ONE) * 0.94;
+    let scrape = knife_noise4(u * 4. + seed * 19., v * 13. + coat as f32 * 37.);
+    let ridge = v.cmp_gt(F::splat(0.58)).blend(
+        (v - 0.58) * 35.,
+        v.cmp_lt(F::splat(-0.65)).blend(F::splat(-9.), F::ZERO),
+    );
+    let light = F::splat(tint) + ridge + (scrape - 0.5) * 9.;
+    let mut colors = [[0.; 4]; 3];
+    for channel in 0..3 {
+        let old = F::new(std::array::from_fn(|k| {
+            pixels.get(k * 3 + channel).copied().unwrap_or(0) as f32
+        }));
+        colors[channel] = (old + (F::splat(c[channel]) + light - old) * cover)
+            .max(F::ZERO)
+            .min(F::splat(255.))
+            .to_array();
+    }
+    for (k, rgb) in pixels.chunks_exact_mut(3).enumerate() {
+        for channel in 0..3 {
+            rgb[channel] = colors[channel][k] as u8;
+        }
+    }
+}
+
+#[inline]
+fn knife_noise4(x: wide::f32x4, y: wide::f32x4) -> wide::f32x4 {
+    use wide::{f32x4 as F, u32x4 as U};
+    let floor_x = x.floor();
+    let floor_y = y.floor();
+    let ix = U::new(floor_x.trunc_int().to_array().map(|v| v as u32));
+    let iy = U::new(floor_y.trunc_int().to_array().map(|v| v as u32));
+    let tx = x - floor_x;
+    let ty = y - floor_y;
+    let tx = tx * tx * (F::splat(3.) - tx * 2.);
+    let ty = ty * ty * (F::splat(3.) - ty * 2.);
+    let h = |dx: u32, dy: u32| {
+        let v = ((ix + U::splat(dx)) * U::splat(374761393))
+            ^ ((iy + U::splat(dy)) * U::splat(668265263));
+        let v = (v ^ (v >> 13u32)) * U::splat(1274126177);
+        let v = (v ^ (v >> 16u32)) & U::splat(65535);
+        F::new(v.to_array().map(|v| v as f32)) / F::splat(65535.)
+    };
+    let a = h(0, 0) * (F::ONE - tx) + h(1, 0) * tx;
+    let b = h(0, 1) * (F::ONE - tx) + h(1, 1) * tx;
+    a * (F::ONE - ty) + b * ty
 }
 
 // Two coats of separately deposited paint. Marks are clipped to the paper masks,
@@ -1027,6 +1099,80 @@ mod sampling_tests {
                         map.get(&data, x, y),
                         sample(&data, w, h, x as f32 + ox - dx, y as f32 + oy - dy)
                     );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod knife_batch_tests {
+    use super::*;
+    #[test]
+    fn batched_pixels_match_scalar_at_edges_and_partial_rows() {
+        for trial in 0..256 {
+            let seed = hash(trial, 731);
+            let angle = seed * 6.283;
+            let (sn, cs) = angle.sin_cos();
+            let length = 2. + seed * 55.;
+            let width = 1. + hash(trial, 17) * 25.;
+            let cx = 16. + seed;
+            let cy = 12. + hash(trial, 31);
+            let coat = trial % 3;
+            let tint = (seed - 0.5) * 16.;
+            let c = [113., 153., 116.];
+            for count in 1..=4 {
+                for y in 0..25 {
+                    for x in (0..32).step_by(8) {
+                        let mut actual: Vec<u8> = (0..count * 3)
+                            .map(|k| ((k * 71 + trial * 13) % 256) as u8)
+                            .collect();
+                        let mut expected = actual.clone();
+                        knife_pixels(
+                            &mut actual,
+                            x,
+                            y,
+                            cx,
+                            cy,
+                            cs,
+                            sn,
+                            length,
+                            width,
+                            seed,
+                            coat,
+                            tint,
+                            c,
+                        );
+                        for k in 0..count {
+                            let ox = (x + k) as f32 - cx;
+                            let oy = y as f32 - cy;
+                            let u = (ox * cs + oy * sn) / length;
+                            let v = (-ox * sn + oy * cs) / width;
+                            let distance =
+                                (v.abs() - (0.9 - 0.2 * u)).max(u.abs() + v.abs() * 0.18 - 1.);
+                            if distance >= 0. {
+                                continue;
+                            }
+                            let cover = (-distance * width).clamp(0., 1.);
+                            let scrape =
+                                paint_noise(u * 4. + seed * 19., v * 13. + coat as f32 * 37.);
+                            let ridge = if v > 0.58 {
+                                (v - 0.58) * 35.
+                            } else if v < -0.65 {
+                                -9.
+                            } else {
+                                0.
+                            };
+                            let light = tint + ridge + (scrape - 0.5) * 9.;
+                            let old =
+                                std::array::from_fn(|channel| expected[k * 3 + channel] as f32);
+                            let color = blend(old, c.map(|v| v + light), cover * 0.94);
+                            for channel in 0..3 {
+                                expected[k * 3 + channel] = color[channel].clamp(0., 255.) as u8;
+                            }
+                        }
+                        assert_eq!(actual, expected, "trial={trial} count={count} x={x} y={y}");
+                    }
                 }
             }
         }

@@ -21,7 +21,7 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
     // Effects with temporal state must stay serial. This whitelist is intentionally narrow.
     let config=pipeline.view();
     let independent=config.iter().filter(|s|s.enabled).all(|s|s.effect_id=="ink_editions" || (s.effect_id=="living_ink" && s.params.get("trail_strength").copied().unwrap_or(0.22)==0.0));
-    let count=if independent {requested_workers.clamp(1,4)} else {1};
+    let count=if independent {requested_workers.clamp(1,6)} else {1};
     std::thread::scope(|scope| {
         let mut workers=Vec::new();
         if count>1 {
@@ -71,12 +71,15 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
                     encode_ms+=t.elapsed().as_secs_f64()*1000.0;
                 } else {
                     let worker=&workers[submitted%count];
-                    if submitted>=count {
-                        let done=worker.output.recv()?; times.push(done.milliseconds);
+                    let done=if submitted>=count {Some(worker.output.recv()?)} else {None};
+                    // Refill this worker before encoding its previous result. The
+                    // ordered drain is unchanged, but painting can overlap encoding.
+                    worker.input.send(Job {frame,number,dt:(1.0/out_fps) as f32})?;
+                    if let Some(done)=done {
+                        times.push(done.milliseconds);
                         let t=Instant::now(); encoder.as_mut().unwrap().push(&done.frame)?;
                         encode_ms+=t.elapsed().as_secs_f64()*1000.0;
                     }
-                    worker.input.send(Job {frame,number,dt:(1.0/out_fps) as f32})?;
                 }
                 submitted+=1; callback_ms+=start.elapsed().as_secs_f64()*1000.0; Ok(())
             })?;
@@ -121,8 +124,10 @@ mod tests {
         for edition in [15., 17., 18., 19., 20., 21., 22., 23., 24., 25., 26., 27., 28., 29., 30., 31., 32., 33., 34., 35., 36., 37., 38., 39., 40., 41., 42., 43., 44., 45., 46., 47., 48.] {
             let configured=|| {let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();p.update_params(&id,&crate::registry::ParamValues::from([("edition".into(),edition)]));p};
             let serial=render(&input,64,1,0,700,&mut configured(),1).unwrap();
-            let parallel=render(&input,64,1,0,700,&mut configured(),3).unwrap();
-            assert_eq!(serial.frames,9);assert_eq!(serial.bytes,parallel.bytes);
+            for workers in [3,5,6] {
+                let parallel=render(&input,64,1,0,700,&mut configured(),workers).unwrap();
+                assert_eq!(serial.frames,9);assert_eq!(serial.bytes,parallel.bytes);
+            }
         }
     }
 
