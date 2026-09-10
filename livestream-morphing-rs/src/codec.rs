@@ -17,7 +17,7 @@ pub fn init() {
 }
 
 /// Decode a .ts segment into RGB24 frames bounded to 1280x720.
-/// The pipeline halves these frames again, producing 640x360 for a 16:9 source.
+/// Production uses decode_sized to choose its output dimensions directly.
 pub fn decode_segment(
     ts_bytes: &[u8],
 ) -> Result<Vec<RawFrame>, Box<dyn std::error::Error + Send + Sync>> {
@@ -31,6 +31,13 @@ pub struct Decoded {
 }
 
 pub fn decode_sized(ts_bytes: &[u8], max_width: u32) -> Result<Decoded, Box<dyn std::error::Error + Send + Sync>> {
+    decode_sampled(ts_bytes, max_width, 1)
+}
+
+/// Keep every `step`th source frame before RGB conversion/allocation.
+/// FPS remains the source cadence; callers must account for selection in timing.
+pub fn decode_sampled(ts_bytes: &[u8], max_width: u32, step: usize) -> Result<Decoded, Box<dyn std::error::Error + Send + Sync>> {
+    let step = step.max(1);
     // Write to temp file (ffmpeg-next requires file path for input)
     let mut tmp = NamedTempFile::new()?;
     tmp.write_all(ts_bytes)?;
@@ -70,13 +77,17 @@ pub fn decode_sized(ts_bytes: &[u8], max_width: u32) -> Result<Decoded, Box<dyn 
 
     let mut frames = Vec::new();
     let mut first_seconds = None;
+    let mut source_frames = 0usize;
 
     let mut receive_frames =
         |decoder: &mut ffmpeg::decoder::Video| -> Result<(), ffmpeg::Error> {
             let mut decoded = Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
-                if frames.len() >= 720 { return Err(ffmpeg::Error::InvalidData); }
+                if source_frames >= 720 { return Err(ffmpeg::Error::InvalidData); }
                 if first_seconds.is_none() { first_seconds = decoded.timestamp().map(|pts|pts as f64*time_base); }
+                let selected = source_frames % step == 0;
+                source_frames += 1;
+                if !selected { continue; }
                 let mut rgb = Video::empty();
                 scaler.run(&decoded, &mut rgb)?;
 
@@ -320,6 +331,21 @@ mod tests {
                 assert_eq!(frame.width % 4, 0);
                 assert_eq!(frame.height % 4, 0);
             }
+        }
+    }
+
+    #[test]
+    fn sampled_decode_preserves_selected_pixels_and_source_timing() {
+        init();
+        let frames: Vec<_> = (0..7).map(|i| RawFrame::filled(64,36,i*30,80,160)).collect();
+        let bytes = encode_segment(&frames,30,120).unwrap();
+        let full = decode_sized(&bytes,64).unwrap();
+        let selected = decode_sampled(&bytes,64,2).unwrap();
+        assert_eq!(selected.frames.len(),4);
+        assert_eq!(selected.fps,full.fps);
+        assert_eq!(selected.first_seconds,full.first_seconds);
+        for (actual,expected) in selected.frames.iter().zip(full.frames.iter().step_by(2)) {
+            assert_eq!(actual.data,expected.data);
         }
     }
 

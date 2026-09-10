@@ -38,7 +38,7 @@ fn blur(src: &[f32], tmp: &mut [f32], dst: &mut [f32], w: usize, h: usize, r: us
     }
 }
 
-fn contours(src: &[f32], mag: &mut [f32], dir: &mut [u8], out: &mut [f32], w: usize, h: usize, threshold: f32) {
+fn contours(src: &[f32], mag: &mut [f32], dir: &mut [u8], out: &mut [f32], w: usize, h: usize, threshold: f32, body: f32) {
     mag.fill(0.0); out.fill(0.0);
     if w < 3 || h < 3 { return; }
     for y in 1..h-1 { for x in 1..w-1 {
@@ -46,18 +46,27 @@ fn contours(src: &[f32], mag: &mut [f32], dir: &mut [u8], out: &mut [f32], w: us
         let gx = -src[i-w-1]+src[i-w+1]-2.0*src[i-1]+2.0*src[i+1]-src[i+w-1]+src[i+w+1];
         let gy = -src[i-w-1]-2.0*src[i-w]-src[i-w+1]+src[i+w-1]+2.0*src[i+w]+src[i+w+1];
         mag[i] = (gx*gx+gy*gy).sqrt()/4.0;
+        if body == 1.0 {
+            let v = ((mag[i]-threshold)/(threshold*1.5).max(8.0)).clamp(0.0,1.0);
+            out[i] = v*v*(3.0-2.0*v);
+            continue;
+        }
         dir[i] = if gy.abs() < gx.abs()*0.4142 { 0 }
             else if gx.abs() < gy.abs()*0.4142 { 1 }
             else if gx*gy > 0.0 { 2 } else { 3 };
     }}
+    if body == 1.0 { return; }
     for y in 1..h-1 { for x in 1..w-1 {
         let i=y*w+x;
         let d = match dir[i] { 0 => 1, 1 => w, 2 => w+1, _ => w-1 };
         let m = mag[i];
         // Keep a single ridge even when two pixels have identical strength.
-        if m >= mag[i-d] && m > mag[i+d] {
+        let ridge = m >= mag[i-d] && m > mag[i+d];
+        if ridge || body > 0.0 {
             let v = ((m-threshold)/(threshold*1.5).max(8.0)).clamp(0.0,1.0);
-            out[i] = v*v*(3.0-2.0*v);
+            // Preserve the smooth gradient shoulders for fuller, antialiased strokes.
+            // Uniform source regions still have zero gradient and remain charcoal.
+            out[i] = v*v*(3.0-2.0*v) * if ridge { 1.0 } else { body };
         }
     }}
 }
@@ -70,6 +79,7 @@ impl Effect for LivingInk {
         ParamDef::new("broad_threshold","Broad threshold",2.0,64.0,9.0,1.0),
         ParamDef::new("fine_weight","Fine line weight",0.0,1.0,0.9,0.01),
         ParamDef::new("broad_weight","Broad line weight",0.0,1.0,0.25,0.01),
+        ParamDef::new("stroke_body","Stroke body",0.0,1.0,0.0,0.05),
         ParamDef::new("smoothing","Smoothing radius",1.0,3.0,1.0,1.0),
         ParamDef::new("trail_strength","Trail strength",0.0,0.5,0.22,0.01),
         ParamDef::new("trail_half_life","Trail half-life (seconds)",0.1,1.0,0.4,0.05),
@@ -94,9 +104,11 @@ impl Effect for LivingInk {
             self.luma[i]=p[0] as f32*0.299+p[1] as f32*0.587+p[2] as f32*0.114;
         }
         blur(&self.luma,&mut self.scratch,&mut self.smooth,w,h,get("smoothing") as usize);
-        blur(&self.smooth,&mut self.scratch,&mut self.broad,w,h,2);
-        contours(&self.smooth,&mut self.magnitude,&mut self.direction,&mut self.fine_lines,w,h,get("fine_threshold"));
-        contours(&self.broad,&mut self.magnitude,&mut self.direction,&mut self.broad_lines,w,h,get("broad_threshold"));
+        if get("broad_weight") > 0.0 {
+            blur(&self.smooth,&mut self.scratch,&mut self.broad,w,h,2);
+            contours(&self.broad,&mut self.magnitude,&mut self.direction,&mut self.broad_lines,w,h,get("broad_threshold"),get("stroke_body"));
+        } else { self.broad_lines.fill(0.0); }
+        contours(&self.smooth,&mut self.magnitude,&mut self.direction,&mut self.fine_lines,w,h,get("fine_threshold"),get("stroke_body"));
         let dt=if ctx.delta_seconds.is_finite() { ctx.delta_seconds.max(0.0) } else { 1.0/30.0 };
         let decay=2.0_f32.powf(-dt/get("trail_half_life"));
         let fine=get("fine_weight"); let broad=get("broad_weight");
@@ -149,6 +161,22 @@ mod tests {
             }
             assert_eq!(actual,expected);
         }
+    }
+    #[test]
+    fn full_strokes_keep_flat_regions_empty_and_add_soft_shoulders() {
+        let mut thin = LivingInk::default();
+        let mut full = LivingInk::default();
+        let mut a = boundary(24);
+        let mut b = a.clone();
+        draw(&mut thin, &mut a, 1.0/30.0);
+        let mut params = default_params(&full.params());
+        params.insert("stroke_body".into(), 1.0);
+        full.apply(&mut b, &params, &FrameCtx {
+            frame_number: 0, width: 64, height: 32, delta_seconds: 1.0/30.0,
+        });
+        assert!(b.data.iter().filter(|v| **v > 24).count() > a.data.iter().filter(|v| **v > 24).count());
+        assert_eq!(b.data[(16*64+50)*3], 24);
+        assert_eq!(b.data[(16*64+4)*3], 24);
     }
     #[test]
     fn living_ink_uniform_input_is_charcoal() {

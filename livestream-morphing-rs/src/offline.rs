@@ -5,14 +5,14 @@ use std::time::Instant;
 pub fn render(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
     if args.len()<3 { return Err("usage: morphing render INPUT OUTPUT WIDTH [legacy] [PRESET.json]".into()); }
     let input=std::fs::read(&args[0])?;
-    let width=args[2].parse::<u32>()?.clamp(64,1280);
-    let start=Instant::now();
-    let decoded=codec::decode_sized(&input,width)?;
-    let decode_ms=start.elapsed().as_secs_f64()*1000.0;
+    let width=args[2].parse::<u32>()?.clamp(64,1920);
     // Local comparison only; production cadence is unchanged.
     let step=std::env::var("RENDER_FRAME_STEP").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(1).clamp(1,3);
+    let start=Instant::now();
+    let decoded=codec::decode_sampled(&input,width,step)?;
+    let decode_ms=start.elapsed().as_secs_f64()*1000.0;
     let output_fps=decoded.fps/step as f64;
-    let mut frames: Vec<_>=decoded.frames.into_iter().step_by(step).collect();
+    let mut frames=decoded.frames;
     if frames.is_empty() { return Err("No decoded frames".into()); }
     let mut pipeline=Pipeline::new();
     if args.get(3).map(|s| s.as_str())==Some("legacy") {
