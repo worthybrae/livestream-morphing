@@ -1,0 +1,38 @@
+[
+  {
+    "id": 28,
+    "slug": "contour-script",
+    "name": "Filaments / contour script",
+    "description": "Tapered ivory and blue strokes curl around the scene. Varied lengths and quieter shadows open space between the marks."
+  },
+  {
+    "id": 29,
+    "slug": "silk-tide",
+    "name": "Filaments / silk tide",
+    "description": "Longer copper and teal threads carry a traveling glint. A slow field turns the threads; no trails accumulate."
+  },
+  {
+    "id": 26,
+    "slug": "paper-relief",
+    "name": "Paper / deeper stage",
+    "description": "Larger cobalt, red, and rose cutouts with soft cast shadows, lit edges, and smooth independent layer motion."
+  },
+  {
+    "id": 27,
+    "slug": "paper-nocturne",
+    "name": "Paper / nocturne",
+    "description": "The same sculpted paper stage in petrol blue, muted jade, copper, and warm paper."
+  },
+  {
+    "id": 25,
+    "slug": "living-current",
+    "name": "Filaments / original",
+    "description": "The original luminous filaments, retained for comparison."
+  },
+  {
+    "id": 24,
+    "slug": "paper-theatre",
+    "name": "Paper / original",
+    "description": "The original paper theatre, retained for comparison."
+  }
+]

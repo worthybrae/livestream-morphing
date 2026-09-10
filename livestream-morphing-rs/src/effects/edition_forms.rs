@@ -257,7 +257,277 @@ impl Forms {
                     }
                 }
             }
+            26 | 27 => paper_relief(frame, luma, edition, seconds),
+            28 | 29 => filaments(frame, luma, edition, seconds),
             _ => unreachable!(),
+        }
+    }
+}
+
+#[cfg(test)]
+fn sample(luma: &[f32], w: usize, h: usize, x: f32, y: f32) -> f32 {
+    let x = x.clamp(0., (w - 1) as f32);
+    let y = y.clamp(0., (h - 1) as f32);
+    let ix = x as usize;
+    let iy = y as usize;
+    let tx = x - ix as f32;
+    let ty = y - iy as f32;
+    let jx = (ix + 1).min(w - 1);
+    let jy = (iy + 1).min(h - 1);
+    let a = luma[iy * w + ix] * (1. - tx) + luma[iy * w + jx] * tx;
+    let b = luma[jy * w + ix] * (1. - tx) + luma[jy * w + jx] * tx;
+    a * (1. - ty) + b * ty
+}
+// Fixed translations share their interpolation coordinates across every pixel in a row/column.
+struct ShiftSample {
+    x: Vec<(usize, usize, f32)>,
+    y: Vec<(usize, usize, f32)>,
+}
+impl ShiftSample {
+    fn new(w: usize, h: usize, ox: f32, oy: f32, dx: f32, dy: f32) -> Self {
+        let axis = |len: usize, offset: f32, shift: f32, stride: usize| {
+            (0..len)
+                .map(|i| {
+                    let p = ((i as f32 + offset) - shift).clamp(0., (len - 1) as f32);
+                    let j = p as usize;
+                    (j * stride, (j + 1).min(len - 1) * stride, p - j as f32)
+                })
+                .collect()
+        };
+        Self {
+            x: axis(w, ox, dx, 1),
+            y: axis(h, oy, dy, w),
+        }
+    }
+    #[inline]
+    fn get(&self, luma: &[f32], x: usize, y: usize) -> f32 {
+        let (ix, jx, tx) = self.x[x];
+        let (iy, jy, ty) = self.y[y];
+        let a = luma[iy + ix] * (1. - tx) + luma[iy + jx] * tx;
+        let b = luma[jy + ix] * (1. - tx) + luma[jy + jx] * tx;
+        a * (1. - ty) + b * ty
+    }
+}
+fn paper_relief(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
+    let w = frame.width as usize;
+    let h = frame.height as usize;
+    let scale = w as f32 / 1920.;
+    let colors = if edition == 26 {
+        [
+            [20., 28., 55.],
+            [41., 73., 181.],
+            [221., 70., 56.],
+            [232., 158., 164.],
+            [248., 226., 181.],
+        ]
+    } else {
+        [
+            [18., 25., 36.],
+            [31., 76., 87.],
+            [77., 118., 117.],
+            [207., 130., 69.],
+            [245., 220., 174.],
+        ]
+    };
+    let thresholds = [0.10, 0.22, 0.37, 0.55];
+    let offsets: Vec<_> = (0..4)
+        .map(|n| {
+            let phase = seconds * 0.23 + n as f32 * 1.3;
+            (
+                phase.sin() * (n + 1) as f32 * 1.6 * scale,
+                phase.cos() * (n + 1) as f32 * 1.2 * scale,
+            )
+        })
+        .collect();
+    let samplers: Vec<_> = offsets
+        .iter()
+        .enumerate()
+        .map(|(n, &(ox, oy))| {
+            let depth = (8. + n as f32 * 2.) * scale;
+            [
+                ShiftSample::new(w, h, ox, oy, 0., 0.),
+                ShiftSample::new(w, h, ox, oy, depth, depth * 0.7),
+                ShiftSample::new(w, h, ox, oy, depth * 0.6, depth * 0.42),
+                ShiftSample::new(w, h, ox, oy, 1.5 * scale, 1.5 * scale),
+            ]
+        })
+        .collect();
+    for y in 0..h {
+        for x in 0..w {
+            let rough = (hash(x / 5, y / 5) - 0.5) * 0.003;
+            let mut c = colors[0];
+            for n in 0..4 {
+                let maps = &samplers[n];
+                let l = maps[0].get(luma, x, y) + rough;
+                let coverage = ((l - thresholds[n]) / 0.006 + 0.5).clamp(0., 1.);
+                if coverage < 1. {
+                    let a = maps[1].get(luma, x, y);
+                    let b = maps[2].get(luma, x, y);
+                    let shadow = (((a - thresholds[n]) / 0.018 + 0.5).clamp(0., 1.)
+                        + ((b - thresholds[n]) / 0.012 + 0.5).clamp(0., 1.))
+                        * 0.23;
+                    c = blend(c, [8., 12., 24.], shadow * (1. - coverage));
+                }
+                if coverage > 0. {
+                    let above = maps[3].get(luma, x, y);
+                    let rim = ((l - above) * 50.).clamp(0., 0.28);
+                    c = blend(c, blend(colors[n + 1], [255., 243., 217.], rim), coverage);
+                }
+            }
+            // Restrained, spatially fixed paper tooth, not frame-varying noise.
+            let fiber = (hash(x / 2, y / 2) - 0.5) * 1.4;
+            put(frame, y * w + x, std::array::from_fn(|k| c[k] + fiber));
+        }
+    }
+}
+// One antialiased capsule per integration step, replacing overlapping disc stamps.
+fn stroke(
+    frame: &mut RawFrame,
+    a: (f32, f32),
+    b: (f32, f32),
+    radius: f32,
+    color: [f32; 3],
+    opacity: f32,
+) {
+    let w = frame.width as usize;
+    let h = frame.height as usize;
+    let (vx, vy) = (b.0 - a.0, b.1 - a.1);
+    let inv = 1. / (vx * vx + vy * vy).max(0.0001);
+    let outer = radius + 0.6;
+    let inner = (radius - 0.6).max(0.);
+    let band = 1. / (outer * outer - inner * inner).max(0.01);
+    let left = (a.0.min(b.0) - outer).floor().max(0.) as usize;
+    let right = (a.0.max(b.0) + outer).ceil().min((w - 1) as f32) as usize;
+    let top = (a.1.min(b.1) - outer).floor().max(0.) as usize;
+    let bottom = (a.1.max(b.1) + outer).ceil().min((h - 1) as f32) as usize;
+    for y in top..=bottom {
+        for x in left..=right {
+            let t = (((x as f32 - a.0) * vx + (y as f32 - a.1) * vy) * inv).clamp(0., 1.);
+            let dx = x as f32 - a.0 - t * vx;
+            let dy = y as f32 - a.1 - t * vy;
+            let coverage = ((outer * outer - dx * dx - dy * dy) * band).clamp(0., 1.) * opacity;
+            if coverage > 0. {
+                let i = y * w + x;
+                let old = std::array::from_fn(|k| frame.data[i * 3 + k] as f32);
+                put(frame, i, blend(old, color, coverage));
+            }
+        }
+    }
+}
+fn filaments(frame: &mut RawFrame, luma: &[f32], edition: u32, seconds: f32) {
+    let w = frame.width as usize;
+    let h = frame.height as usize;
+    let scale = w as f32 / 1920.;
+    for p in frame.data.chunks_exact_mut(3) {
+        p.copy_from_slice(&[7, 13, 22]);
+    }
+    let silk = edition == 29;
+    let spacing = ((if silk { 30. } else { 22. }) * scale).max(3.) as usize;
+    let span = (3. * scale).max(1.) as usize;
+    // Smooth orientation fields are evaluated once per coordinate, not per stroke step.
+    let horizontal: Vec<_> = (0..w)
+        .map(|x| (x as f32 / w as f32 * 5. + seconds * 0.12).sin())
+        .collect();
+    let vertical: Vec<_> = (0..h)
+        .map(|y| (y as f32 / h as f32 * 6. - seconds * 0.10).cos())
+        .collect();
+    for sy in (0..h).step_by(spacing) {
+        for sx in (0..w).step_by(spacing) {
+            let seed = hash(sx + 19, sy + 53);
+            let mut x = (sx as f32 + seed * spacing as f32).min((w - 2) as f32);
+            let mut y = (sy as f32 + hash(sy + 97, sx) * spacing as f32).min((h - 2) as f32);
+            let l = luma[y as usize * w + x as usize];
+            // Thin the dark background continuously instead of popping strokes on/off.
+            let strength = ((l - 0.025) * 3.).clamp(0.035, 1.);
+            let color = if silk {
+                blend(
+                    [45., 112., 120.],
+                    [239., 180., 132.],
+                    (l * 1.5 + seed * 0.2).clamp(0., 1.),
+                )
+            } else {
+                blend(
+                    [60., 120., 143.],
+                    [247., 217., 170.],
+                    (l * 1.7).clamp(0., 1.),
+                )
+            };
+            let steps = if silk {
+                38 + (seed * 28.) as usize
+            } else {
+                12 + (seed * 25.) as usize
+            };
+            let mut velocity = (vertical[y as usize] * 0.7, horizontal[x as usize] * 0.7);
+            for step in 0..steps {
+                let ix = x.clamp(0., (w - 1) as f32) as usize;
+                let iy = y.clamp(0., (h - 1) as f32) as usize;
+                let dx =
+                    luma[iy * w + (ix + span).min(w - 1)] - luma[iy * w + ix.saturating_sub(span)];
+                let dy =
+                    luma[(iy + span).min(h - 1) * w + ix] - luma[iy.saturating_sub(span) * w + ix];
+                let target = (
+                    -dy * 14. + vertical[iy] * 0.5,
+                    dx * 14. + horizontal[ix] * 0.5,
+                );
+                velocity.0 = velocity.0 * 0.72 + target.0 * 0.28;
+                velocity.1 = velocity.1 * 0.72 + target.1 * 0.28;
+                let norm = (velocity.0 * velocity.0 + velocity.1 * velocity.1)
+                    .sqrt()
+                    .max(0.04);
+                let next = (
+                    x + velocity.0 / norm * 2.4 * scale,
+                    y + velocity.1 / norm * 2.4 * scale,
+                );
+                let t = step as f32 / steps as f32;
+                let taper = (t * 8.).min((1. - t) * 6.).min(1.).max(0.);
+                let pulse = (t - seconds / 12. - seed).rem_euclid(1.);
+                let head = (1. - (pulse - 0.5).abs() * 5.).max(0.);
+                let radius = (if silk {
+                    0.8 + head * 0.7
+                } else {
+                    0.6 + l * 0.7
+                }) * scale
+                    * taper;
+                stroke(
+                    frame,
+                    (x, y),
+                    next,
+                    radius,
+                    color,
+                    strength * taper * (0.5 + head * 0.45),
+                );
+                x = next.0;
+                y = next.1;
+                if x < 1. || y < 1. || x >= (w - 2) as f32 || y >= (h - 2) as f32 {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod sampling_tests {
+    use super::*;
+    #[test]
+    fn precomputed_translations_preserve_bilinear_samples_at_borders_and_fractional_offsets() {
+        let (w, h) = (19, 13);
+        let data: Vec<_> = (0..w * h).map(|i| (i * 37 % 251) as f32 / 251.).collect();
+        for (ox, oy, dx, dy) in [
+            (0., 0., 0., 0.),
+            (2.3, -1.7, 9.1, 5.4),
+            (-8.2, 4.1, 0.3, 0.7),
+            (22., -20., 1.5, 1.5),
+        ] {
+            let map = ShiftSample::new(w, h, ox, oy, dx, dy);
+            for y in 0..h {
+                for x in 0..w {
+                    assert_eq!(
+                        map.get(&data, x, y),
+                        sample(&data, w, h, x as f32 + ox - dx, y as f32 + oy - dy)
+                    );
+                }
+            }
         }
     }
 }
