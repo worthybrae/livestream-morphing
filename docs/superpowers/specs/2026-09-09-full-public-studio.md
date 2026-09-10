@@ -21,3 +21,7 @@ A five-stage interactive diagram explains luminance, smoothing, contour extracti
 111 native Rust tests pass. 15 WASM crate tests pass, including the same effect tests plus bridge bounds and pixel output. Portfolio tests include the actual compiled WASM's metadata/output, arbitrary sliders and save/restore validation, deferred source loading, diagram selection/animation toggles, worker redraws after offscreen edits, final-frame pause behavior, and retryable playback failures. The reviewer identified the last three lifecycle cases; fixes and focused tests are included.
 
 Browser QA confirmed all 14 labeled sliders, native WASM drawing at 1920×1080, an arbitrary threshold change to 33 while paused, playback controls, and the animated flow diagram. The unchanged live pipeline stays deployed independently.
+
+## Deployment
+
+Portfolio commit `0be38c0`, Railway deployment `e9d06948-dcb7-4cd7-8b55-381eda846763`: SUCCESS. Shared Rust/browser source commit `873f07f`. Final portfolio checks: 102 tests passed and production build passed. Native: 111 tests; WASM crate: 15 tests. Production WASM and source URLs returned 200 with correct application/wasm and video/mp4 content types and byte lengths (149105 and 604202). Browser confirmed all 14 sliders, initialized 1920×1080 canvas, no engine error, and an arbitrary fine-threshold value of 33. A measured production-page preview render was 106 ms on this device. Reset restored the starting look.
