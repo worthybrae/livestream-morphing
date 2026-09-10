@@ -681,8 +681,39 @@ fn palette_knife(frame: &mut RawFrame, luma: &[f32], edition: u32) {
                 let by = sn.abs() * length + cs.abs() * width;
                 let c = color_at(luma[i]);
                 let tint = (seed - 0.5) * 16.;
+                // Clip scanlines to the convex knife face, retaining a two-pixel
+                // guard for floating-point boundary rounding. Pixel math is unchanged.
+                let ua = cs as f64 / length as f64;
+                let ub = sn as f64 / length as f64;
+                let va = -(sn as f64) / width as f64;
+                let vb = cs as f64 / width as f64;
+                let planes = [
+                    (0.2 * ua + va, 0.2 * ub + vb, 0.9),
+                    (0.2 * ua - va, 0.2 * ub - vb, 0.9),
+                    (ua + 0.18 * va, ub + 0.18 * vb, 1.),
+                    (ua - 0.18 * va, ub - 0.18 * vb, 1.),
+                    (-ua + 0.18 * va, -ub + 0.18 * vb, 1.),
+                    (-ua - 0.18 * va, -ub - 0.18 * vb, 1.),
+                ];
                 for yy in (cy - by).max(0.) as usize..=(cy + by).min((h - 1) as f32) as usize {
-                    for xx in (cx - bx).max(0.) as usize..=(cx + bx).min((w - 1) as f32) as usize {
+                    let mut left = -bx as f64;
+                    let mut right = bx as f64;
+                    for &(a, b, c) in &planes {
+                        if a.abs() > 1e-12 {
+                            let edge = (c - b * (yy as f64 - cy as f64)) / a;
+                            if a > 0. {
+                                right = right.min(edge);
+                            } else {
+                                left = left.max(edge);
+                            }
+                        }
+                    }
+                    let start =
+                        (cx as f64 + left - 2.).floor().max(0.).min((w - 1) as f64) as usize;
+                    let end = (cx as f64 + right + 2.).ceil().max(0.).min((w - 1) as f64) as usize;
+                    let start = start.max((cx - bx).max(0.) as usize);
+                    let end = end.min((cx + bx).min((w - 1) as f32) as usize);
+                    for xx in start..=end {
                         let ox = xx as f32 - cx;
                         let oy = yy as f32 - cy;
                         let u = (ox * cs + oy * sn) / length;

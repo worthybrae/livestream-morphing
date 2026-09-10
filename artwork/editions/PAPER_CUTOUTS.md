@@ -58,3 +58,7 @@ The lower coat remains present. Upper deposits are revealed at staggered phases 
 ## Solid knife
 
 Edition 48 restores paint opacity while retaining edition 47's smooth detail/orientation and cached footprints. Adjacent orientations accumulate coverage and lighting in a bounded local scratch buffer, then deposit a single opaque stroke. This removes the transparency introduced by compositing each orientation separately. Upper layers reveal spatially from the middle outward rather than fading the whole face. Ridge lighting is stronger. Original 46 and softer 47 remain as references; final warp is unchanged.
+
+## Appearance-preserving Fine knife optimization
+
+Convex scanline bounds skip pixels outside the knife face, with a two-pixel guard and intersection with the original bounding box. Per-pixel paint calculations and draw order remain unchanged. Full 719-frame output at 1080p/29.97, CRF23 was byte-identical to the original Fine knife MP4. Native wall time improved from 52.96s to 46.60s in local runs (full command 54.6s to 48.2s). Still slower than real time; not a production cost guarantee. A separate pigment-lattice cache experiment preserved bytes but showed no speed improvement and was discarded.
