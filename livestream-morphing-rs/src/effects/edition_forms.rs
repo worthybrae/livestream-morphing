@@ -265,7 +265,7 @@ impl Forms {
                 }
             }
             26 | 27 => paper_relief(frame, luma, edition, seconds),
-            32..=43 => paper_cutouts(frame, luma, edition, seconds, environment),
+            32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
             _ => unreachable!(),
         }
@@ -569,7 +569,7 @@ fn paper_cutouts(
                     [255., 242., 213.],
                     edge,
                 );
-                let c = if edition >= 42 {
+                let c = if edition == 42 || edition == 43 {
                     let sx = x as f32 / scale;
                     let sy = y as f32 / scale;
                     // Broad diagonal pulls across the foreground, finer marks above.
@@ -595,6 +595,9 @@ fn paper_cutouts(
                 put(frame, i, std::array::from_fn(|k| c[k] + fiber));
             }
         }
+        if edition == 44 {
+            painted_dabs(frame, luma, &layers);
+        }
         // The final shared warp supplies spatial antialiasing on the hard masks.
         return;
     }
@@ -619,6 +622,80 @@ fn paper_cutouts(
         }
     }
 }
+// Two coats of separately deposited paint. Marks are clipped to the paper masks,
+// and their orientation follows coarse source gradients with a stable seed offset.
+fn painted_dabs(frame: &mut RawFrame, luma: &[f32], layers: &[f32]) {
+    let w = frame.width as usize;
+    let h = frame.height as usize;
+    let scale = w as f32 / 1920.;
+    let base = frame.data.clone();
+    for (coat, spacing) in [24., 12.].iter().enumerate() {
+        let step = (spacing * scale).max(3.) as usize;
+        for gy in (0..h).step_by(step) {
+            for gx in (0..w).step_by(step) {
+                let seed = hash(gx + coat * 131, gy + 67);
+                let cx = (gx as f32 + (seed - 0.5) * step as f32).clamp(0., (w - 1) as f32);
+                let cy =
+                    (gy as f32 + (hash(gx + 97, gy) - 0.5) * step as f32).clamp(0., (h - 1) as f32);
+                let ix = cx as usize;
+                let iy = cy as usize;
+                let center = iy * w + ix;
+                let d = step;
+                let dx = luma[iy * w + (ix + d).min(w - 1)] - luma[iy * w + ix.saturating_sub(d)];
+                let dy = luma[(iy + d).min(h - 1) * w + ix] - luma[iy.saturating_sub(d) * w + ix];
+                let angle = if dx.abs() + dy.abs() > 0.025 {
+                    dy.atan2(dx) + 1.57 + (seed - 0.5) * 0.9
+                } else {
+                    seed * 6.283
+                };
+                let (sn, cs) = angle.sin_cos();
+                let length = step as f32 * (1.05 + seed * 0.8);
+                let width = step as f32 * (0.36 + hash(gx, gy + 43) * 0.28);
+                let bound = length + width;
+                let pigment = (seed - 0.5) * 22.;
+                let color: [f32; 3] =
+                    std::array::from_fn(|k| base[center * 3 + k] as f32 + pigment);
+                for y in
+                    ((cy - bound).max(0.) as usize)..=((cy + bound).min((h - 1) as f32) as usize)
+                {
+                    for x in ((cx - bound).max(0.) as usize)
+                        ..=((cx + bound).min((w - 1) as f32) as usize)
+                    {
+                        let i = y * w + x;
+                        if layers[i] != layers[center] {
+                            continue;
+                        }
+                        let ox = x as f32 - cx;
+                        let oy = y as f32 - cy;
+                        let u = (ox * cs + oy * sn) / length;
+                        let v = (-ox * sn + oy * cs) / width;
+                        let irregular =
+                            0.09 * ((u * 9. + seed * 12.).sin()) * (1. - u.abs()).max(0.);
+                        let q = u * u + (v + irregular) * (v + irregular);
+                        if q >= 1. {
+                            continue;
+                        }
+                        let rim = ((1. - q) * 10.).clamp(0., 1.);
+                        let broken = 0.65
+                            + 0.35 * paint_noise(u * 3. + seed * 37., v * 5. + coat as f32 * 19.);
+                        let opacity = rim * broken * if coat == 0 { 0.65 } else { 0.42 };
+                        let ridge =
+                            ((v * 18. + u * 2. + seed * 20.).sin() * 0.6 + v * 3.) * (1. - q) * 2.;
+                        // Pigment changes across each stroke; a lit lip gives the deposit body.
+                        let light = (-v * 7. - u * 2. + ridge) * (1. - q).sqrt();
+                        let old = std::array::from_fn(|k| frame.data[i * 3 + k] as f32);
+                        put(
+                            frame,
+                            i,
+                            blend(old, std::array::from_fn(|k| color[k] + light), opacity),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 // One antialiased capsule per integration step, replacing overlapping disc stamps.
 fn stroke(
     frame: &mut RawFrame,

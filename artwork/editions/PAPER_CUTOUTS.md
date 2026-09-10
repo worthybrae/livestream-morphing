@@ -36,3 +36,9 @@ The day-cycle film is explicitly accelerated (one hour per second). The London s
 Editions 42 and 43 add directional pigment fields and simulated ridge lighting inside Rose garden's discrete paper masks. Smooth, deterministic anisotropic noise produces elongated strokes; stroke breadth increases toward the foreground, and source luminance supplies restrained tonal variation. These are procedural brush coordinates, not semantic object recognition or motion-tracked strokes. All paint construction precedes the exact signature warp, so texture deforms with the surface. The two editions differ only in texture strength (0.85 vs 1.4). Static Rose garden colors isolate this material experiment from environmental palette changes.
 
 Compare the moving films for material quality, texture shimmer, and compression cost. This is a stylized painted-relief experiment, not a claim of photorealistic oil painting. No production deployment.
+
+## Layered brushwork
+
+Edition 44 replaces the continuous diagonal texture with two coats of individually rasterized paint marks. Seeded positions and irregular footprints overlap; each mark has its own pigment load, internal ridges and lighting. Broad source gradients guide direction where present; quieter areas use varied seeded angles. Every deposit is clipped to its source paper layer. These are source-responsive procedural marks, not tracked physical strokes. All construction still precedes the exact final warp. No accumulated history.
+
+This is a material-quality experiment with additional rasterization cost; measure before considering live adoption.
