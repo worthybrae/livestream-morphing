@@ -81,5 +81,6 @@ pub mod living_ink;
 pub mod editions;
 
 mod edition_forms;
+mod oil_paint;
 
 mod knife_layers;

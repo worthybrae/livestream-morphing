@@ -1,0 +1,6 @@
+[
+{"id":65,"slug":"baseline","name":"Current live reference","description":"Fine knife with small-form accents.","params":{"hour":14}},
+{"id":66,"slug":"measured-brushwork","name":"Measured brushwork","description":"Pigment-aware strokes stop at color boundaries; finer brushes repair lost forms.","params":{"hour":14}},
+{"id":67,"slug":"broken-color","name":"Broken color","description":"Longer, narrower painted passages with irregular dry tips.","params":{"hour":14}},
+{"id":68,"slug":"loaded-brush","name":"Loaded brush","description":"Fuller paint deposits with stronger bristle relief.","params":{"hour":14}}
+]

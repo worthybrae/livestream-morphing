@@ -7,6 +7,7 @@ pub(super) struct Forms {
     glass: Vec<(u32, u8)>,
     sites: Vec<(usize, usize, f32)>,
     knife: super::knife_layers::KnifeLayers,
+    oil: super::oil_paint::OilPaint,
 }
 #[inline(always)]
 fn hash(x: usize, y: usize) -> f32 {
@@ -286,6 +287,7 @@ impl Forms {
             63 => palette_knife::<15>(frame, luma, edition, environment, None),
             64 => palette_knife::<16>(frame, luma, edition, environment, None),
             65 => palette_knife::<17>(frame, luma, edition, environment, Some(fine_luma)),
+            66..=68 => self.oil.draw(frame, fine_luma, environment, edition - 66),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),
@@ -648,7 +650,7 @@ fn paper_cutouts(
 // Opaque angular deposits construct the image, without paper-layer masks.
 // Smooth, circular London clock palette. Computed once per frame, independent
 // of the painting/warp phase. These are artistic clock anchors, not solar events.
-fn knife_day_tint([hour, cloud, rain]: [f32; 3]) -> [f32; 3] {
+pub(super) fn knife_day_tint([hour, cloud, rain]: [f32; 3]) -> [f32; 3] {
     let stops = [
         (0., [-13., -5., 27.]),
         (4., [-13., -5., 27.]),
@@ -671,7 +673,7 @@ fn knife_day_tint([hour, cloud, rain]: [f32; 3]) -> [f32; 3] {
         + overcast[k] * cloud * 0.45 + wet[k] * rain)
 }
 
-fn knife_night_strength(hour: f32) -> f32 {
+pub(super) fn knife_night_strength(hour: f32) -> f32 {
     let hour = hour.rem_euclid(24.);
     let smooth = |t: f32| { let t = t.clamp(0., 1.); t*t*(3.-2.*t) };
     1. - smooth((hour - 4.5) / 3.5) + smooth((hour - 18.) / 3.)
@@ -679,7 +681,7 @@ fn knife_night_strength(hour: f32) -> f32 {
 
 // A hue-preserving soft shoulder, with positive slope even in the brightest
 // highlights. Build 256 entries once; pixels need no divisions or extra pass.
-fn knife_highlight_table(night: f32) -> [(f32, f32); 256] {
+pub(super) fn knife_highlight_table(night: f32) -> [(f32, f32); 256] {
     std::array::from_fn(|i| {
         let peak = i as f32;
         let excess = (peak - 150.).max(0.);
@@ -692,7 +694,7 @@ fn knife_highlight_table(night: f32) -> [(f32, f32); 256] {
 
 // Source-based saturation/exposure, before paint relief. Keep a trace of
 // source hue at night rather than recoloring the whole street purple.
-fn knife_atmosphere(rgb: [f32; 3], grade: [f32; 3], gain: f32, tint: f32, weather: [f32; 3]) -> [f32; 3] {
+pub(super) fn knife_atmosphere(rgb: [f32; 3], grade: [f32; 3], gain: f32, tint: f32, weather: [f32; 3]) -> [f32; 3] {
     let gray = rgb[0]*0.299 + rgb[1]*0.587 + rgb[2]*0.114;
     std::array::from_fn(|k| (gray + (rgb[k]-gray)*grade[0]) * gain * grade[1]
         + weather[k]*tint*grade[2])

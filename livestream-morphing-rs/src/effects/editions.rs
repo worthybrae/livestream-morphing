@@ -91,7 +91,7 @@ fn mineral_palette(
         ];
         let rain_palette = [
             [14., 27., 38.],
-            [40., 65., 82.],
+            [40., 68., 82.],
             [100., 128., 145.],
             [175., 194., 198.],
             [221., 235., 230.],
@@ -119,7 +119,7 @@ impl Effect for Editions {
     }
     fn params(&self) -> Vec<ParamDef> {
         vec![
-            ParamDef::new("edition", "Edition", 0., 65., 0., 1.),
+            ParamDef::new("edition", "Edition", 0., 68., 0., 1.),
             ParamDef::new("hour", "Local hour", 0., 24., 14., 0.25),
             ParamDef::new("cloud", "Cloud cover", 0., 1., 0.3, 0.05),
             ParamDef::new("rain", "Wet atmosphere", 0., 1., 0., 0.05),
@@ -153,7 +153,7 @@ impl Effect for Editions {
                 .filter(|x| x.is_finite())
                 .unwrap_or(default)
         };
-        let edition = get("edition", 0.).round().clamp(0., 65.) as u32;
+        let edition = get("edition", 0.).round().clamp(0., 68.) as u32;
         let detail = get("detail", 1.).clamp(0.5, 2.);
         let pigment = get("pigment", 1.).clamp(0.5, 1.5);
         for (i, p) in frame.data.chunks_exact(3).enumerate() {
@@ -179,7 +179,7 @@ impl Effect for Editions {
         if edition >= 22 {
             let seconds = ctx.frame_number as f64 * ctx.delta_seconds.max(0.) as f64;
             let hour = if get("day_cycle", 0.) >= 0.5 { repeat(seconds as f32, 24.) } else { get("hour", 14.).clamp(0.,24.) };
-            if edition == 65 {
+            if edition >= 65 {
                 super::living_ink::blur(&self.luma,&mut self.scratch,&mut self.glow,w,h,1);
             }
             self.forms.draw(frame, &self.smooth, &self.glow, edition, seconds as f32, [hour, get("cloud",0.3).clamp(0.,1.), get("rain",0.).clamp(0.,1.)]);
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn every_material_is_distinct_deterministic_and_keeps_moving() {
         let mut results = std::collections::HashSet::new();
-        for edition in 0..=65 {
+        for edition in 0..=68 {
             let params = ParamValues::from([("edition".into(), edition as f32), ("hour".into(), 0.)]);
             let mut a = image();
             let mut b = image();
