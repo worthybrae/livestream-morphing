@@ -213,7 +213,7 @@ impl Painter {
             // Input is ordered by coat: a count-based split gives one worker
             // most of the large, expensive masks. Share individual new marks
             // instead; deposition order is still defined by the input packet.
-            for _ in 0..missing.len().min(4) {
+            for _ in 0..missing.len().min(8) {
                 let next=&next;let missing=&missing;
                 jobs.push(scope.spawn(move|| {
                     let mut made=Vec::new();
@@ -228,11 +228,11 @@ impl Painter {
         });
         self.cache.extend(made);
         let mut changed:Vec<_>=self.cache.values_mut().filter(|s|s.key!=Some(s.pending)).collect();
-        let size=changed.len().div_ceil(4).max(1);
+        let size=changed.len().div_ceil(8).max(1);
         std::thread::scope(|scope| {for chunk in changed.chunks_mut(size) {
             scope.spawn(move|| {for stamp in chunk {stamp.prepare_phase();}});
         }});
-        raster(&mut self.canvas,self.w,self.h,values,&self.cache,4,!append);
+        raster(&mut self.canvas,self.w,self.h,values,&self.cache,8,!append);
         for (dst,src) in self.rgb.chunks_exact_mut(3).zip(self.canvas.chunks_exact(4)) {dst.copy_from_slice(&src[..3]);}
         Some(&self.rgb)
     }

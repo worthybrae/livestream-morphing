@@ -60,7 +60,7 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
   warm raster median from 91.03 to 63.18 ms (31%), with identical output pixels
   across eight subpixel poses. This measures brush rasterization, not total
   pipeline throughput; the cadence guard still measures complete live segments.
-- New texture generation shares individual strokes between four workers. A
+- New texture generation shares individual strokes between workers. A
   count-based split concentrated large strokes on one worker because input is
   ordered by coat. Pixel order is unchanged; a test compares complete mixed-size
   paintings and subsequent appends against serial brush deposition.
@@ -70,6 +70,12 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
   fell from 1,066.98 to 376.66 ms in the recorded-study case. All output pixels
   matched across seven poses per case. This measures rendering, not a guarantee
   of a fixed live frame rate.
+- Texture generation, subpixel preparation and rasterization now use eight
+  workers within the existing eight-vCPU allocation. Compared with four workers
+  on the same production host, 5%-identity-churn raster medians fell from 47.49
+  to 28.99 ms with 22,794 study marks, and from 86.15 to 56.46 ms with 45,000
+  marks. All output pixels matched across seven poses per case. This is a
+  wall-time measurement, not a billing estimate; no service or quota was added.
 - The day/night grade processes four RGB pixels together on AVX2 hosts, with
   scalar fallback and bounded tail loads. On the production CPU, full-resolution
   grade medians fell from 11.44–12.47 to 3.31–3.92 ms across six palette times.
