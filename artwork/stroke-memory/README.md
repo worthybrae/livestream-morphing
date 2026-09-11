@@ -129,3 +129,50 @@ coats, and that those fine marks retain identical identity/geometry/pigment
 over repeated static frames. The native raster code is unchanged.
 
 Preview: http://127.0.0.1:3092/stroke-memory/#moving-fine-detail
+
+## Human focus: varying effort by subject
+
+The selective-detail pass treated contrast as importance. That also enriched
+foliage, while small people could still disappear into coarse underpaint.
+`--detail people` instead allocates the finishing coat to detected people.
+The original three coats remain the background; no full-resolution video
+patches are composited into the painting.
+
+An optional, pinned 3.8 MB NanoDet model finds people in overlapping crops
+approximately twice per second. Anonymous attention boxes follow the existing
+motion field between checks. Matched detections smooth box jitter; a missed
+detection has a 1.2-second grace period followed by an 0.8-second fade, rather
+than instantly changing the painting's level of detail. See `PERSON_MODEL.md`
+for the upstream source, Apache-2.0 license, checksum and limitations.
+
+Within those soft attention areas, denser overlapping loaded marks paint the
+whole figure, including low-contrast clothing. Full source colors and tighter
+boundary limits separate small shapes. The first attempt used narrow marks
+and looked scratchy, so the final study uses fuller overlapping deposits.
+Source boundaries shorten marks at heads, limbs and clothing changes; the
+system does not infer pose, invent facial features, or explicitly segment
+those body parts. The same pigment grading and 15/30 paint/wave cadence remain.
+
+```sh
+python3 artwork/stroke-memory/fetch_person_model.py
+python3 artwork/stroke-memory/render.py /absolute/street.ts /absolute/moving-human-focus.mp4 --seconds 24.024 --detail people
+```
+
+The full 720-frame recording rendered in 78.36 seconds locally. The detector
+ran 48 times, with a 99.78 ms median for the complete crop batch; the raster
+round trip was 59.82 ms median. Peak population was 35,028 brush marks. These
+costs are included in the total, not a cached/precomputed-detection estimate.
+The previous selective-detail recording took 72.75 seconds. Neither path is
+yet real-time or a measured production hosting cost.
+
+Eleven Python tests cover the existing motion behavior plus detector output
+ordering across OpenCV versions, empty detections, attention transport,
+temporary misses/expiry, stable tracking IDs and concentrating fine pigment
+on a low-contrast figure instead of a busy background. Full video decode and
+HTTP byte-range playback are also checked. Native raster code is unchanged.
+
+Detection can miss obscured people or mistake other forms for a person. This
+is a reviewable subject-aware painting study, not a solved semantic rendering
+system. The live engine and portfolio remain unchanged.
+
+Preview: http://127.0.0.1:3092/stroke-memory/#moving-human-focus

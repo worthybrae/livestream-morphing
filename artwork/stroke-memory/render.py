@@ -60,7 +60,7 @@ class Painting:
         self.scale = width/1920
         self.steps = np.array([32., 17., 6.])*self.scale
         if detail != 'original':
-            self.steps = np.append(self.steps, 5.5*self.scale)
+            self.steps = np.append(self.steps, (2.8 if detail=='people' else 5.5)*self.scale)
         self.strokes = np.empty((0, 12), np.float32)
         self.failures = np.empty(0, np.float32)
         self.age = np.empty(0, np.int32)
@@ -82,7 +82,9 @@ class Painting:
             self.candidates.append(pts[order])
             self.variants.append(variants[order])
 
-    def update(self, image, forward, backward, detail_image=None):
+    def update(self, image, forward, backward, detail_image=None, attention=None):
+        if self.detail=='people' and attention is None:
+            raise ValueError('Person-guided brushwork requires an attention field')
         first = not len(self.strokes)
         rgb = image.astype(np.float32)
         analysis_scale = image.shape[1]/self.w
@@ -112,15 +114,16 @@ class Painting:
             radius = self.scale*detail_scale
             detail_rgb = detail_image.astype(np.float32)
             accent = cv2.GaussianBlur(detail_rgb, (0,0), .6*radius)
-            surround = cv2.GaussianBlur(detail_rgb, (0,0), 4.*radius)
-            contrast_channels = cv2.split(cv2.absdiff(accent,surround))
-            accent_feature = cv2.max(cv2.max(contrast_channels[0],contrast_channels[1]),contrast_channels[2])
             detail_gray = cv2.cvtColor(detail_image, cv2.COLOR_RGB2GRAY).astype(np.float32)
             local = cv2.GaussianBlur(detail_gray, (0,0), .9*radius)
             ax = cv2.Sobel(local, cv2.CV_32F, 1, 0, ksize=3)*.125
             ay = cv2.Sobel(local, cv2.CV_32F, 0, 1, ksize=3)*.125
-            tensor = cv2.GaussianBlur(np.stack([ax*ax, ay*ay, ax*ay], axis=2), (0,0), 2.*radius)
-            coherence = np.sqrt((tensor[:,:,0]-tensor[:,:,1])**2+4*tensor[:,:,2]**2)/(tensor[:,:,0]+tensor[:,:,1]+1)
+            if self.detail!='people':
+                surround = cv2.GaussianBlur(detail_rgb, (0,0), 4.*radius)
+                contrast_channels = cv2.split(cv2.absdiff(accent,surround))
+                accent_feature = cv2.max(cv2.max(contrast_channels[0],contrast_channels[1]),contrast_channels[2])
+                tensor = cv2.GaussianBlur(np.stack([ax*ax, ay*ay, ax*ay], axis=2), (0,0), 2.*radius)
+                coherence = np.sqrt((tensor[:,:,0]-tensor[:,:,1])**2+4*tensor[:,:,2]**2)/(tensor[:,:,0]+tensor[:,:,1]+1)
             sources.append((accent, detail_scale))
         if len(self.strokes):
             pts = self.strokes[:, 1:3]*self.factor
@@ -139,12 +142,20 @@ class Painting:
             mismatch = np.max(np.abs(delta), axis=1)
             # Give a bad estimate one frame to recover, then retire the mark.
             bad = (~trusted & (mismatch>24)) | (mismatch>65)
+            people_marks = (self.strokes[:,11]==3) & (self.detail=='people')
+            if people_marks.any():
+                presence = sample(attention,self.strokes[people_marks,1:3]*self.factor)[:,0]
+                bad[people_marks] |= presence<.025
             self.failures = np.where(bad, self.failures+1, np.maximum(0, self.failures-1))
             dying = self.failures>=2
             self.strokes[:, 10] = np.clip(self.strokes[:, 10]+np.where(dying, -.28, .24), 0, 1)
             # Pigment settles per mark, not per pixel. Deadband ignores camera noise.
             delta[np.abs(delta)<2.5] = 0
             self.strokes[:, 7:10] += np.clip(delta*.22, -7, 7)
+            if people_marks.any():
+                # Small moving figures must refresh faster than broad scenery
+                # or old coat colors swallow heads and limbs for several frames.
+                self.strokes[people_marks,7:10] += np.clip(delta[people_marks]*.42,-12,12)-np.clip(delta[people_marks]*.22,-7,7)
             inside = ((self.strokes[:, 1]>0) & (self.strokes[:, 1]<self.w-1) &
                       (self.strokes[:, 2]>0) & (self.strokes[:, 2]<self.h-1))
             keep = inside & (self.strokes[:, 10]>.015)
@@ -155,10 +166,16 @@ class Painting:
         for coat, (pts, variety, step, (blurred, image_scale)) in enumerate(zip(
                 self.candidates, self.variants, self.steps, sources)):
             if coat == 3:
-                contrast = pigment(accent_feature, pts, image_scale)[:,0]
-                structure = pigment(coherence, pts, image_scale)[:,0]
-                eligible = (contrast > 14) & (structure > .30)
-                eligible &= variety[:,3] < .80
+                if self.detail=='people':
+                    priority = sample(attention,pts*self.factor)[:,0]
+                    # Dense source-colored paint across the person, not just
+                    # glints at high-contrast edges. Feather effort at the margin.
+                    eligible = priority>variety[:,3]*.90+.04
+                else:
+                    contrast = pigment(accent_feature, pts, image_scale)[:,0]
+                    structure = pigment(coherence, pts, image_scale)[:,0]
+                    eligible = (contrast > 14) & (structure > .30)
+                    eligible &= variety[:,3] < .80
             else:
                 detail = pigment(feature, pts)[:,0]
                 eligible = np.ones(len(pts), bool) if coat==0 else detail > (8 if coat==1 else 17)
@@ -180,7 +197,8 @@ class Painting:
             ids = np.flatnonzero(eligible)
             if not first:
                 # A fixed replenishment budget prevents a noisy frame from exploding count.
-                ids = ids[:max(24,int(len(pts)*(.015 if coat==3 else .035)))]
+                budget = 1200 if coat==3 and self.detail=='people' else max(24,int(len(pts)*(.015 if coat==3 else .035)))
+                ids = ids[:budget]
             if not len(ids):
                 continue
             xy, rv = pts[ids], variety[ids]
@@ -191,9 +209,16 @@ class Painting:
             angle = np.arctan2(gy,gx)+np.pi/2
             # Long flowing passages in quiet regions; short marks at small features.
             base = (rv[:,0]-.5)*1.2-.30
+            if coat==3 and self.detail=='people':
+                base = -np.pi/2+(rv[:,0]-.5)*.65
             angle = np.where(energy>1.5, angle+(rv[:,1]-.5)*.32, base)
             lengths = step*([1.35,1.2,.90,.60][coat]+rv[:,0]*[.85,.65,.55,.85][coat])
             widths = step*([.55,.40,.30,.25][coat]+rv[:,1]*[.16,.14,.20,.22][coat])
+            if coat==3 and self.detail=='people':
+                lengths = step*(1.+rv[:,0])
+                # Overlapping loaded marks build the body/clothing as paint.
+                # Hairline marks leave coarse underpaint showing through it.
+                widths = step*(.95+rv[:,1]*.25)
             # Stop each axis at the first distinct color boundary.
             for axis in [0,1]:
                 axis_angle = angle+(np.pi/2 if axis else 0)
@@ -205,15 +230,18 @@ class Painting:
                     reach = direction*(extent*fraction)[:,None]
                     a = pigment(blurred,xy+reach,image_scale,coat==3)
                     b = pigment(blurred,xy-reach,image_scale,coat==3)
-                    crossing = np.maximum(np.max(np.abs(a-c),axis=1),np.max(np.abs(b-c),axis=1)) > [29,26,32,22][coat]
+                    threshold = 18 if coat==3 and self.detail=='people' else [29,26,32,22][coat]
+                    crossing = np.maximum(np.max(np.abs(a-c),axis=1),np.max(np.abs(b-c),axis=1)) > threshold
                     stop = crossing & active
                     limit[stop] = max(.25,fraction-.13)
                     active[stop] = False
                 extent *= limit
+            if coat==3 and self.detail=='people':
+                widths = np.maximum(widths,.7*self.scale)
             p = np.zeros((len(ids),12),np.float32)
             p[:,0] = np.arange(self.next_id,self.next_id+len(ids))
             p[:,1:3], p[:,3], p[:,4], p[:,5], p[:,6] = xy, lengths, widths, angle, rv[:,2]
-            p[:,7:10], p[:,10], p[:,11] = c, (1 if first else .25), coat
+            p[:,7:10], p[:,10], p[:,11] = c, (1 if first else (.8 if coat==3 and self.detail=='people' else .25)), coat
             additions.append(p)
             self.next_id += len(ids)
         if additions:
@@ -241,7 +269,12 @@ class Painting:
             self.ground[:,11]=-1
         self.ground[:,7:10]=pigment(broad,self.ground[:,1:3])
         self.previous_gray=current_gray
-        return np.concatenate([self.ground,self.strokes])
+        marks = np.concatenate([self.ground,self.strokes])
+        if self.detail=='people':
+            selected = marks[:,11]==3
+            if selected.any():
+                marks[selected,10] *= sample(attention,marks[selected,1:3]*self.factor)[:,0]
+        return marks
 
 
 def main():
@@ -251,7 +284,8 @@ def main():
     ap.add_argument('--width',type=int,default=1920)
     ap.add_argument('--hour',type=float,default=15)
     ap.add_argument('--mode',choices=['transported','anchored'],default='transported')
-    ap.add_argument('--detail',choices=['original','selective'],default='original')
+    ap.add_argument('--detail',choices=['original','selective','people'],default='original')
+    ap.add_argument('--person-model',type=pathlib.Path,default=pathlib.Path(__file__).parent/'models/nanodet.onnx')
     args = ap.parse_args()
     root = pathlib.Path(args.output);root.parent.mkdir(parents=True,exist_ok=True)
     cap = cv2.VideoCapture(args.source)
@@ -262,6 +296,12 @@ def main():
     cv2.setNumThreads(2)
     dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
     book = Painting(w,h,(fw,fh),args.mode,args.detail,args.hour)
+    detector=people=None;next_detection=0;detection_cost=[];people_counts=[]
+    if args.detail=='people':
+        from people import PersonDetector, PeopleAttention
+        if not args.person_model.is_file():
+            raise RuntimeError('Run artwork/stroke-memory/fetch_person_model.py to fetch the optional person model')
+        detector=PersonDetector(args.person_model);people=PeopleAttention(w,h,(fw,fh))
     native = pathlib.Path(__file__).parent/'native/target/release/stroke-study-raster'
     error = root.with_suffix('.raster.log').open('w')
     painter = subprocess.Popen([str(native),str(w),str(h)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=error)
@@ -293,7 +333,16 @@ def main():
                 analysis=cv2.resize(bgr,(min(w,960),round(h*min(w,960)/w)),interpolation=cv2.INTER_AREA)
                 rgb=grade(cv2.cvtColor(analysis,cv2.COLOR_BGR2RGB),args.hour%24)
                 detail_rgb = None if args.detail=='original' else cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
-                marks=book.update(rgb,forward,backward,detail_rgb)
+                attention=None
+                if people is not None:
+                    detections=None
+                    if n>=next_detection:
+                        detection_start=time.perf_counter();detections=detector.detect(bgr)
+                        detection_cost.append((time.perf_counter()-detection_start)*1000)
+                        next_detection += fps/2
+                    attention=people.update(small,forward,backward,2/fps,detections)
+                    people_counts.append(len(people.tracks))
+                marks=book.update(rgb,forward,backward,detail_rgb,attention)
                 raster_start=time.perf_counter()
                 painter.stdin.write(struct.pack('<I',len(marks)))
                 painter.stdin.write(marks.astype('<f4').tobytes());painter.stdin.flush()
@@ -302,7 +351,10 @@ def main():
                 paint=np.frombuffer(raw,np.uint8).reshape(h,w,3)
                 native_cost.append((time.perf_counter()-raster_start)*1000)
                 updates.append(len(marks))
-                if n in [0,90,180,300]:cv2.imwrite(str(root.with_name(root.stem+f'-unwarped-{n}.png')),cv2.cvtColor(paint,cv2.COLOR_RGB2BGR))
+                if n in [0,90,180,300,480]:
+                    cv2.imwrite(str(root.with_name(root.stem+f'-unwarped-{n}.png')),cv2.cvtColor(paint,cv2.COLOR_RGB2BGR))
+                    if people is not None:
+                        root.with_name(root.stem+f'-attention-{n}.json').write_text(json.dumps(people.tracks.tolist()))
             # Hold paint between updates. Apply the original separable, edge-anchored wave once.
             phase=n/fps/8*np.pi*2
             sx=np.clip(xx+np.sin(phase+xx*8/w)*w*.012*ex,0,w-1)
@@ -322,6 +374,8 @@ def main():
            'native_roundtrip_p50_ms':float(np.median(native_cost)),'maximum_strokes':max(updates),
            'born':book.births,'retired':book.retired,'mode':args.mode,'hour':args.hour,'detail':args.detail,
            'flow_dimensions':[fw,fh],'source':str(pathlib.Path(args.source).resolve())}
+    if people is not None:
+        stats.update(person_detection_p50_ms=float(np.median(detection_cost)),person_detection_calls=len(detection_cost),maximum_person_tracks=max(people_counts),person_model=str(args.person_model.resolve()))
     root.with_suffix('.json').write_text(json.dumps(stats,indent=2));print(json.dumps(stats),flush=True)
 
 
