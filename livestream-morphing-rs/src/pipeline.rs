@@ -412,11 +412,15 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
         }
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
         if previous_stats.segment_completed_at>0 && now.saturating_sub(previous_stats.segment_completed_at)>FRESH_SEGMENT_MS {pipeline.reset();}
-        match crate::renderer::render(bytes,width,1,pts,previous_stats.rendered_frames,&mut pipeline,workers) {
+        let rendered=match crate::renderer::render(bytes,width,1,pts,previous_stats.rendered_frames,&mut pipeline,workers) {
             Ok(rendered) if rendered.frames as f64/rendered.fps<=13.0 => rendered,
             Ok(_) => {pipeline.reset();return Err("Source segment exceeds the 13-second HLS target".into());}
             Err(error) => {pipeline.reset();return Err(error);}
+        };
+        if let Some(paint)=pipeline.loaded.as_mut() {
+            paint.adapt(start.elapsed().as_secs_f64(),rendered.frames as f64/rendered.fps);
         }
+        rendered
     };
     let duration=rendered.frames as f64/rendered.fps;
     let mut times=rendered.times;

@@ -19,8 +19,12 @@ responses; dropping the supervisor kills and reaps the worker. Brush identities
 are compacted before their float32 namespaces collide. Base and adaptive mark
 populations are bounded at 45,000 and 20,000.
 
-`LOADED_PAINT_STRIDE` is a deployment setting (2–12; default 3). Production starts
-at 6: about 5 paint updates and 29.97 wave/output frames per second. The approved
+`LOADED_PAINT_STRIDE` sets the fastest permitted paint cadence (2–12; default 3).
+Production starts at 8: about 3.75 paint updates and 29.97 wave/output frames per
+second. Live processing may relax the stride up to 12 (2.5 paint updates/sec)
+when segment processing exceeds 90% of its playback duration. It recovers one
+step only after six segments below 75%, never exceeding the configured rate.
+The approved
 recorded study is 15 paint updates per second. No resolution, material or wave
 amplitude is reduced. Painting the next target overlaps wave/encoding of the
 preceding canvas. Reported frame timings include this overlap, not CPU time.
@@ -33,9 +37,10 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
 - Optimized 15-update source comparison at frame 90: mean RGB difference 0.086
   of 255; 99.0% of channel values unchanged. Small arithmetic differences can
   change a few near-threshold adaptive decisions.
-- 18 Python tests and 163 engine tests pass. Native raster test covers overlapping
+- 18 Python tests and 164 engine tests pass. Native raster tests cover overlapping
   subpixel stamps, parallel boundaries and append equivalence. Engine tests cover
-  an uneven segment boundary, held-frame order and stalled/invalid worker startup.
+  an uneven segment boundary, skipped-source recovery, a cadence change without
+  missing output frames, bounded load adaptation and stalled/invalid startup.
 - Local arm64 container, 24.024 s / 1080p: initial integrated 15-update replay took
   50.99 s; native optimizations plus overlapped 10-update replay took 28.93 s.
   These are local replay timings, not production throughput or a billing estimate.
