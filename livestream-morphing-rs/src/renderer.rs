@@ -13,12 +13,12 @@ struct Done { frame:RawFrame, milliseconds:f64 }
 struct Worker { input:mpsc::SyncSender<Job>, output:mpsc::Receiver<Done> }
 
 
-fn emit_paint(target:RawFrame, first:u64, repeats:usize, fps:f64, repaint:bool, calm:bool,
+fn emit_paint(target:RawFrame, first:u64, repeats:usize, fps:f64, repaint:bool, calm:bool, load:f32,
     pipeline:&mut Pipeline, encoder:&mut Option<codec::TsEncoder>, encode_ms:&mut f64, post_ms:&mut f64,
     #[cfg(test)] painted_frames:&mut Vec<Vec<u8>>) -> Result<(),Error> {
     let mut frame=target;
     let post_start=Instant::now();
-    if repaint {pipeline.repaint.advance_paint(&mut frame,(repeats as f64/fps) as f32,calm);}
+    if repaint {pipeline.repaint.set_load(load);pipeline.repaint.advance_paint(&mut frame,(repeats as f64/fps) as f32,calm);}
     *post_ms+=post_start.elapsed().as_secs_f64()*1000.;
     // Hold the completed, unwarped canvas, not the fresh target. The intervening
     // output frame moves the painting without repainting it a second time.
@@ -47,6 +47,7 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
     let config=pipeline.view();
     let repaint=config.iter().any(|s|s.enabled && s.effect_id=="ink_editions" && s.params.get("edition")==Some(&53.) && s.params.get("repaint").copied().unwrap_or(0.)>=0.5);
     let calm=repaint && config.iter().any(|s|s.enabled && s.effect_id=="ink_editions" && s.params.get("calm").copied().unwrap_or(0.)>=0.5);
+    let load=config.iter().find(|s|s.enabled && s.effect_id=="ink_editions").and_then(|s|s.params.get("paint_load")).copied().unwrap_or(0.);
     // Advance paint at target cadence, hold its canvas, and move the wave at output cadence.
     let paint_stride=if repaint && config.iter().filter(|s|s.enabled).count()==1 {config.iter().filter(|s|s.enabled && s.effect_id=="ink_editions").map(|s|s.params.get("paint_stride").copied().unwrap_or(1.) as usize).max().unwrap_or(1).clamp(1,3)} else {1};
     let independent=config.iter().filter(|s|s.enabled).all(|s|s.effect_id=="ink_editions" || (s.effect_id=="living_ink" && s.params.get("trail_strength").copied().unwrap_or(0.22)==0.0));
@@ -107,7 +108,7 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
                     };
                     if let Some(done)=done {
                         times.push(done.milliseconds);
-                        emit_paint(done.frame,offset+emitted as u64,paint_stride,out_fps,repaint,calm,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
+                        emit_paint(done.frame,offset+emitted as u64,paint_stride,out_fps,repaint,calm,load,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
                             #[cfg(test)] &mut painted_frames)?;
                         emitted+=paint_stride;
                     }
@@ -120,7 +121,7 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
             if let Some(done)=pending_serial {
                 times.push(done.milliseconds);
                 let repeats=(info.frames-emitted).min(paint_stride);
-                emit_paint(done.frame,offset+emitted as u64,repeats,out_fps,repaint,calm,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
+                emit_paint(done.frame,offset+emitted as u64,repeats,out_fps,repaint,calm,load,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
                     #[cfg(test)] &mut painted_frames)?;
                 emitted+=repeats;
             }
@@ -128,7 +129,7 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
                 if workers.is_empty() {break;}
                 let done=workers[index%count].output.recv()?;times.push(done.milliseconds);
                 let repeats=(info.frames-emitted).min(paint_stride);
-                emit_paint(done.frame,offset+emitted as u64,repeats,out_fps,repaint,calm,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
+                emit_paint(done.frame,offset+emitted as u64,repeats,out_fps,repaint,calm,load,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
                     #[cfg(test)] &mut painted_frames)?;
                 emitted+=repeats;
             }

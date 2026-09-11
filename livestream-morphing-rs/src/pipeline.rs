@@ -254,6 +254,7 @@ fn startup_pipeline(style: &str) -> Pipeline {
             p.update_params(&slot,&ParamValues::from([
                 ("repaint".into(),1.),
                 ("calm".into(),if std::env::var("LIVE_CALM").as_deref()==Ok("true") {1.} else {0.}),
+                ("paint_load".into(),std::env::var("LIVE_PAINT_LOAD").ok().and_then(|v|v.parse::<f32>().ok()).filter(|v|v.is_finite()).unwrap_or(0.).clamp(0.,1.)),
                 ("paint_stride".into(),std::env::var("LIVE_PAINT_STRIDE").ok().and_then(|v|v.parse::<u8>().ok()).unwrap_or(1).clamp(1,3) as f32)
             ]));
         }

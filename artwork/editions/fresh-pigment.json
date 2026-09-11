@@ -1,0 +1,27 @@
+[
+  {
+    "id": 53,
+    "slug": "held-fine-knife",
+    "name": "Current fine knife",
+    "description": "Current 15 fps painted canvas with a continuous 30 fps wave.",
+    "params": {
+      "hour": 6,
+      "repaint": 1,
+      "calm": 1,
+      "paint_stride": 2
+    }
+  },
+  {
+    "id": 53,
+    "slug": "fresh-pigment",
+    "name": "Fresh pigment",
+    "description": "A restrained increase in pigment firmness inside each brush pass, with less blending between passes. The same fine-knife marks and continuous wave.",
+    "params": {
+      "hour": 6,
+      "repaint": 1,
+      "calm": 1,
+      "paint_stride": 2,
+      "paint_load": 0.65
+    }
+  }
+]

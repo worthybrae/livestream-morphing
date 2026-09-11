@@ -1,10 +1,11 @@
 //! Small, source-triggered paint passes, applied in display order before the wave.
 use crate::effects::{RawFrame,distortion::Distortion};
 #[derive(Default)]
-pub struct Repaint { size:(u32,u32), canvas:Vec<u8>, marks:Vec<Mark>, coverage:Vec<u8>, mask:Vec<u8>, previous:Vec<u8>, older:Vec<u8>, settled:Vec<u16>, warp:Distortion, paint_ms:f64, warp_ms:f64 }
+pub struct Repaint { size:(u32,u32), canvas:Vec<u8>, marks:Vec<Mark>, coverage:Vec<u8>, mask:Vec<u8>, previous:Vec<u8>, older:Vec<u8>, settled:Vec<u16>, warp:Distortion, paint_ms:f64, warp_ms:f64, load:f32 }
 #[derive(Clone,Default)]
 struct Mark { age:f32, active:bool }
 impl Repaint {
+    pub fn set_load(&mut self,load:f32) {self.load=if load.is_finite() {load.clamp(0.,1.)} else {0.};}
     pub fn apply_mode(&mut self,frame:&mut RawFrame,number:u32,dt:f32,calm:bool) {
         self.advance_paint(frame,dt,calm);
         self.move_canvas(frame,number,dt);
@@ -63,8 +64,9 @@ impl Repaint {
         reconstruct_coverage(&self.mask,mw,mh,&mut self.coverage,w,h,mask_scale);
         // One Q15 response table per frame keeps the six-million-channel pass
         // integer-only. Pigment remains Q8, so gradual changes do not get stuck.
-        let response=1.-(-dt.max(0.)/0.09).exp();
-        let weights: [i32;256]=std::array::from_fn(|a|(response*(0.25+0.75*a as f32/255.)*32768.).round() as i32);
+        let response=1.-(-dt.max(0.)/(0.09-0.04*self.load)).exp();
+        let floor=0.25-0.15*self.load;
+        let weights: [i32;256]=std::array::from_fn(|a|(response*(floor+(1.-floor)*a as f32/255.)*32768.).round() as i32);
         let rise=(420.*dt*256.).round() as i32;let fall=(600.*dt*256.).round() as i32;
         if calm {
             settle_pigments(&frame.data,&self.previous,&self.older,&mut self.settled,&mut self.canvas,&self.coverage,&weights,rise,fall);
@@ -142,6 +144,21 @@ fn brush_coverage(coverage:&mut [u8],w:usize,h:usize,cx:f32,cy:f32,length:f32,wi
 }
 #[cfg(test)] mod tests {
  use super::*;
+ #[test] fn loaded_paint_keeps_fine_contrast_without_admitting_a_flash() {
+  let base=RawFrame::filled(192,108,70,90,110);let dt=1./15.;
+  let mut slow=Repaint::default();let mut loaded=Repaint::default();loaded.set_load(1.);
+  for p in [&mut slow,&mut loaded] {
+   let mut f=base.clone();p.paint_mode(&mut f,dt,true);
+   f=RawFrame::filled(192,108,255,255,255);p.paint_mode(&mut f,dt,true);assert_eq!(f.data,base.data);
+   f=base.clone();p.paint_mode(&mut f,dt,true);assert_eq!(f.data,base.data);
+  }
+  let mut detail=base.clone();for y in 20..88 {for x in 92..95 {detail.data[(y*192+x)*3..][..3].fill(130);}}
+  let mut a=base.clone();let mut b=base.clone();
+  for _ in 0..5 {a=detail.clone();slow.paint_mode(&mut a,dt,true);b=detail.clone();loaded.paint_mode(&mut b,dt,true);}
+  let error=|f:&RawFrame|f.data.iter().zip(&detail.data).map(|(a,b)|a.abs_diff(*b) as usize).sum::<usize>();
+  assert!(error(&b)<error(&a),"loaded marks should retain more of the narrow painted detail");
+  assert!(b.data.iter().zip(&base.data).zip(&detail.data).all(|((b,a),t)|*b>=(*a).min(*t)&&*b<=(*a).max(*t)));
+ }
  #[test] fn batched_pigment_matches_scalar_for_extremes_and_partial_batches() {
   for count in [3,9,111,513] {
    let target:Vec<u8>=(0..count).map(|i|((i*71)%256) as u8).collect();let previous:Vec<u8>=target.iter().rev().copied().collect();let older:Vec<u8>=target.iter().map(|v|255-v).collect();
