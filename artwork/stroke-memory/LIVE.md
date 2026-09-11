@@ -38,15 +38,27 @@ It recovers one step only after six consecutive rolling cost windows below
 78% at strides up to 3, or 75% at slower rates, never exceeding the configured
 rate. Using rolling cost for recovery prevents a small isolated spike from
 restarting an otherwise sustainable recovery. Each cadence change clears the
-cost window so old measurements
-cannot trigger repeated changes at the new rate.
-The approved
-recorded study is 15 paint updates per second. No resolution, material or wave
+cost window so old measurements cannot trigger repeated changes at the new rate.
+The approved recorded study is 15 paint updates per second. No resolution, material or wave
 amplitude is reduced. Painting the next target overlaps wave/encoding of the
 preceding canvas. Reported frame timings include this overlap, not CPU time.
 
 ## Validation
 
+- Production deployment `1a639f24-7a98-4564-bb64-8dc834b1f0b0` (2026-09-11,
+  commit `18b4d0b`) targets stride 2.5 on the existing eight-vCPU EPYC allocation.
+  A 304-second observation captured 51 distinct completed segments: eight at
+  11.988 paint updates/sec, averaging 5.581 s of processing per 6.006 s segment
+  (range 5.050–5.942 s), and 43 at 9.990, averaging 4.902 s (4.269–5.401 s).
+  The guard recovered to 12 and then returned to 10 as night-scene cost grew.
+  All 61 status samples were live with the full ten-segment buffer. This is an
+  adaptive 12-FPS ceiling, not a claim of sustained 12 or 15 FPS. Logs confirmed
+  the full 14,000-base / 20,000-detail populations. Browser playback was checked;
+  ffprobe confirmed 1920×1080 H.264 at 30000/1001 with 180 frames in a segment.
+  The production build passed 169 engine and five native tests; the unchanged
+  Python path passed 19 tests. No service, quota or replica was added; actual
+  usage cost was not measured. The new fractional-cadence tests cover held-frame
+  order across segment boundaries, bounded fallback, recovery and severe stalls.
 - Faster lookup/placement pass (`9bb761d`): all 360 approved-study base mark
   packets matched the previous planner, as did 100 synthetic updates covering
   full-capacity replenishment. Integer brush identities use a small hash mixer;
@@ -76,7 +88,7 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
 - Optimized 15-update source comparison at frame 90: mean RGB difference 0.086
   of 255; 99.0% of channel values unchanged. Small arithmetic differences can
   change a few near-threshold adaptive decisions.
-- 19 Python tests and 166 engine tests pass. Native raster tests cover overlapping
+- 19 Python tests and 169 engine tests pass. Native raster tests cover overlapping
   subpixel stamps, parallel boundaries and append equivalence. Engine tests cover
   an uneven segment boundary, skipped-source recovery, a cadence change without
   missing output frames, bounded load adaptation and stalled/invalid startup.
