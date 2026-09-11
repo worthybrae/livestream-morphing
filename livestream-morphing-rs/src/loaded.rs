@@ -8,10 +8,10 @@ struct Worker { child:Child,socket:UnixStream,width:u32,height:u32 }
 impl Drop for Worker {
     fn drop(&mut self) {let _=self.child.kill();let _=self.child.wait();}
 }
-pub struct LoadedPaint { worker:Option<Worker>,pub hour:f64,pub stride:usize,min_stride:usize,quiet_segments:u8,recent_costs:std::collections::VecDeque<(f64,f64)>,held:Option<RawFrame>,pub output_frames:u64 }
+pub struct LoadedPaint { worker:Option<Worker>,pub hour:f64,pub stride:f64,min_stride:f64,quiet_segments:u8,recent_costs:std::collections::VecDeque<(f64,f64)>,held:Option<RawFrame>,pub output_frames:u64 }
 impl LoadedPaint {
     pub fn new()->Self {
-        let stride=std::env::var("LOADED_PAINT_STRIDE").ok().and_then(|v|v.parse().ok()).unwrap_or(3).clamp(2,12);
+        let stride=std::env::var("LOADED_PAINT_STRIDE").ok().and_then(|v|v.parse::<f64>().ok()).filter(|v|v.is_finite()).unwrap_or(3.).clamp(2.,12.);
         Self {worker:None,hour:15.,stride,min_stride:stride,quiet_segments:0,recent_costs:std::collections::VecDeque::new(),held:None,output_frames:0}
     }
     pub fn reset(&mut self) {self.worker=None;self.held=None;self.output_frames=0;self.quiet_segments=0;self.recent_costs.clear();}
@@ -26,15 +26,22 @@ impl LoadedPaint {
         if self.recent_costs.len()>5 {self.recent_costs.pop_front();}
         let (cost,playback)=self.recent_costs.iter().fold((0.,0.),|(a,b),(c,d)|(a+c,b+d));
         if seconds>duration*1.25 || (self.recent_costs.len()>=3 && cost>playback*0.90) {
-            self.stride=(self.stride+1).min(12);self.quiet_segments=0;
+            self.stride=if self.stride<3. {(self.stride+0.5).min(3.)} else {(self.stride+1.).min(12.)};self.quiet_segments=0;
             self.recent_costs.clear();
         } else if seconds<duration*0.75 {
             self.quiet_segments+=1;
             if self.quiet_segments>=6 {
-                self.stride=self.stride.saturating_sub(1).max(self.min_stride);self.quiet_segments=0;
+                self.stride=(self.stride-if self.stride<=3. {0.5} else {1.}).max(self.min_stride);self.quiet_segments=0;
                 self.recent_costs.clear();
             }
         } else {self.quiet_segments=0;}
+    }
+    fn paint_due(&self)->bool {
+        // Fractional intervals provide 12 FPS between the 10/15 FPS settings.
+        // Use the continuous output clock, including across segment boundaries;
+        // held frames still receive a fresh wave and encoding at source cadence.
+        self.output_frames==0 || (self.output_frames as f64/self.stride).floor()
+            !=((self.output_frames-1) as f64/self.stride).floor()
     }
     fn connect(mut command:Command,width:u32,height:u32,timeout:Duration)->Result<Worker,Error> {
         let (mut socket,peer)=UnixStream::pair()?;
@@ -106,7 +113,7 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
             encode_ms+=t.elapsed().as_secs_f64()*1000.;
         }
         let paint=pipeline.loaded.as_mut().ok_or("Loaded paint missing")?;
-        if paint.held.as_ref().map(|f|(f.width,f.height))!=Some(dimensions) || paint.output_frames%paint.stride as u64==0 {
+        if paint.held.as_ref().map(|f|(f.width,f.height))!=Some(dimensions) || paint.paint_due() {
             let t=Instant::now();paint.request(&convert()?)?;
             // The worker paints the next target while Rust waves/encodes the
             // preceding held canvas. Neither side owns an unbounded frame queue.
@@ -130,7 +137,7 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
     encode_ms+=t.elapsed().as_secs_f64()*1000.;
     pipeline.source_end=info.first_seconds.map(|first|first+info.frames as f64/fps);
     let (_,warp_ms)=pipeline.repaint.take_timings();
-    Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:fps/pipeline.loaded.as_ref().unwrap().stride as f64,frames:info.frames,width:dimensions.0,height:dimensions.1,
+    Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:fps/pipeline.loaded.as_ref().unwrap().stride,frames:info.frames,width:dimensions.0,height:dimensions.1,
         first_seconds:info.first_seconds,times,decode_ms,encode_ms,post_ms,repaint_ms:0.,warp_ms})
     })();
     if result.is_err() {pipeline.reset();}
@@ -139,36 +146,67 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn fractional_cadence_fills_the_gap_between_ten_and_fifteen() {
+        let mut paint=LoadedPaint::new();paint.min_stride=2.;paint.stride=2.;
+        for _ in 0..3 {paint.adapt(5.8,6.);}
+        assert_eq!(paint.stride,2.5);
+        let sampled:Vec<_>=(0..30).filter(|n| {paint.output_frames=*n;paint.paint_due()}).collect();
+        assert_eq!(sampled,vec![0,3,5,8,10,13,15,18,20,23,25,28]);
+        for _ in 0..3 {paint.adapt(5.8,6.);}
+        assert_eq!(paint.stride,3.);
+        for _ in 0..6 {paint.adapt(3.,6.);}
+        assert_eq!(paint.stride,2.5);
+        for _ in 0..6 {paint.adapt(3.,6.);}
+        assert_eq!(paint.stride,2.);
+        paint.min_stride=2.5;paint.stride=3.;
+        for _ in 0..18 {paint.adapt(3.,6.);}
+        assert_eq!(paint.stride,2.5);
+    }
+
+    #[test] fn twelve_fps_holds_and_continues_across_short_segments() {
+        codec::init();let mut p=Pipeline::new();p.loaded=Some(fake());
+        p.loaded.as_mut().unwrap().stride=2.5;
+        let input=codec::encode_segment(&vec![RawFrame::filled(64,36,100,100,100);5],30,0).unwrap();
+        let a=render(&input,64,1,0,0,&mut p,720).unwrap();
+        assert_eq!(a.paint_fps,12.);
+        assert_eq!(a.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),vec![30,30,30,60,60]);
+        p.source_end=codec::decode_sized(&input,64).unwrap().first_seconds;
+        let b=render(&input,64,1,15000,5,&mut p,720).unwrap();
+        assert_eq!(b.frames,5);
+        assert_eq!(b.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),vec![90,90,90,120,120]);
+        assert_eq!(p.loaded.as_ref().unwrap().output_frames,10);
+    }
+
     #[test] fn isolated_processing_spike_does_not_lower_sustainable_paint_rate() {
-        let mut paint=LoadedPaint::new();paint.min_stride=3;paint.stride=3;
+        let mut paint=LoadedPaint::new();paint.min_stride=3.;paint.stride=3.;
         for seconds in [4.5,4.5,4.5,6.2,4.8,4.8,4.8,4.8,4.8] {
             paint.adapt(seconds,6.);
-            assert_eq!(paint.stride,3);
+            assert_eq!(paint.stride,3.);
         }
     }
     #[test] fn sustained_pressure_and_severe_stalls_still_reduce_paint_rate() {
-        let mut paint=LoadedPaint::new();paint.min_stride=3;paint.stride=3;
+        let mut paint=LoadedPaint::new();paint.min_stride=3.;paint.stride=3.;
         paint.adapt(5.8,6.);paint.adapt(5.8,6.);
-        assert_eq!(paint.stride,3);
-        paint.adapt(5.8,6.);assert_eq!(paint.stride,4);
-        paint.adapt(8.,6.);assert_eq!(paint.stride,5);
+        assert_eq!(paint.stride,3.);
+        paint.adapt(5.8,6.);assert_eq!(paint.stride,4.);
+        paint.adapt(8.,6.);assert_eq!(paint.stride,5.);
         for _ in 0..6 {paint.adapt(3.,6.);}
-        assert_eq!(paint.stride,4);
+        assert_eq!(paint.stride,4.);
         paint.reset();
-        assert_eq!(paint.stride,4);
-        paint.adapt(5.8,6.);assert_eq!(paint.stride,4);
+        assert_eq!(paint.stride,4.);
+        paint.adapt(5.8,6.);assert_eq!(paint.stride,4.);
     }
     #[test] fn cadence_leaves_headroom_and_recovers_slowly_within_bounds() {
-        let mut paint=LoadedPaint::new();paint.min_stride=8;paint.stride=8;
-        paint.adapt(8.,6.);assert_eq!(paint.stride,9);
+        let mut paint=LoadedPaint::new();paint.min_stride=8.;paint.stride=8.;
+        paint.adapt(8.,6.);assert_eq!(paint.stride,9.);
         for _ in 0..20 {paint.adapt(8.,6.);}
-        assert_eq!(paint.stride,12);
+        assert_eq!(paint.stride,12.);
         for _ in 0..5 {paint.adapt(3.,6.);}
-        assert_eq!(paint.stride,12);
-        paint.adapt(3.,6.);assert_eq!(paint.stride,11);
+        assert_eq!(paint.stride,12.);
+        paint.adapt(3.,6.);assert_eq!(paint.stride,11.);
         for _ in 0..100 {paint.adapt(3.,6.);}
-        assert_eq!(paint.stride,8);
-        paint.adapt(f64::NAN,6.);paint.adapt(1.,0.);assert_eq!(paint.stride,8);
+        assert_eq!(paint.stride,8.);
+        paint.adapt(f64::NAN,6.);paint.adapt(1.,0.);assert_eq!(paint.stride,8.);
     }
     fn fake()->LoadedPaint {
         let mut command=Command::new("python3");
@@ -187,7 +225,7 @@ while True:
     s.sendall(bytes([n*30])*64*36*3)
 "#);
         let worker=LoadedPaint::connect(command,64,36,Duration::from_secs(2)).unwrap();
-        let mut paint=LoadedPaint::new();paint.worker=Some(worker);paint
+        let mut paint=LoadedPaint::new();paint.stride=3.;paint.min_stride=3.;paint.worker=Some(worker);paint
     }
     #[test] fn held_canvas_and_worker_survive_an_uneven_segment_boundary() {
         codec::init();let mut p=Pipeline::new();p.loaded=Some(fake());
@@ -209,7 +247,7 @@ while True:
         let c=render(&input,64,1,30000,9,&mut p,720).unwrap();
         assert_eq!(c.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),vec![120,120,120,150]);
         assert_eq!(p.loaded.as_ref().unwrap().output_frames,13);
-        p.loaded.as_mut().unwrap().stride=4;p.source_end=start;
+        p.loaded.as_mut().unwrap().stride=4.;p.source_end=start;
         let d=render(&input,64,1,45000,13,&mut p,720).unwrap();
         assert_eq!(d.frames,4);assert_eq!(d.paint_fps,7.5);
         assert_eq!(d.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),vec![150,150,150,180]);

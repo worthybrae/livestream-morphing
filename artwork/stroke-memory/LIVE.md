@@ -24,11 +24,15 @@ the previous 30,000 limit exactly. Fine-detail capacity is unchanged; retired
 base marks free space for new deposits.
 
 `LOADED_PAINT_STRIDE` sets the fastest permitted paint cadence (2–12; default 3).
-Production starts at 3: up to 9.99 paint updates and 29.97 wave/output frames per
-second. Live processing may relax the stride up to 12 (2.5 paint updates/sec)
+Fractional values are supported: 2.5 gives 11.99 paint updates and 29.97
+wave/output frames per second. The sampling phase continues across segments;
+every output frame still receives the wave. Production targets 2.5.
+Live processing may relax the stride up to 12 (2.5 paint updates/sec)
 when processing averages above 90% of playback duration across three to five
 recent segments. An individual segment exceeding 125% slows painting immediately.
 The rolling buffer absorbs isolated smaller spikes without a prolonged FPS drop.
+Steps between strides 2 and 3 are 0.5, allowing 15 → 12 → 10 FPS instead of
+dropping directly from 15 to 10. Larger strides still change by one.
 It recovers one step only after six segments below 75%, never exceeding the
 configured rate. Each cadence change clears the cost window so old measurements
 cannot trigger repeated changes at the new rate.
@@ -39,6 +43,16 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
 
 ## Validation
 
+- Faster lookup/placement pass (`9bb761d`): all 360 approved-study base mark
+  packets matched the previous planner, as did 100 synthetic updates covering
+  full-capacity replenishment. Integer brush identities use a small hash mixer;
+  raster bands share one ordered list of resolved brushes. A paired production
+  CPU benchmark had zero RGB differences over 15 poses for both 22,794 study
+  marks and a 45,000-mark stress case. Median raster times changed from
+  28.55 to 27.49 ms and 58.55 to 51.85 ms respectively.
+  The 15-FPS production trial could not sustain the required headroom on the
+  tested night scene; the guard correctly returned to 10. The intermediate
+  12-FPS target retains full brush populations, color grading and resolution.
 - Production deployment `4e8706a3-7a4f-4b43-a6b6-a5b176a7f0e9` (2026-09-11,
   commit `db305e3`) held 9.990 paint updates/sec and 29.970 output fps across
   38 observed completed segments sampled over 238 seconds. Processing averaged
