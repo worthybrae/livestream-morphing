@@ -66,15 +66,17 @@ impl OilPaint {
         // Each tile loads color from its own center, preserving local color
         // rather than averaging across high-contrast boundaries.
         let tile=((if passages || form_scale {14.} else {6.})*scale).max(2.) as usize;
-        for y in (0..h).step_by(tile) { for x in (0..w).step_by(tile) {
+        if !form_scale { for y in (0..h).step_by(tile) { for x in (0..w).step_by(tile) {
             let c=sample_color(&self.source,w,h,(x+tile/2).min(w-1),(y+tile/2).min(h-1),tile/3);
             for yy in y..(y+tile).min(h) {for xx in x..(x+tile).min(w) {
                 self.paint[yy*w+xx]=pack(c.map(|v|v*0.84));
             }}
         }}
+        }
         let layered=variant>=5;
         let (lw,lh)=(w.div_ceil(2),h.div_ceil(2));
-        if layered {
+        if form_scale {pigment_wash(&self.source,&mut self.underpaint,w,h,tile);}
+        else if layered {
             for yy in 0..lh {for xx in 0..lw {self.underpaint[yy*lw+xx]=self.paint[yy*2*w+xx*2];}}
         }
         self.frames+=1;
@@ -276,6 +278,33 @@ fn plan_form_accents(source:&[u8],paint:&[u32],w:usize,h:usize,site:Site,scale:f
 
 #[inline] fn pack(c:[f32;3])->u32 {(c[0] as u8 as u32)|((c[1] as u8 as u32)<<8)|((c[2] as u8 as u32)<<16)}
 #[inline] fn unpack(p:u32)->[f32;3] {[(p&255) as f32,((p>>8)&255) as f32,((p>>16)&255) as f32]}
+
+#[inline]
+fn mix_pigment(a:u32,b:u32,t:u32)->u32 {
+    let rb=(((a&0xff00ff)*(256-t)+(b&0xff00ff)*t)>>8)&0xff00ff;
+    let g=(((a&0x00ff00)*(256-t)+(b&0x00ff00)*t)>>8)&0x00ff00;
+    rb|g
+}
+fn pigment_wash(source:&[u8],low:&mut[u32],w:usize,h:usize,tile:usize) {
+    let (gw,gh)=(w.div_ceil(tile),h.div_ceil(tile));
+    let mut colors=Vec::with_capacity(gw*gh);
+    for y in 0..gh {for x in 0..gw {
+        colors.push(pack(sample_color(source,w,h,(x*tile+tile/2).min(w-1),(y*tile+tile/2).min(h-1),tile/3).map(|v|v*0.84)));
+    }}
+    let axis=|p:usize,n:usize| {
+        let q=((p*2) as f32-tile as f32*0.5)/tile as f32;
+        let q=q.clamp(0.,(n-1) as f32);let a=q as usize;
+        (a,(a+1).min(n-1),((q-a as f32)*256.) as u32)
+    };
+    let (lw,lh)=(w.div_ceil(2),h.div_ceil(2));
+    let xs:Vec<_>=(0..lw).map(|x|axis(x,gw)).collect();
+    for y in 0..lh {
+        let (a,b,t)=axis(y,gh);
+        for (x,&(left,right,u)) in xs.iter().enumerate() {
+            low[y*lw+x]=mix_pigment(mix_pigment(colors[a*gw+left],colors[a*gw+right],u),mix_pigment(colors[b*gw+left],colors[b*gw+right],u),t);
+        }
+    }
+}
 
 #[inline]
 fn average_pigment(a:u32,b:u32)->u32 {
@@ -487,6 +516,15 @@ fn sample_atlas(u:F,v:F,brush:usize,level:usize,neutral:bool)->[F;4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn wash_interpolation_keeps_channels_separate() {
+        for i in 0..1024 {
+            let a=hash(i,91)&0xffffff;let b=hash(i,777)&0xffffff;let t=(i%257) as u32;
+            let expected=pack(std::array::from_fn(|k|((((a>>(k*8))&255)*(256-t)+((b>>(k*8))&255)*t)/256) as f32));
+            assert_eq!(mix_pigment(a,b,t),expected);
+        }
+        let source=RawFrame::filled(31,19,100,100,100);let mut low=vec![0;16*10];
+        pigment_wash(&source.data,&mut low,31,19,14);assert!(low.iter().all(|&p|p==pack([84.,84.,84.])));
+    }
     #[test] fn broad_brush_stops_at_a_narrow_subject_in_both_axes() {
         let mut source=RawFrame::filled(128,96,145,145,145);
         for y in 38..59 {for x in 62..67 {source.data[(y*128+x)*3..(y*128+x)*3+3].copy_from_slice(&[30,35,40]);}}
