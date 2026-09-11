@@ -25,10 +25,16 @@ impl LoadedPaint {
         self.recent_costs.push_back((seconds,duration));
         if self.recent_costs.len()>5 {self.recent_costs.pop_front();}
         let (cost,playback)=self.recent_costs.iter().fold((0.,0.),|(a,b),(c,d)|(a+c,b+d));
-        if seconds>duration*1.25 || (self.recent_costs.len()>=3 && cost>playback*0.90) {
+        // Near 10–15 FPS, fractional steps can use more of the existing
+        // playback budget. Keep at least 5% average headroom and let the
+        // bounded segment buffer absorb short spikes. Slower rates retain
+        // the larger margin because their next step is proportionally bigger.
+        let pressure=if self.stride<=3. {0.95} else {0.90};
+        let recovery=if self.stride<=3. {0.78} else {0.75};
+        if seconds>duration*1.25 || (self.recent_costs.len()>=3 && cost>playback*pressure) {
             self.stride=if self.stride<3. {(self.stride+0.5).min(3.)} else {(self.stride+1.).min(12.)};self.quiet_segments=0;
             self.recent_costs.clear();
-        } else if seconds<duration*0.75 {
+        } else if cost<playback*recovery {
             self.quiet_segments+=1;
             if self.quiet_segments>=6 {
                 self.stride=(self.stride-if self.stride<=3. {0.5} else {1.}).max(self.min_stride);self.quiet_segments=0;
@@ -146,6 +152,22 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn faster_paint_uses_sustainable_headroom_without_ignoring_overload() {
+        let mut paint=LoadedPaint::new();paint.min_stride=2.5;paint.stride=2.5;
+        for seconds in [5.2,5.4,5.5,5.6,5.5,5.4,5.6,5.5] {
+            paint.adapt(seconds,6.);assert_eq!(paint.stride,2.5);
+        }
+        for _ in 0..5 {paint.adapt(5.9,6.);}
+        assert_eq!(paint.stride,3.);
+        // One slightly busier segment must not erase the otherwise sustained
+        // recovery window. Six quiet windows are still required after a drop.
+        paint.recent_costs.clear();paint.quiet_segments=0;
+        for seconds in [4.55,4.5,4.7,4.55,4.6] {
+            paint.adapt(seconds,6.);assert_eq!(paint.stride,3.);
+        }
+        paint.adapt(4.55,6.);assert_eq!(paint.stride,2.5);
+        paint.adapt(8.,6.);assert_eq!(paint.stride,3.);
+    }
     #[test] fn fractional_cadence_fills_the_gap_between_ten_and_fifteen() {
         let mut paint=LoadedPaint::new();paint.min_stride=2.;paint.stride=2.;
         for _ in 0..3 {paint.adapt(5.8,6.);}

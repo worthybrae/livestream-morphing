@@ -28,13 +28,17 @@ Fractional values are supported: 2.5 gives 11.99 paint updates and 29.97
 wave/output frames per second. The sampling phase continues across segments;
 every output frame still receives the wave. Production targets 2.5.
 Live processing may relax the stride up to 12 (2.5 paint updates/sec)
-when processing averages above 90% of playback duration across three to five
-recent segments. An individual segment exceeding 125% slows painting immediately.
+when processing averages above 95% of playback duration across three to five
+recent segments at strides up to 3. Slower cadences retain a 90% threshold.
+An individual segment exceeding 125% slows painting immediately.
 The rolling buffer absorbs isolated smaller spikes without a prolonged FPS drop.
 Steps between strides 2 and 3 are 0.5, allowing 15 → 12 → 10 FPS instead of
 dropping directly from 15 to 10. Larger strides still change by one.
-It recovers one step only after six segments below 75%, never exceeding the
-configured rate. Each cadence change clears the cost window so old measurements
+It recovers one step only after six consecutive rolling cost windows below
+78% at strides up to 3, or 75% at slower rates, never exceeding the configured
+rate. Using rolling cost for recovery prevents a small isolated spike from
+restarting an otherwise sustainable recovery. Each cadence change clears the
+cost window so old measurements
 cannot trigger repeated changes at the new rate.
 The approved
 recorded study is 15 paint updates per second. No resolution, material or wave
