@@ -14,5 +14,5 @@ s=s.replace('Rendered locally with the native Rust drawing engine from the same 
 s=s.replace("'Local render measurement: '+(item.metrics.frame_p50_ms||0).toFixed(1)+' ms per frame (median). This is a local measurement, not an estimate of a production hosting bill.'",
     "'Local render time: '+(item.metrics.wall_seconds||item.metrics.total_ms/1000||0).toFixed(1)+' seconds for '+(item.metrics.duration_seconds||0).toFixed(1)+' seconds of video. The prototype is experimental and slower than real time. These local implementations use different execution paths; this is not a production billing estimate.'")
 s=s.replace('The public livestream retains its current look.',
-    'Start with the bus leaving in the first four seconds. Then watch the people near the crossing. The fixed-brushwork control isolates the effect of moving individual strokes. Production remains on Fresh pigment.')
+    'Compare Fine detail with Moving brushwork at the same moment: look at the railings, crossing edges, and people. The original three coats retain their brush geometry; an extra finishing coat follows small source features. The fixed-brushwork control isolates motion transport. Production remains on Fresh pigment.')
 p.write_text(s)

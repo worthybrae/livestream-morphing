@@ -50,6 +50,7 @@ cargo build --release --manifest-path artwork/stroke-memory/native/Cargo.toml
 python3 -m unittest discover -s artwork/stroke-memory -p 'test_*.py' -v
 python3 artwork/stroke-memory/render.py /absolute/street.ts /absolute/moving-brushwork.mp4 --seconds 24.024
 python3 artwork/stroke-memory/render.py /absolute/street.ts /absolute/fixed-brushwork.mp4 --seconds 24.024 --mode anchored
+python3 artwork/stroke-memory/render.py /absolute/street.ts /absolute/moving-fine-detail.mp4 --seconds 24.024 --detail selective
 ```
 
 Output siblings include JSON timings, native raster timings and selected
@@ -95,3 +96,36 @@ pass. The production engine and portfolio files are unchanged.
 Preview: http://127.0.0.1:3092/stroke-memory/#moving-brushwork
 
 Local artifacts: `/Users/worthy/Test/living-ink-paper-filaments-2026-09-10/stroke-memory`.
+
+## Selective detail iteration
+
+The approved Moving brushwork remains available as the comparison. The new
+`--detail selective` option adds a fourth coat of small finishing marks while
+leaving the first three coats' spacing, seeded geometry and analysis unchanged.
+It uses the full-resolution source for pigment and fine structure. Local color
+contrast and orientation coherence select useful features, so quiet areas do
+not receive a blanket detail texture. This is feature-based, not semantic
+recognition of people or buildings.
+
+Finishing marks have varied, short footprints, tangent directions and stricter
+color-boundary limits. They retain the same cached natural masks, motion
+transport, pigment settling and fade behavior. Their occupancy map uses final
+image resolution so a small feature can receive a mark without losing nearby
+features to motion-grid rounding. The original grid's duplicate-birth guard
+is retained. Source color is graded only at sampled pigments for this coat;
+grading the entire 1080p analysis image was unnecessarily expensive.
+
+The 24.024-second, 720-frame detail recording took 72.75 seconds locally, with
+7.94 ms median flow analysis and 58.21 ms native raster round trips per paint
+update. Maximum population was 28,618 marks, versus 13,912 in the original
+recording. The higher-resolution analysis still adds substantial cost: this
+remains a local quality study, not a production performance improvement.
+Both versions retain 14.985 paint updates and 29.97 wave/output frames per
+second. The palette and wave settings are unchanged.
+
+Seven Python tests pass. The two new checks verify that narrow light/dark
+features receive finishing pigment without altering quiet regions or base
+coats, and that those fine marks retain identical identity/geometry/pigment
+over repeated static frames. The native raster code is unchanged.
+
+Preview: http://127.0.0.1:3092/stroke-memory/#moving-fine-detail

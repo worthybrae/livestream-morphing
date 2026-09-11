@@ -6,6 +6,35 @@ from render import Painting
 
 
 class TransportTests(unittest.TestCase):
+    def detail_scene(self):
+        source = np.full((160,960,3),110,np.uint8)
+        source[30:125,400:404] = 25
+        source[80:84,550:800] = 235
+        return source, cv2.resize(source,(480,80),interpolation=cv2.INTER_AREA), np.zeros((40,240,2),np.float32)
+
+    def test_finishing_recovers_narrow_features_without_repainting_quiet_areas_or_base_coats(self):
+        source, analysis, flow = self.detail_scene()
+        original = Painting(960,160,(240,40),'transported')
+        detailed = Painting(960,160,(240,40),'transported','selective')
+        original.update(analysis,flow,flow)
+        detailed.update(analysis,flow,flow,source)
+        np.testing.assert_array_equal(original.strokes,detailed.strokes[detailed.strokes[:,11]<3])
+        accents = detailed.strokes[detailed.strokes[:,11]==3]
+        self.assertGreater(len(accents),30)
+        self.assertTrue((accents[:,1]>390).all())
+        self.assertTrue((accents[:,7]<40).any())
+        self.assertTrue((accents[:,7]>220).any())
+
+    def test_fine_features_retain_identity_without_duplicate_births_while_static(self):
+        source, analysis, flow = self.detail_scene()
+        book = Painting(960,160,(240,40),'transported','selective')
+        book.update(analysis,flow,flow,source)
+        initial = book.strokes[book.strokes[:,11]==3].copy()
+        for _ in range(8):
+            book.update(analysis,flow,flow,source)
+        accents = book.strokes[book.strokes[:,11]==3]
+        np.testing.assert_array_equal(initial,accents)
+
     def test_estimated_flow_transports_real_image_features_in_the_forward_direction(self):
         rng=np.random.default_rng(91)
         previous=cv2.GaussianBlur(rng.integers(0,256,(96,128),np.uint8),(5,5),0)

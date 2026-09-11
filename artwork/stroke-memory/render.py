@@ -50,13 +50,17 @@ def grade(source, hour):
 
 
 class Painting:
-    def __init__(self, width, height, flow_size, mode):
+    def __init__(self, width, height, flow_size, mode, detail='original', detail_hour=None):
         self.w, self.h = width, height
         self.fw, self.fh = flow_size
         self.factor = np.array([self.fw/width, self.fh/height], np.float32)
         self.mode = mode
+        self.detail = detail
+        self.detail_hour = detail_hour
         self.scale = width/1920
         self.steps = np.array([32., 17., 6.])*self.scale
+        if detail != 'original':
+            self.steps = np.append(self.steps, 5.5*self.scale)
         self.strokes = np.empty((0, 12), np.float32)
         self.failures = np.empty(0, np.float32)
         self.age = np.empty(0, np.int32)
@@ -78,13 +82,17 @@ class Painting:
             self.candidates.append(pts[order])
             self.variants.append(variants[order])
 
-    def update(self, image, forward, backward):
+    def update(self, image, forward, backward, detail_image=None):
         first = not len(self.strokes)
         rgb = image.astype(np.float32)
         analysis_scale = image.shape[1]/self.w
         brush_scale = self.scale*analysis_scale
-        def pigment(image, points):
-            return sample(image, points*analysis_scale)
+        def pigment(image, points, image_scale=analysis_scale, tint=False):
+            values = sample(image, points*image_scale)
+            if tint and self.detail_hour is not None:
+                # Grade the few sampled pigments, not millions of source pixels.
+                values = grade(values[:,None,:], self.detail_hour%24).reshape(-1,3).astype(np.float32)
+            return values
         fine = cv2.GaussianBlur(rgb, (0,0), .7*brush_scale)
         medium = cv2.GaussianBlur(rgb, (0,0), 2.5*brush_scale)
         broad = cv2.GaussianBlur(rgb, (0,0), 6*brush_scale)
@@ -94,6 +102,26 @@ class Painting:
         field = cv2.GaussianBlur(gray, (0,0), 3*brush_scale)
         dx = cv2.Sobel(field, cv2.CV_32F, 1, 0, ksize=3)*.125
         dy = cv2.Sobel(field, cv2.CV_32F, 0, 1, ksize=3)*.125
+        sources = [(blurred, analysis_scale) for blurred in [broad, medium, fine]]
+        if self.detail != 'original':
+            # Finishing marks read the full source, while the three approved
+            # coats keep exactly the same analysis and seeded brush geometry.
+            if detail_image is None:
+                raise ValueError('Detail finishing requires a source detail image')
+            detail_scale = detail_image.shape[1]/self.w
+            radius = self.scale*detail_scale
+            detail_rgb = detail_image.astype(np.float32)
+            accent = cv2.GaussianBlur(detail_rgb, (0,0), .6*radius)
+            surround = cv2.GaussianBlur(detail_rgb, (0,0), 4.*radius)
+            contrast_channels = cv2.split(cv2.absdiff(accent,surround))
+            accent_feature = cv2.max(cv2.max(contrast_channels[0],contrast_channels[1]),contrast_channels[2])
+            detail_gray = cv2.cvtColor(detail_image, cv2.COLOR_RGB2GRAY).astype(np.float32)
+            local = cv2.GaussianBlur(detail_gray, (0,0), .9*radius)
+            ax = cv2.Sobel(local, cv2.CV_32F, 1, 0, ksize=3)*.125
+            ay = cv2.Sobel(local, cv2.CV_32F, 0, 1, ksize=3)*.125
+            tensor = cv2.GaussianBlur(np.stack([ax*ax, ay*ay, ax*ay], axis=2), (0,0), 2.*radius)
+            coherence = np.sqrt((tensor[:,:,0]-tensor[:,:,1])**2+4*tensor[:,:,2]**2)/(tensor[:,:,0]+tensor[:,:,1]+1)
+            sources.append((accent, detail_scale))
         if len(self.strokes):
             pts = self.strokes[:, 1:3]*self.factor
             moved, trusted = transport(pts, forward, backward,self.previous_gray,current_gray)
@@ -104,9 +132,9 @@ class Painting:
                 self.strokes[trusted, 1:3] += displacement[trusted]
             self.age += 1
             target = np.empty((len(self.strokes),3),np.float32)
-            for coat, blurred in enumerate([broad,medium,fine]):
+            for coat, (blurred, image_scale) in enumerate(sources):
                 selected = self.strokes[:,11]==coat
-                if selected.any():target[selected] = pigment(blurred,self.strokes[selected,1:3])
+                if selected.any():target[selected] = pigment(blurred,self.strokes[selected,1:3],image_scale,coat==3)
             delta = target-self.strokes[:, 7:10]
             mismatch = np.max(np.abs(delta), axis=1)
             # Give a bad estimate one frame to recover, then retire the mark.
@@ -124,37 +152,48 @@ class Painting:
             self.strokes, self.age, self.failures = self.strokes[keep], self.age[keep], self.failures[keep]
 
         additions = []
-        for coat, (pts, variety, step, blurred) in enumerate(zip(
-                self.candidates, self.variants, self.steps, [broad, medium, fine])):
-            detail = pigment(feature, pts)[:,0]
-            eligible = np.ones(len(pts), bool) if coat==0 else detail > (8 if coat==1 else 17)
-            if coat==2:
-                eligible &= variety[:,3]<.70
+        for coat, (pts, variety, step, (blurred, image_scale)) in enumerate(zip(
+                self.candidates, self.variants, self.steps, sources)):
+            if coat == 3:
+                contrast = pigment(accent_feature, pts, image_scale)[:,0]
+                structure = pigment(coherence, pts, image_scale)[:,0]
+                eligible = (contrast > 14) & (structure > .30)
+                eligible &= variety[:,3] < .80
+            else:
+                detail = pigment(feature, pts)[:,0]
+                eligible = np.ones(len(pts), bool) if coat==0 else detail > (8 if coat==1 else 17)
+                if coat==2:
+                    eligible &= variety[:,3]<.70
             existing = self.strokes[(self.strokes[:,11]==coat) & (self.strokes[:,10]>.18)]
             if len(existing):
-                occupancy = np.ones((self.fh,self.fw), np.uint8)
-                xy = np.clip(existing[:,1:3]*self.factor, [0,0], [self.fw-1,self.fh-1]).astype(int)
+                # A fine center should cover its own site without excluding
+                # neighboring tiny features through the coarse motion grid.
+                ow, oh = (self.w,self.h) if coat==3 else (self.fw,self.fh)
+                occupancy_factor = np.array([ow/self.w,oh/self.h], np.float32)
+                occupancy = np.ones((oh,ow), np.uint8)
+                xy = np.clip(existing[:,1:3]*occupancy_factor, [0,0], [ow-1,oh-1]).astype(int)
                 occupancy[xy[:,1],xy[:,0]] = 0
                 distance = cv2.distanceTransform(occupancy, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
                 # Include quantization error from the occupancy raster and
                 # bilinear query; an existing center must cover its own site.
-                eligible &= sample(distance, pts*self.factor)[:,0]>step*self.factor[0]*.64+1.5
+                eligible &= sample(distance, pts*occupancy_factor)[:,0]>step*occupancy_factor[0]*.64+1.5
             ids = np.flatnonzero(eligible)
             if not first:
                 # A fixed replenishment budget prevents a noisy frame from exploding count.
-                ids = ids[:max(24,int(len(pts)*.035))]
+                ids = ids[:max(24,int(len(pts)*(.015 if coat==3 else .035)))]
             if not len(ids):
                 continue
             xy, rv = pts[ids], variety[ids]
-            c = pigment(blurred, xy)
-            gx, gy = pigment(dx,xy)[:,0], pigment(dy,xy)[:,0]
+            c = pigment(blurred, xy, image_scale,coat==3)
+            gx = pigment(ax if coat==3 else dx,xy,image_scale)[:,0]
+            gy = pigment(ay if coat==3 else dy,xy,image_scale)[:,0]
             energy = np.hypot(gx,gy)
             angle = np.arctan2(gy,gx)+np.pi/2
             # Long flowing passages in quiet regions; short marks at small features.
             base = (rv[:,0]-.5)*1.2-.30
             angle = np.where(energy>1.5, angle+(rv[:,1]-.5)*.32, base)
-            lengths = step*([1.35,1.2,.90][coat]+rv[:,0]*[.85,.65,.55][coat])
-            widths = step*([.55,.40,.30][coat]+rv[:,1]*[.16,.14,.20][coat])
+            lengths = step*([1.35,1.2,.90,.60][coat]+rv[:,0]*[.85,.65,.55,.85][coat])
+            widths = step*([.55,.40,.30,.25][coat]+rv[:,1]*[.16,.14,.20,.22][coat])
             # Stop each axis at the first distinct color boundary.
             for axis in [0,1]:
                 axis_angle = angle+(np.pi/2 if axis else 0)
@@ -164,8 +203,9 @@ class Painting:
                 active = np.ones(len(xy), bool)
                 for fraction in [.28,.46,.66,.85,1.]:
                     reach = direction*(extent*fraction)[:,None]
-                    a, b = pigment(blurred,xy+reach), pigment(blurred,xy-reach)
-                    crossing = np.maximum(np.max(np.abs(a-c),axis=1),np.max(np.abs(b-c),axis=1)) > [29,26,32][coat]
+                    a = pigment(blurred,xy+reach,image_scale,coat==3)
+                    b = pigment(blurred,xy-reach,image_scale,coat==3)
+                    crossing = np.maximum(np.max(np.abs(a-c),axis=1),np.max(np.abs(b-c),axis=1)) > [29,26,32,22][coat]
                     stop = crossing & active
                     limit[stop] = max(.25,fraction-.13)
                     active[stop] = False
@@ -211,6 +251,7 @@ def main():
     ap.add_argument('--width',type=int,default=1920)
     ap.add_argument('--hour',type=float,default=15)
     ap.add_argument('--mode',choices=['transported','anchored'],default='transported')
+    ap.add_argument('--detail',choices=['original','selective'],default='original')
     args = ap.parse_args()
     root = pathlib.Path(args.output);root.parent.mkdir(parents=True,exist_ok=True)
     cap = cv2.VideoCapture(args.source)
@@ -220,7 +261,7 @@ def main():
     fw,fh=480,round(480*h/w)
     cv2.setNumThreads(2)
     dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
-    book = Painting(w,h,(fw,fh),args.mode)
+    book = Painting(w,h,(fw,fh),args.mode,args.detail,args.hour)
     native = pathlib.Path(__file__).parent/'native/target/release/stroke-study-raster'
     error = root.with_suffix('.raster.log').open('w')
     painter = subprocess.Popen([str(native),str(w),str(h)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=error)
@@ -251,7 +292,8 @@ def main():
                 previous=small
                 analysis=cv2.resize(bgr,(min(w,960),round(h*min(w,960)/w)),interpolation=cv2.INTER_AREA)
                 rgb=grade(cv2.cvtColor(analysis,cv2.COLOR_BGR2RGB),args.hour%24)
-                marks=book.update(rgb,forward,backward)
+                detail_rgb = None if args.detail=='original' else cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
+                marks=book.update(rgb,forward,backward,detail_rgb)
                 raster_start=time.perf_counter()
                 painter.stdin.write(struct.pack('<I',len(marks)))
                 painter.stdin.write(marks.astype('<f4').tobytes());painter.stdin.flush()
@@ -278,7 +320,7 @@ def main():
            'wall_seconds':time.perf_counter()-start,'frame_p50_ms':float(np.median(cost)),
            'frame_p95_ms':float(np.percentile(cost,95)),'flow_p50_ms':float(np.median(flow_cost)),
            'native_roundtrip_p50_ms':float(np.median(native_cost)),'maximum_strokes':max(updates),
-           'born':book.births,'retired':book.retired,'mode':args.mode,'hour':args.hour,
+           'born':book.births,'retired':book.retired,'mode':args.mode,'hour':args.hour,'detail':args.detail,
            'flow_dimensions':[fw,fh],'source':str(pathlib.Path(args.source).resolve())}
     root.with_suffix('.json').write_text(json.dumps(stats,indent=2));print(json.dumps(stats),flush=True)
 
