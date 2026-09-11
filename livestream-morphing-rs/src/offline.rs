@@ -38,7 +38,7 @@ pub fn render(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::
     Ok(serde_json::json!({"width":dimensions.0,"height":dimensions.1,
         "source_fps":output_fps*step as f64,"paint_fps":rendered.paint_fps,"painted_targets":timings.len(),"output_fps":output_fps,"frames":rendered.frames,"decode_ms":decode_ms,"effects_ms":effects_ms,
         "frame_p50_ms":timings[timings.len()/2],"frame_p95_ms":timings[(timings.len()*95/100).min(timings.len()-1)],
-        "encode_ms":encode_ms,"post_ms":rendered.post_ms,"total_ms":total_ms,"processing_fps":rendered.frames as f64*1000.0/total_ms,
+        "encode_ms":encode_ms,"post_ms":rendered.post_ms,"repaint_ms":rendered.repaint_ms,"warp_ms":rendered.warp_ms,"total_ms":total_ms,"processing_fps":rendered.frames as f64*1000.0/total_ms,
         "duration_seconds":rendered.frames as f64/output_fps,"bytes":encoded.len(),"peak_rss_kib":peak_rss_kib}))
 }
 

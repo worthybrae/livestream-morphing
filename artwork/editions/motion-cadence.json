@@ -24,7 +24,7 @@
     "id": 53,
     "slug": "paint-15-wave-30",
     "name": "15 paintings / 30 waves",
-    "description": "The painter updates every other frame. Pigment settles and the wave moves on every output frame.",
+    "description": "The painter updates every other frame. The completed canvas holds between paint updates; the wave moves on every output frame.",
     "params": {
       "hour": 4,
       "repaint": 1,

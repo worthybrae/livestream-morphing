@@ -6,7 +6,7 @@ pub struct Rendered {
     #[cfg(test)]
     pub painted_frames: Vec<Vec<u8>>,
     pub bytes:Vec<u8>, pub fps:f64, pub paint_fps:f64, pub frames:usize, pub width:u32, pub height:u32,
-    pub first_seconds:Option<f64>, pub times:Vec<f64>, pub decode_ms:f64, pub encode_ms:f64, pub post_ms:f64,
+    pub first_seconds:Option<f64>, pub times:Vec<f64>, pub decode_ms:f64, pub encode_ms:f64, pub post_ms:f64, pub repaint_ms:f64, pub warp_ms:f64,
 }
 struct Job { frame:RawFrame, number:u32, dt:f32 }
 struct Done { frame:RawFrame, milliseconds:f64 }
@@ -16,12 +16,17 @@ struct Worker { input:mpsc::SyncSender<Job>, output:mpsc::Receiver<Done> }
 fn emit_paint(target:RawFrame, first:u64, repeats:usize, fps:f64, repaint:bool, calm:bool,
     pipeline:&mut Pipeline, encoder:&mut Option<codec::TsEncoder>, encode_ms:&mut f64, post_ms:&mut f64,
     #[cfg(test)] painted_frames:&mut Vec<Vec<u8>>) -> Result<(),Error> {
-    let held=if repeats>1 {Some(target.data.clone())} else {None};
     let mut frame=target;
+    let post_start=Instant::now();
+    if repaint {pipeline.repaint.advance_paint(&mut frame,(repeats as f64/fps) as f32,calm);}
+    *post_ms+=post_start.elapsed().as_secs_f64()*1000.;
+    // Hold the completed, unwarped canvas, not the fresh target. The intervening
+    // output frame moves the painting without repainting it a second time.
+    let held=if repeats>1 {Some(frame.data.clone())} else {None};
     for repeat in 0..repeats {
         if repeat>0 {frame.data.copy_from_slice(held.as_ref().unwrap());}
         let post_start=Instant::now();
-        if repaint {pipeline.repaint.apply_mode(&mut frame,(first+repeat as u64) as u32,(1./fps) as f32,calm);}
+        if repaint {pipeline.repaint.move_canvas(&mut frame,(first+repeat as u64) as u32,(1./fps) as f32);}
         *post_ms+=post_start.elapsed().as_secs_f64()*1000.;
         #[cfg(test)] painted_frames.push(frame.data.clone());
         let started=Instant::now();encoder.as_mut().unwrap().push(&frame)?;
@@ -37,12 +42,12 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
 /// Longer local artwork exports keep the same bounded number of frames in flight.
 /// Public ingestion continues to use `render`, with the original segment limit.
 pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut Pipeline,requested_workers:usize,frame_limit:usize)->Result<Rendered,Error> {
-    let step=step.max(1);
+    let step=step.max(1);pipeline.repaint.take_timings();
     // Effects with temporal state must stay serial. This whitelist is intentionally narrow.
     let config=pipeline.view();
     let repaint=config.iter().any(|s|s.enabled && s.effect_id=="ink_editions" && s.params.get("edition")==Some(&53.) && s.params.get("repaint").copied().unwrap_or(0.)>=0.5);
     let calm=repaint && config.iter().any(|s|s.enabled && s.effect_id=="ink_editions" && s.params.get("calm").copied().unwrap_or(0.)>=0.5);
-    // Hold complete painted targets; the ordered repaint and wave still run at output cadence.
+    // Advance paint at target cadence, hold its canvas, and move the wave at output cadence.
     let paint_stride=if repaint && config.iter().filter(|s|s.enabled).count()==1 {config.iter().filter(|s|s.enabled && s.effect_id=="ink_editions").map(|s|s.params.get("paint_stride").copied().unwrap_or(1.) as usize).max().unwrap_or(1).clamp(1,3)} else {1};
     let independent=config.iter().filter(|s|s.enabled).all(|s|s.effect_id=="ink_editions" || (s.effect_id=="living_ink" && s.params.get("trail_strength").copied().unwrap_or(0.22)==0.0));
     let count=if independent {requested_workers.clamp(1,6)} else {1};
@@ -133,7 +138,8 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
             let fps=info.fps/step as f64;
             if !workers.is_empty() {pipeline.clear_enabled_history();}
             pipeline.source_end=info.first_seconds.map(|first|first+info.frames as f64/fps);
-            Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:fps/paint_stride as f64,frames:info.frames,width:dimensions.0,height:dimensions.1,first_seconds:info.first_seconds,times,decode_ms,encode_ms,post_ms})
+            let (repaint_ms,warp_ms)=pipeline.repaint.take_timings();
+            Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:fps/paint_stride as f64,frames:info.frames,width:dimensions.0,height:dimensions.1,first_seconds:info.first_seconds,times,decode_ms,encode_ms,post_ms,repaint_ms,warp_ms})
         })();
         drop(workers);
         result
@@ -257,10 +263,11 @@ mod tests {
         for input in [&first,&second] {
             codec::decode_visit_bounded(input,192,1,30,|mut frame,fps,_,_| {
                 if number%2==0 {
-                    oracle.set_dimensions(192,108);oracle.process_frame_timed(&mut frame,number,(1./fps) as f32);held=Some(frame);
+                    oracle.set_dimensions(192,108);oracle.process_frame_timed(&mut frame,number,(1./fps) as f32);
+                    oracle.repaint.advance_paint(&mut frame,(2./fps) as f32,true);held=Some(frame);
                 }
                 let mut output=held.as_ref().unwrap().clone();
-                oracle.repaint.apply_mode(&mut output,number,(1./fps) as f32,true);
+                oracle.repaint.move_canvas(&mut output,number,(1./fps) as f32);
                 expected.push(output.data);number+=1;Ok(())
             }).unwrap();
         }

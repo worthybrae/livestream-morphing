@@ -1,14 +1,21 @@
 //! Small, source-triggered paint passes, applied in display order before the wave.
 use crate::effects::{RawFrame,distortion::Distortion};
 #[derive(Default)]
-pub struct Repaint { size:(u32,u32), canvas:Vec<u8>, marks:Vec<Mark>, coverage:Vec<u8>, mask:Vec<u8>, previous:Vec<u8>, older:Vec<u8>, settled:Vec<u16>, warp:Distortion }
+pub struct Repaint { size:(u32,u32), canvas:Vec<u8>, marks:Vec<Mark>, coverage:Vec<u8>, mask:Vec<u8>, previous:Vec<u8>, older:Vec<u8>, settled:Vec<u16>, warp:Distortion, paint_ms:f64, warp_ms:f64 }
 #[derive(Clone,Default)]
 struct Mark { age:f32, active:bool }
 impl Repaint {
     pub fn apply_mode(&mut self,frame:&mut RawFrame,number:u32,dt:f32,calm:bool) {
-        self.paint_mode(frame,dt,calm);
-        self.warp.apply_rgb_anchored(frame,0.012,8.,(number as f64*dt as f64/8.) as f32*std::f32::consts::TAU);
+        self.advance_paint(frame,dt,calm);
+        self.move_canvas(frame,number,dt);
     }
+    pub fn advance_paint(&mut self,frame:&mut RawFrame,dt:f32,calm:bool) {
+        let start=std::time::Instant::now();self.paint_mode(frame,dt,calm);self.paint_ms+=start.elapsed().as_secs_f64()*1000.;
+    }
+    pub fn move_canvas(&mut self,frame:&mut RawFrame,number:u32,dt:f32) {
+        let start=std::time::Instant::now();self.warp.apply_rgb_anchored(frame,0.012,8.,(number as f64*dt as f64/8.) as f32*std::f32::consts::TAU);self.warp_ms+=start.elapsed().as_secs_f64()*1000.;
+    }
+    pub fn take_timings(&mut self)->(f64,f64) {(std::mem::take(&mut self.paint_ms),std::mem::take(&mut self.warp_ms))}
     #[cfg(test)]
     fn paint(&mut self,frame:&mut RawFrame,dt:f32) {self.paint_mode(frame,dt,false);}
     fn paint_mode(&mut self,frame:&mut RawFrame,dt:f32,calm:bool) {
@@ -59,22 +66,13 @@ impl Repaint {
         let response=1.-(-dt.max(0.)/0.09).exp();
         let weights: [i32;256]=std::array::from_fn(|a|(response*(0.25+0.75*a as f32/255.)*32768.).round() as i32);
         let rise=(420.*dt*256.).round() as i32;let fall=(600.*dt*256.).round() as i32;
-        for (at,&coverage) in self.coverage.iter().enumerate() {
-            let alpha=coverage as u32;
-            for c in 0..3 {
-                let i=at*3+c;
-                if calm {
-                    // A three-frame median rejects isolated exposure/codec flashes.
-                    // Q8 pigment keeps sub-byte changes from sticking or stepping.
-                    let a=frame.data[i];let b=self.previous[i];let c=self.older[i];
-                    let target=a.min(b).max(a.max(b).min(c)) as i32*256;
-                    let current=self.settled[i] as i32;
-                    let delta=target-current;
-                    let change=((delta*weights[alpha as usize]+16384)>>15).clamp(-fall,rise);
-                    let next=(current+change).clamp(0,65280);
-                    self.settled[i]=next as u16;
-                    self.canvas[i]=((next+128)>>8) as u8;
-                } else {
+        if calm {
+            settle_pigments(&frame.data,&self.previous,&self.older,&mut self.settled,&mut self.canvas,&self.coverage,&weights,rise,fall);
+        } else {
+            for (at,&coverage) in self.coverage.iter().enumerate() {
+                let alpha=coverage as u32;
+                for c in 0..3 {
+                    let i=at*3+c;
                     self.canvas[i]=((self.canvas[i] as u32*(255-alpha)+frame.data[i] as u32*alpha+127)/255) as u8;
                     self.settled[i]=self.canvas[i] as u16*256;
                 }
@@ -85,19 +83,40 @@ impl Repaint {
         frame.data.copy_from_slice(&self.canvas);
     }
 }
+// Four interleaved RGB components, preserving the scalar Q8/Q15 arithmetic.
+fn settle_pigments(target:&[u8],previous:&[u8],older:&[u8],settled:&mut [u16],canvas:&mut [u8],coverage:&[u8],weights:&[i32;256],rise:i32,fall:i32) {
+    use wide::i32x4 as I;
+    let last=target.len()-1;
+    for (batch,output) in canvas.chunks_mut(4).enumerate() {
+        let at=batch*4;let ids: [usize;4]=std::array::from_fn(|k|(at+k).min(last));
+        let a=I::new(ids.map(|i|target[i] as i32));let b=I::new(ids.map(|i|previous[i] as i32));let c=I::new(ids.map(|i|older[i] as i32));
+        let pigment=a.min(b).max(a.max(b).min(c))*256;
+        let current=I::new(ids.map(|i|settled[i] as i32));
+        let weight=I::new(ids.map(|i|weights[coverage[i/3] as usize]));
+        let change=(((pigment-current)*weight+I::splat(16384))>>15u32).max(I::splat(-fall)).min(I::splat(rise));
+        let next=(current+change).max(I::splat(0)).min(I::splat(65280));
+        let bytes=((next+I::splat(128))>>8u32).to_array();let values=next.to_array();
+        for k in 0..output.len() {settled[at+k]=values[k] as u16;output[k]=bytes[k] as u8;}
+    }
+}
+
 fn reconstruct_coverage(mask:&[u8],mw:usize,mh:usize,output:&mut [u8],w:usize,h:usize,scale:usize) {
     if scale==1 {output.copy_from_slice(mask);return;}
-    let columns:Vec<_>=(0..w).map(|x| {
-        let sx=((x as f32+0.5)/scale as f32-0.5).clamp(0.,(mw-1) as f32);
-        (sx as usize,(sx as usize+1).min(mw-1),sx.fract())
-    }).collect();
+    // Pixel-center coordinates have denominator 2*scale. Integer weights are
+    // exact here and avoid a floating-point round operation for every pixel.
+    let d=(2*scale) as u32;let denominator=d*d;
+    debug_assert!(denominator.is_power_of_two());let shift=denominator.trailing_zeros();
+    let coordinate=|at:usize,extent:usize| {
+        let n=(2*at+1).saturating_sub(scale).min((extent-1)*d as usize);
+        (n/d as usize,(n/d as usize+1).min(extent-1),(n%d as usize) as u32)
+    };
+    let columns:Vec<_>=(0..w).map(|x|coordinate(x,mw)).collect();
     for y in 0..h {
-        let sy=((y as f32+0.5)/scale as f32-0.5).clamp(0.,(mh-1) as f32);
-        let y0=sy as usize;let y1=(y0+1).min(mh-1);let fy=sy.fract();
+        let (y0,y1,fy)=coordinate(y,mh);
         for (x,&(x0,x1,fx)) in columns.iter().enumerate() {
-            let a=mask[y0*mw+x0] as f32*(1.-fx)+mask[y0*mw+x1] as f32*fx;
-            let b=mask[y1*mw+x0] as f32*(1.-fx)+mask[y1*mw+x1] as f32*fx;
-            output[y*w+x]=(a*(1.-fy)+b*fy).round() as u8;
+            let a=mask[y0*mw+x0] as u32*(d-fx)+mask[y0*mw+x1] as u32*fx;
+            let b=mask[y1*mw+x0] as u32*(d-fx)+mask[y1*mw+x1] as u32*fx;
+            output[y*w+x]=((a*(d-fy)+b*fy+denominator/2)>>shift) as u8;
         }
     }
 }
@@ -123,6 +142,30 @@ fn brush_coverage(coverage:&mut [u8],w:usize,h:usize,cx:f32,cy:f32,length:f32,wi
 }
 #[cfg(test)] mod tests {
  use super::*;
+ #[test] fn batched_pigment_matches_scalar_for_extremes_and_partial_batches() {
+  for count in [3,9,111,513] {
+   let target:Vec<u8>=(0..count).map(|i|((i*71)%256) as u8).collect();let previous:Vec<u8>=target.iter().rev().copied().collect();let older:Vec<u8>=target.iter().map(|v|255-v).collect();
+   let coverage:Vec<u8>=(0..count/3).map(|i|((i*29)%256) as u8).collect();let weights=std::array::from_fn(|i|(i as i32*32768)/255);
+   let mut state:Vec<u16>=(0..count).map(|i|((i*4171)%65281) as u16).collect();let mut expected=state.clone();let mut out=vec![0;count];
+   for i in 0..count {let a=target[i];let b=previous[i];let c=older[i];let t=a.min(b).max(a.max(b).min(c)) as i32*256;let delta=t-expected[i] as i32;
+    let change=((delta*weights[coverage[i/3] as usize]+16384)>>15).clamp(-5120,3584);expected[i]=(expected[i] as i32+change).clamp(0,65280) as u16;}
+   settle_pigments(&target,&previous,&older,&mut state,&mut out,&coverage,&weights,3584,5120);
+   assert_eq!(state,expected);assert!(out.iter().zip(expected).all(|(a,b)|*a as u16==(b+128)>>8));
+  }
+ }
+ #[test] fn integer_mask_reconstruction_matches_float_pixel_centers() {
+  for scale in [2,4] {
+   let (w,h)=(37usize,19usize);let mw=w.div_ceil(scale);let mh=h.div_ceil(scale);
+   let mask:Vec<u8>=(0..mw*mh).map(|i|((i*73+41)%256) as u8).collect();let mut out=vec![0;w*h];
+   reconstruct_coverage(&mask,mw,mh,&mut out,w,h,scale);
+   for y in 0..h {for x in 0..w {
+    let sx=((x as f32+0.5)/scale as f32-0.5).clamp(0.,(mw-1) as f32);let sy=((y as f32+0.5)/scale as f32-0.5).clamp(0.,(mh-1) as f32);
+    let (x0,y0)=(sx as usize,sy as usize);let (x1,y1)=((x0+1).min(mw-1),(y0+1).min(mh-1));let (fx,fy)=(sx.fract(),sy.fract());
+    let a=mask[y0*mw+x0] as f32*(1.-fx)+mask[y0*mw+x1] as f32*fx;let b=mask[y1*mw+x0] as f32*(1.-fx)+mask[y1*mw+x1] as f32*fx;
+    assert_eq!(out[y*w+x],(a*(1.-fy)+b*fy).round() as u8);
+   }}
+  }
+ }
  #[test] fn coarse_refresh_mask_has_smooth_edges_and_handles_odd_dimensions() {
   let mut out=vec![0;7*5];reconstruct_coverage(&[96;4],2,2,&mut out,7,5,4);assert!(out.iter().all(|v|*v==96));
   reconstruct_coverage(&[0,255,0,255],2,2,&mut out,7,5,4);

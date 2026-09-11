@@ -193,6 +193,8 @@ pub struct ProcessingStats {
     pub source_fps: f64,
     pub paint_fps: f64,
     pub post_ms: u64,
+    pub repaint_ms: u64,
+    pub warp_ms: u64,
     pub frame_p50_ms: f64,
     pub frame_p95_ms: f64,
     pub duration_seconds: f64,
@@ -408,7 +410,7 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
     let encoded=rendered.bytes;
     let stats=ProcessingStats {
         effects_ms,total_ms:start.elapsed().as_millis() as u64,frames:rendered.frames as u64,
-        width:rendered.width,height:rendered.height,source_fps:rendered.fps,paint_fps:rendered.paint_fps,post_ms:rendered.post_ms.round() as u64,
+        width:rendered.width,height:rendered.height,source_fps:rendered.fps,paint_fps:rendered.paint_fps,post_ms:rendered.post_ms.round() as u64,repaint_ms:rendered.repaint_ms.round() as u64,warp_ms:rendered.warp_ms.round() as u64,
         frame_p50_ms:times[times.len()/2],frame_p95_ms:times[(times.len()*95/100).min(times.len()-1)],
         duration_seconds:duration,rendered_frames:previous_stats.rendered_frames+rendered.frames as u64,
         encoded_bytes:encoded.len(),segment_completed_at:0,
