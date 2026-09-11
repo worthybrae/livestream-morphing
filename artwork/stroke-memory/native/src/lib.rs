@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 mod material;
 
-struct Stamp { w:usize, h:usize, ox:i32, oy:i32, pixels:Vec<[i16;2]>, prepared:Vec<[i16;2]>, key:Option<[i32;3]> }
+struct Stamp { w:usize, h:usize, ox:i32, oy:i32, pixels:Vec<[i16;2]>, prepared:Vec<[i16;2]>, key:Option<[i32;3]>, pending:[i32;3] }
 fn make_stamp(p:&[f32])->Stamp {
     let (length,width,angle,seed)=(p[3],p[4],p[5],p[6]);
     let (sn,cs)=angle.sin_cos();
@@ -28,14 +28,20 @@ fn make_stamp(p:&[f32])->Stamp {
             + ((across/pressure.max(0.05)).clamp(-1.,1.))*2.).round() as i16;
         pixels[(y+by) as usize*w+(x+bx) as usize]=[alpha,alpha*light];
     }}
-    Stamp {w,h,ox:-bx,oy:-by,pixels,prepared:Vec::new(),key:None}
+    Stamp {w,h,ox:-bx,oy:-by,pixels,prepared:Vec::new(),key:None,pending:[0;3]}
 }
 impl Stamp {
     fn prepare(&mut self,p:&[f32]) {
+        self.set_phase(p);self.prepare_phase();
+    }
+    fn set_phase(&mut self,p:&[f32]) {
         let fx=((p[1]-p[1].floor())*256.) as i32;
         let fy=((p[2]-p[2].floor())*256.) as i32;
         let opacity=(p[10].clamp(0.,1.)*256.) as i32;
-        let key=[fx,fy,opacity];
+        self.pending=[fx,fy,opacity];
+    }
+    fn prepare_phase(&mut self) {
+        let key=self.pending;let [fx,fy,opacity]=key;
         if self.key==Some(key) {return;}
         self.key=Some(key);
         self.prepared.resize(self.pixels.len(),[0,0]);
@@ -127,11 +133,32 @@ impl Painter {
         if values.len()%12!=0 || values.len()>100_000*12 {return None;}
         if values.chunks_exact(12).any(|p|!p.iter().all(|v|v.is_finite()) || p[3]<=0. || p[4]<=0. || p[3]>512. || p[4]>512.) {return None;}
         let mut active=HashSet::with_capacity(values.len()/12);
+        let mut missing=Vec::new();
         for p in values.chunks_exact(12) {
-            let id=p[0] as u32;active.insert(id);
-            self.cache.entry(id).or_insert_with(||material::stamp(p,self.material)).prepare(p);
+            let id=p[0] as u32;
+            if !active.insert(id) {return None;}
+            if let Some(stamp)=self.cache.get_mut(&id) {stamp.set_phase(p);}
+            else {missing.push(p);}
         }
         if !append {self.cache.retain(|id,_|active.contains(id));}
+        // Mask creation and resampling are independent for each brush. Preserve
+        // deposition order, but prepare its immutable coverage in parallel.
+        let material=self.material;
+        let made=std::thread::scope(|scope| {
+            let mut jobs=Vec::new();
+            for chunk in missing.chunks(missing.len().div_ceil(4).max(1)) {
+                jobs.push(scope.spawn(move||chunk.iter().map(|p| {
+                    let mut stamp=material::stamp(p,material);stamp.prepare(p);(p[0] as u32,stamp)
+                }).collect::<Vec<_>>()));
+            }
+            jobs.into_iter().flat_map(|j|j.join().expect("brush mask preparation")).collect::<Vec<_>>()
+        });
+        self.cache.extend(made);
+        let mut changed:Vec<_>=self.cache.values_mut().filter(|s|s.key!=Some(s.pending)).collect();
+        let size=changed.len().div_ceil(4).max(1);
+        std::thread::scope(|scope| {for chunk in changed.chunks_mut(size) {
+            scope.spawn(move|| {for stamp in chunk {stamp.prepare_phase();}});
+        }});
         raster(&mut self.canvas,self.w,self.h,values,&self.cache,4,!append);
         for (dst,src) in self.rgb.chunks_exact_mut(3).zip(self.canvas.chunks_exact(4)) {dst.copy_from_slice(&src[..3]);}
         Some(&self.rgb)

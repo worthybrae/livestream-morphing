@@ -96,5 +96,5 @@ pub fn stamp(p:&[f32],material:Material)->Stamp {
         let shade=light.round().clamp(-40.,40.) as i16;
         pixels[(y+by) as usize*w+(x+bx) as usize]=[alpha,alpha*shade];
     }}
-    Stamp {w,h,ox:-bx,oy:-by,pixels,prepared:Vec::new(),key:None}
+    Stamp {w,h,ox:-bx,oy:-by,pixels,prepared:Vec::new(),key:None,pending:[0;3]}
 }
