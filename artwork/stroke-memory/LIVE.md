@@ -17,7 +17,10 @@ startup does not repeatedly destroy and rebuild its brush cache.
 Local socket timeouts bound startup and frame
 responses; dropping the supervisor kills and reaps the worker. Brush identities
 are compacted before their float32 namespaces collide. Base and adaptive mark
-populations are bounded at 45,000 and 20,000.
+populations are bounded at 30,000 and 20,000. The live base limit prevents
+background marks accumulating far beyond the approved 24-second study (27,467
+base marks born in total, 13,230 remaining at its end). Fine-detail capacity is
+unchanged; retired base marks free space for new deposits.
 
 `LOADED_PAINT_STRIDE` sets the fastest permitted paint cadence (2–12; default 3).
 Production starts at 8: about 3.75 paint updates and 29.97 wave/output frames per
@@ -37,7 +40,7 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
 - Optimized 15-update source comparison at frame 90: mean RGB difference 0.086
   of 255; 99.0% of channel values unchanged. Small arithmetic differences can
   change a few near-threshold adaptive decisions.
-- 18 Python tests and 164 engine tests pass. Native raster tests cover overlapping
+- 19 Python tests and 164 engine tests pass. Native raster tests cover overlapping
   subpixel stamps, parallel boundaries and append equivalence. Engine tests cover
   an uneven segment boundary, skipped-source recovery, a cadence change without
   missing output frames, bounded load adaptation and stalled/invalid startup.

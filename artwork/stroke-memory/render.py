@@ -78,13 +78,14 @@ def grade_reference(source, hour):
 
 
 class Painting:
-    def __init__(self, width, height, flow_size, mode, detail='original', detail_hour=None):
+    def __init__(self, width, height, flow_size, mode, detail='original', detail_hour=None, limit=45000):
         self.w, self.h = width, height
         self.fw, self.fh = flow_size
         self.factor = np.array([self.fw/width, self.fh/height], np.float32)
         self.mode = mode
         self.detail = detail
         self.detail_hour = detail_hour
+        self.limit = limit
         self.scale = width/1920
         self.steps = np.array([32., 17., 6.])*self.scale
         if detail != 'original':
@@ -193,7 +194,7 @@ class Painting:
             self.strokes, self.age, self.failures = self.strokes[keep], self.age[keep], self.failures[keep]
 
         additions = []
-        remaining = max(0,45000-len(self.strokes))
+        remaining = max(0,self.limit-len(self.strokes))
         for coat, (pts, variety, step, (blurred, image_scale)) in enumerate(zip(
                 self.candidates, self.variants, self.steps, sources)):
             if coat == 3:
@@ -285,7 +286,7 @@ class Painting:
             self.failures = np.concatenate([self.failures,np.zeros(len(added),np.float32)])
             order = np.argsort(self.strokes[:,11],kind='stable')
             self.strokes,self.age,self.failures = self.strokes[order],self.age[order],self.failures[order]
-        if len(self.strokes)>45000:
+        if len(self.strokes)>self.limit:
             raise RuntimeError('Stroke population exceeded the experiment memory bound')
         # A separate, opaque painted ground covers newly exposed space while
         # the moving marks replenish. It consists of broad brush deposits too.

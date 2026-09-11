@@ -4,10 +4,22 @@ import unittest
 import cv2
 import numpy as np
 from live import Raster, LoadedPainting
-from render import grade, grade_reference
+from render import Painting, grade, grade_reference
 from adaptive import AdaptiveBrushwork
 
 class LiveTests(unittest.TestCase):
+    def test_base_strokes_replenish_without_exceeding_the_live_budget(self):
+        p=Painting(320,180,(160,90),'transported',limit=200)
+        zero=np.zeros((90,160,2),np.float32)
+        rng=np.random.default_rng(19)
+        for _ in range(20):
+            image=cv2.GaussianBlur(rng.integers(0,256,(180,320,3),dtype=np.uint8),(0,0),1)
+            marks=p.update(image,zero,zero)
+            self.assertLessEqual(len(p.strokes),200)
+            self.assertGreater(len(marks),0)
+        self.assertGreater(p.retired,0)
+        self.assertGreater(p.births,200)
+
     def test_fused_palette_tracks_original_through_day_and_night(self):
         raster=Raster(192,108)
         try:
