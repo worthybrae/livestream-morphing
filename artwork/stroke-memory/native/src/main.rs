@@ -1,6 +1,7 @@
 //! Local prototype only. Rasterizes persistent marks; never reads the video.
 //! Input per frame: little-endian u32 count, then 12 f32 values per mark.
 use std::{collections::{HashMap, HashSet}, io::{self, Read, Write}};
+mod material;
 
 struct Stamp { w:usize, h:usize, ox:i32, oy:i32, pixels:Vec<[i16;2]> }
 fn make_stamp(p:&[f32])->Stamp {
@@ -72,6 +73,8 @@ fn raster(canvas:&mut [u8],w:usize,h:usize,values:&[f32],cache:&HashMap<u32,Stam
 fn main()->io::Result<()> {
     let args:Vec<_>=std::env::args().collect();
     let w:usize=args[1].parse().unwrap();let h:usize=args[2].parse().unwrap();
+    let material=material::Material::parse(args.get(3).map(String::as_str).unwrap_or("plain"))
+        .ok_or_else(||io::Error::new(io::ErrorKind::InvalidInput,"Unknown paint material"))?;
     let mut input=io::stdin().lock();let mut output=io::stdout().lock();
     let mut cache=HashMap::<u32,Stamp>::new();let mut header=[0;4];
     let mut canvas=vec![0u8;w*h*3];let mut raster_ms=0.;let mut frames=0;
@@ -87,7 +90,7 @@ fn main()->io::Result<()> {
         for p in values.chunks_exact(12) {
             if !p.iter().all(|v|v.is_finite()) || p[3]<=0. || p[4]<=0. || p[3]>512. || p[4]>512. {continue;}
             let id=p[0] as u32;active.insert(id);
-            cache.entry(id).or_insert_with(||make_stamp(p));
+            cache.entry(id).or_insert_with(||material::stamp(p,material));
         }
         if !append {cache.retain(|id,_|active.contains(id));}
         raster(&mut canvas,w,h,&values,&cache,4,!append);

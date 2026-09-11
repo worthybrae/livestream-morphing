@@ -313,6 +313,7 @@ def main():
     ap.add_argument('--hour',type=float,default=15)
     ap.add_argument('--mode',choices=['transported','anchored'],default='transported')
     ap.add_argument('--detail',choices=['original','selective','people','adaptive'],default='original')
+    ap.add_argument('--material',choices=['plain','loaded','scumble','swept'],default='plain')
     ap.add_argument('--person-model',type=pathlib.Path,default=pathlib.Path(__file__).parent/'models/nanodet.onnx')
     args = ap.parse_args()
     root = pathlib.Path(args.output);root.parent.mkdir(parents=True,exist_ok=True)
@@ -336,7 +337,7 @@ def main():
         detector=PersonDetector(args.person_model);people=PeopleAttention(w,h,(fw,fh))
     native = pathlib.Path(__file__).parent/'native/target/release/stroke-study-raster'
     error = root.with_suffix('.raster.log').open('w')
-    painter = subprocess.Popen([str(native),str(w),str(h)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=error)
+    painter = subprocess.Popen([str(native),str(w),str(h),args.material],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=error)
     encoder = subprocess.Popen(['ffmpeg','-v','error','-y','-f','rawvideo','-pixel_format','rgb24',
             '-video_size',f'{w}x{h}','-framerate',str(fps),'-i','pipe:0','-an','-c:v','libx264',
             '-preset','veryfast','-crf','23','-threads','2','-pix_fmt','yuv420p','-movflags','+faststart',str(root)],stdin=subprocess.PIPE)
@@ -422,7 +423,7 @@ def main():
            'wall_seconds':time.perf_counter()-start,'frame_p50_ms':float(np.median(cost)),
            'frame_p95_ms':float(np.percentile(cost,95)),'flow_p50_ms':float(np.median(flow_cost)),
            'native_roundtrip_p50_ms':float(np.median(native_cost)),'maximum_strokes':max(updates),
-           'born':book.births,'retired':book.retired,'mode':args.mode,'hour':args.hour,'detail':args.detail,
+           'born':book.births,'retired':book.retired,'mode':args.mode,'hour':args.hour,'detail':args.detail,'material':args.material,
            'flow_dimensions':[fw,fh],'source':str(pathlib.Path(args.source).resolve())}
     if people is not None:
         stats.update(person_detection_p50_ms=float(np.median(detection_cost)),person_detection_calls=len(detection_cost),maximum_person_tracks=max(people_counts),person_model=str(args.person_model.resolve()))

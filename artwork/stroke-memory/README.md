@@ -236,3 +236,12 @@ verify that incremental append packets produce exactly the same pixels as
 one ordered packet, preserving serial/four-band compositing parity.
 
 Preview: http://127.0.0.1:3092/stroke-memory/#moving-adaptive-effort
+
+## Paint material comparisons
+
+The next local study keeps adaptive allocation and experiments with loaded
+bristle relief, scumbled pigment and longer swept oil marks. See
+[MATERIALS.md](MATERIALS.md) for the changes, reproduction commands and limits.
+The previous adaptive recording remains unchanged as the reference.
+
+Preview: http://127.0.0.1:3092/stroke-memory/materials/#loaded-bristle
