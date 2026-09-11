@@ -1,7 +1,7 @@
 //! Small, source-triggered paint passes, applied in display order before the wave.
 use crate::effects::{RawFrame,distortion::Distortion};
 #[derive(Default)]
-pub struct Repaint { size:(u32,u32), canvas:Vec<u8>, marks:Vec<Mark>, coverage:Vec<u8>, previous:Vec<u8>, older:Vec<u8>, settled:Vec<u16>, warp:Distortion }
+pub struct Repaint { size:(u32,u32), canvas:Vec<u8>, marks:Vec<Mark>, coverage:Vec<u8>, mask:Vec<u8>, previous:Vec<u8>, older:Vec<u8>, settled:Vec<u16>, warp:Distortion }
 #[derive(Clone,Default)]
 struct Mark { age:f32, active:bool }
 impl Repaint {
@@ -15,11 +15,15 @@ impl Repaint {
         let (w,h)=(frame.width as usize,frame.height as usize);
         let step=((w as f32/1920.)*24.).round().max(4.) as usize;
         let cols=w.div_ceil(step);let rows=h.div_ceil(step);
+        // Only the slowly moving refresh front is reduced. Painted RGB remains
+        // full resolution; bilinear reconstruction keeps the front softly curved.
+        let mask_scale=if w>=960 {4} else {1};
+        let mw=w.div_ceil(mask_scale);let mh=h.div_ceil(mask_scale);
         if self.size!=(frame.width,frame.height) || self.canvas.len()!=frame.data.len() {
             self.size=(frame.width,frame.height);self.canvas=frame.data.clone();
-            self.marks=vec![Mark::default();cols*rows];self.coverage=vec![0;w*h];self.previous=frame.data.clone();self.older=frame.data.clone();self.settled=frame.data.iter().map(|v|*v as u16*256).collect();return;
+            self.marks=vec![Mark::default();cols*rows];self.coverage=vec![0;w*h];self.mask=vec![0;mw*mh];self.previous=frame.data.clone();self.older=frame.data.clone();self.settled=frame.data.iter().map(|v|*v as u16*256).collect();return;
         }
-        self.coverage.fill(0);
+        self.mask.fill(0);
         for cy in 0..rows {for cx in 0..cols {
             let id=cy*cols+cx;let seed=((id as u32).wrapping_mul(2654435761)>>16) as f32/65535.;
             let mark=&mut self.marks[id];let x0=cx*step;let y0=cy*step;
@@ -41,11 +45,15 @@ impl Repaint {
             let center_x=(x0 as f32+step as f32*(0.4+seed*0.2)).min((w-1) as f32);
             let center_y=(y0 as f32+step as f32*(0.6-seed*0.2)).min((h-1) as f32);
             let length=step as f32*(1.8+seed*0.3);let width=step as f32*1.35;
+            let scale=mask_scale as f32;
+            let (mx,my)=((center_x+0.5)/scale-0.5,(center_y+0.5)/scale-0.5);
+            let (length,width)=(length/scale,width/scale);
             let bx=(cs.abs()*length+sn.abs()*width).ceil();
             let by=(sn.abs()*length+cs.abs()*width).ceil();
-            brush_coverage(&mut self.coverage,w,h,center_x,center_y,length,width,cs,sn,progress,bx,by);
+            brush_coverage(&mut self.mask,mw,mh,mx,my,length,width,cs,sn,progress,bx,by);
             if progress>=1. {mark.active=false;}
         }}
+        reconstruct_coverage(&self.mask,mw,mh,&mut self.coverage,w,h,mask_scale);
         // One Q15 response table per frame keeps the six-million-channel pass
         // integer-only. Pigment remains Q8, so gradual changes do not get stuck.
         let response=1.-(-dt.max(0.)/0.09).exp();
@@ -77,6 +85,23 @@ impl Repaint {
         frame.data.copy_from_slice(&self.canvas);
     }
 }
+fn reconstruct_coverage(mask:&[u8],mw:usize,mh:usize,output:&mut [u8],w:usize,h:usize,scale:usize) {
+    if scale==1 {output.copy_from_slice(mask);return;}
+    let columns:Vec<_>=(0..w).map(|x| {
+        let sx=((x as f32+0.5)/scale as f32-0.5).clamp(0.,(mw-1) as f32);
+        (sx as usize,(sx as usize+1).min(mw-1),sx.fract())
+    }).collect();
+    for y in 0..h {
+        let sy=((y as f32+0.5)/scale as f32-0.5).clamp(0.,(mh-1) as f32);
+        let y0=sy as usize;let y1=(y0+1).min(mh-1);let fy=sy.fract();
+        for (x,&(x0,x1,fx)) in columns.iter().enumerate() {
+            let a=mask[y0*mw+x0] as f32*(1.-fx)+mask[y0*mw+x1] as f32*fx;
+            let b=mask[y1*mw+x0] as f32*(1.-fx)+mask[y1*mw+x1] as f32*fx;
+            output[y*w+x]=(a*(1.-fy)+b*fy).round() as u8;
+        }
+    }
+}
+
 // Four neighboring footprint samples at a time. This is the same soft filbert
 // sweep, including overlapping coverage; only its rasterization is batched.
 #[allow(clippy::too_many_arguments)]
@@ -98,6 +123,15 @@ fn brush_coverage(coverage:&mut [u8],w:usize,h:usize,cx:f32,cy:f32,length:f32,wi
 }
 #[cfg(test)] mod tests {
  use super::*;
+ #[test] fn coarse_refresh_mask_has_smooth_edges_and_handles_odd_dimensions() {
+  let mut out=vec![0;7*5];reconstruct_coverage(&[96;4],2,2,&mut out,7,5,4);assert!(out.iter().all(|v|*v==96));
+  reconstruct_coverage(&[0,255,0,255],2,2,&mut out,7,5,4);
+  assert!(out[..7].windows(2).all(|p|p[0]<=p[1] && p[1]-p[0]<=64));
+  let mut p=Repaint::default();let mut f=RawFrame::filled(961,541,0,0,0);p.paint_mode(&mut f,1./30.,true);
+  f=RawFrame::filled(961,541,100,120,80);p.paint_mode(&mut f,1./30.,true);
+  assert_eq!(p.mask.len(),241*136);assert_eq!(f.data.len(),961*541*3);
+  assert!(p.coverage.iter().any(|v|*v>0 && *v<255));
+ }
  #[test] fn batched_filbert_matches_scalar_with_partial_rows() {
   for seed in 0..25 {
    let (w,h)=(57,43);let t=seed as f32/24.;let cx=3.+t*49.;let cy=4.+(1.-t)*36.;
