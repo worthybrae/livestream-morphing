@@ -23,7 +23,7 @@ base marks born in total, 13,230 remaining at its end). Fine-detail capacity is
 unchanged; retired base marks free space for new deposits.
 
 `LOADED_PAINT_STRIDE` sets the fastest permitted paint cadence (2–12; default 3).
-Production starts at 8: about 3.75 paint updates and 29.97 wave/output frames per
+Production starts at 5: up to 5.99 paint updates and 29.97 wave/output frames per
 second. Live processing may relax the stride up to 12 (2.5 paint updates/sec)
 when segment processing exceeds 90% of its playback duration. It recovers one
 step only after six segments below 75%, never exceeding the configured rate.
@@ -44,6 +44,13 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
   subpixel stamps, parallel boundaries and append equivalence. Engine tests cover
   an uneven segment boundary, skipped-source recovery, a cadence change without
   missing output frames, bounded load adaptation and stalled/invalid startup.
+- The x86 renderer batches two RGBA pixels with AVX2, selected at runtime, with
+  the scalar path retained for other CPUs. Three native tests include odd row
+  lengths, transparent coverage, pigment saturation and rounding equivalence.
+  A paired 22,794-mark benchmark on the production CPU with Rust 1.86 reduced
+  warm raster median from 91.03 to 63.18 ms (31%), with identical output pixels
+  across eight subpixel poses. This measures brush rasterization, not total
+  pipeline throughput; the cadence guard still measures complete live segments.
 - Local arm64 container, 24.024 s / 1080p: initial integrated 15-update replay took
   50.99 s; native optimizations plus overlapped 10-update replay took 28.93 s.
   These are local replay timings, not production throughput or a billing estimate.

@@ -61,13 +61,25 @@ impl Stamp {
         self.key=Some(key);
         self.prepared.resize(self.pixels.len(),[0,0]);
         let weights=[(256-fx)*(256-fy),fx*(256-fy),(256-fx)*fy,fx*fy];
-        for sy in 1..self.h {for sx in self.spans[sy].0..self.spans[sy].1 {
-            let at=sy*self.w+sx;
-            let ids=[at,at-1,at-self.w,at-self.w-1];
-            let mut a=0;let mut b=0;
-            for k in 0..4 {a+=self.pixels[ids[k]][0] as i32*weights[k];b+=self.pixels[ids[k]][1] as i32*weights[k];}
-            self.prepared[at]=[(((a>>16)*opacity)>>8) as i16,(((b>>16)*opacity)>>8) as i16];
-        }}
+        for sy in 1..self.h {
+            let (start,end)=self.spans[sy];
+            if start==end {continue;}
+            let at=sy*self.w+start;let stop=sy*self.w+end;
+            // Prove the bounds once per row so LLVM can vectorize adjacent
+            // samples; preserve the integer interpolation and rounding exactly.
+            let current=&self.pixels[at..stop];
+            let left=&self.pixels[at-1..stop-1];
+            let above=&self.pixels[at-self.w..stop-self.w];
+            let diagonal=&self.pixels[at-self.w-1..stop-self.w-1];
+            for ((((out,a),b),c),d) in self.prepared[at..stop].iter_mut()
+                .zip(current).zip(left).zip(above).zip(diagonal) {
+                for k in 0..2 {
+                    let value=a[k] as i32*weights[0]+b[k] as i32*weights[1]
+                        +c[k] as i32*weights[2]+d[k] as i32*weights[3];
+                    out[k]=(((value>>16)*opacity)>>8) as i16;
+                }
+            }
+        }
     }
 }
 #[cfg(test)]
@@ -105,19 +117,55 @@ fn draw(canvas:&mut [u8],w:usize,h:usize,top:usize,p:&[f32],stamp:&Stamp) {
     let color=[p[7].clamp(0.,255.) as i32,p[8].clamp(0.,255.) as i32,p[9].clamp(0.,255.) as i32,255];
     for sy in y0..y1 {
         let row=((cy+sy as i32) as usize-top)*w;
-        for sx in x0.max(stamp.spans[sy].0)..x1.min(stamp.spans[sy].1) {
-            let [a,b]=stamp.prepared[sy*stamp.w+sx];let alpha=a as i32;let shade=b as i32;
-            if alpha==0 {continue;}
-            let at=(row+(cx+sx as i32) as usize)*4;
-            let old:[u8;4]=canvas[at..at+4].try_into().unwrap();
-            let mut out=[0u8;4];
-            for k in 0..4 {
-                let sum=(old[k] as i32*(255-alpha)+color[k]*alpha+shade+127).clamp(0,65025);
-                out[k]=((sum+1+(sum>>8))>>8) as u8;
-            }
-            canvas[at..at+4].copy_from_slice(&out);
+        let start=x0.max(stamp.spans[sy].0);let end=x1.min(stamp.spans[sy].1);
+        if start>=end {continue;}
+        let at=(row+(cx+start as i32) as usize)*4;
+        let dest=&mut canvas[at..at+(end-start)*4];
+        let coverage=&stamp.prepared[sy*stamp.w+start..sy*stamp.w+end];
+        #[cfg(target_arch="x86_64")]
+        if end-start>=8 && std::arch::is_x86_feature_detected!("avx2") {
+            // Runtime dispatch keeps the same image runnable on older hosts.
+            unsafe {blend_avx2(dest,coverage,color);}
+            continue;
         }
+        blend_scalar(dest,coverage,color);
     }
+}
+fn blend_scalar(dest:&mut [u8],coverage:&[[i16;2]],color:[i32;4]) {
+        for (pixel,&[a,b]) in dest.chunks_exact_mut(4).zip(coverage) {
+            let alpha=a as i32;let shade=b as i32;
+            if alpha==0 {continue;}
+            for k in 0..4 {
+                let sum=(pixel[k] as i32*(255-alpha)+color[k]*alpha+shade+127).clamp(0,65025);
+                pixel[k]=((sum+1+(sum>>8))>>8) as u8;
+            }
+        }
+}
+#[cfg(target_arch="x86_64")]
+#[target_feature(enable="avx2")]
+unsafe fn blend_avx2(dest:&mut [u8],coverage:&[[i16;2]],color:[i32;4]) {
+    use std::arch::x86_64::*;
+    let pigment_color=_mm256_broadcastsi128_si256(_mm_loadu_si128(color.as_ptr().cast()));
+    let zero=_mm256_setzero_si256();let max=_mm256_set1_epi32(65025);
+    let full=_mm256_set1_epi32(255);let round=_mm256_set1_epi32(127);let one=_mm256_set1_epi32(1);
+    let pairs=coverage.len()/2;
+    for n in 0..pairs {
+        let [a,b]=coverage[n*2];let [c,d]=coverage[n*2+1];
+        if a==0 && c==0 {continue;}
+        let b=if a==0 {0} else {b} as i32;let d=if c==0 {0} else {d} as i32;
+        let (a,c)=(a as i32,c as i32);
+        let alpha=_mm256_setr_epi32(a,a,a,a,c,c,c,c);
+        let shade=_mm256_setr_epi32(b,b,b,b,d,d,d,d);
+        let ptr=dest.as_mut_ptr().add(n*8);
+        let old=_mm256_cvtepu8_epi32(_mm_loadl_epi64(ptr.cast()));
+        let base=_mm256_mullo_epi32(old,_mm256_sub_epi32(full,alpha));
+        let pigment=_mm256_add_epi32(_mm256_mullo_epi32(pigment_color,alpha),shade);
+        let sum=_mm256_min_epi32(max,_mm256_max_epi32(zero,_mm256_add_epi32(_mm256_add_epi32(base,pigment),round)));
+        let result=_mm256_srli_epi32::<8>(_mm256_add_epi32(_mm256_add_epi32(sum,one),_mm256_srli_epi32::<8>(sum)));
+        let packed=_mm_packus_epi32(_mm256_castsi256_si128(result),_mm256_extracti128_si256::<1>(result));
+        _mm_storel_epi64(ptr.cast(),_mm_packus_epi16(packed,_mm_setzero_si128()));
+    }
+    blend_scalar(&mut dest[pairs*8..],&coverage[pairs*2..],color);
 }
 fn raster(canvas:&mut [u8],w:usize,h:usize,values:&[f32],cache:&HashMap<u32,Stamp>,threads:usize,clear:bool) {
     let rows=h.div_ceil(threads);
@@ -199,6 +247,24 @@ pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[cfg(target_arch="x86_64")]
+    #[test] fn avx2_matches_scalar_for_odd_rows_zero_alpha_and_saturated_pigment() {
+        if !std::arch::is_x86_feature_detected!("avx2") {return;}
+        for count in 0..35 {
+            for phase in 0..256 {
+                let mut expected:Vec<u8>=(0..count*4).map(|i|((i*73+phase*11)%256) as u8).collect();
+                let mut actual=expected.clone();
+                let coverage:Vec<[i16;2]>=(0..count).map(|i| {
+                    let alpha=((i*61+phase)%256) as i16;
+                    [alpha,if alpha==0 {17} else {alpha*((i%81) as i16-40)}]
+                }).collect();
+                let color=[phase as i32,255,0,255];
+                blend_scalar(&mut expected,&coverage,color);
+                unsafe {blend_avx2(&mut actual,&coverage,color);}
+                assert_eq!(expected,actual,"count={count}, phase={phase}");
+            }
+        }
+    }
     #[test] fn sparse_blending_matches_scalar_paint_for_loaded_shadows_and_opacity() {
         for material in [material::Material::Loaded,material::Material::Scumble,material::Material::Swept] {
             for seed in 0..20 {
