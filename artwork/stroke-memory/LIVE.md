@@ -17,7 +17,7 @@ are compacted before their float32 namespaces collide. Base and adaptive mark
 populations are bounded at 45,000 and 20,000.
 
 `LOADED_PAINT_STRIDE` is a deployment setting (2–6; default 3). Production starts
-at 4: about 7.5 paint updates and 29.97 wave/output frames per second. The approved
+at 6: about 5 paint updates and 29.97 wave/output frames per second. The approved
 recorded study is 15 paint updates per second. No resolution, material or wave
 amplitude is reduced. Painting the next target overlaps wave/encoding of the
 preceding canvas. Reported frame timings include this overlap, not CPU time.
@@ -44,3 +44,7 @@ Build with `Dockerfile.railway`; for arm64 local builds pass `--build-arg RUSTFL
 The `morphing render INPUT OUTPUT 1920 loaded` command exercises this same live
 path. `LOADED_PYTHON`, `LOADED_WORKER`, and `LOADED_RASTER` override local development
 paths; production image paths are fixed under `/opt/paint` and `/opt/paint-worker`.
+
+Linux runtime disables NumPy huge-page advice to avoid long allocation stalls.
+Mask preparation is parallel, and gradient fields are only constructed when new
+brushwork is proposed. Both preserve the material and paint-planning equations.

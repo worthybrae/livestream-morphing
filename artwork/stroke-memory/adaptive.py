@@ -60,9 +60,10 @@ class AdaptiveBrushwork:
         self.source=cv2.GaussianBlur(graded_source.astype(np.float32),(0,0),max(.35,.65*self.scale))
         gray=cv2.cvtColor(graded_source,cv2.COLOR_RGB2GRAY)
         current=cv2.resize(gray,(self.fw,self.fh),interpolation=cv2.INTER_AREA)
-        field=cv2.GaussianBlur(gray.astype(np.float32),(0,0),max(.5,1.4*self.scale))
-        self.dx=cv2.Sobel(field,cv2.CV_32F,1,0,ksize=3)*.125
-        self.dy=cv2.Sobel(field,cv2.CV_32F,0,1,ksize=3)*.125
+        # Existing marks only need motion and pigment. Build the orientation
+        # field lazily on the less frequent updates that propose new strokes.
+        self.edge_gray=gray
+        self.dx=self.dy=None
         if len(self.strokes):
             points=self.strokes[:,1:3]*self.factor
             moved,trusted=transport(points,forward,backward,self.previous,current)
@@ -123,6 +124,10 @@ class AdaptiveBrushwork:
         offsets=maxima[cy,cx]
         xs=cx*grid+offsets%grid;ys=cy*grid+offsets//grid
         colors=reference[ys,xs]
+        if self.dx is None:
+            field=cv2.GaussianBlur(self.edge_gray.astype(np.float32),(0,0),max(.5,1.4*self.scale))
+            self.dx=cv2.Sobel(field,cv2.CV_32F,1,0,ksize=3)*.125
+            self.dy=cv2.Sobel(field,cv2.CV_32F,0,1,ksize=3)*.125
         gx,gy=self.dx[ys,xs],self.dy[ys,xs]
         angles=np.arctan2(gy,gx)+np.pi/2
         # Stable spatial seeds vary shape without regenerating existing marks.
