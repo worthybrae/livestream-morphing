@@ -127,14 +127,10 @@ class Painting:
         fine = cv2.GaussianBlur(rgb, (0,0), .7*brush_scale)
         medium = cv2.GaussianBlur(rgb, (0,0), 2.5*brush_scale)
         broad = cv2.GaussianBlur(rgb, (0,0), 6*brush_scale)
-        difference = cv2.absdiff(fine,broad)
-        r,g,b = cv2.split(difference)
-        feature = cv2.max(cv2.max(r,g),b)
+        feature = None
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype(np.float32)
         current_gray=cv2.resize(gray,(self.fw,self.fh),interpolation=cv2.INTER_AREA)
-        field = cv2.GaussianBlur(gray, (0,0), 3*brush_scale)
-        dx = cv2.Sobel(field, cv2.CV_32F, 1, 0, ksize=3)*.125
-        dy = cv2.Sobel(field, cv2.CV_32F, 0, 1, ksize=3)*.125
+        dx = dy = None
         sources = [(blurred, analysis_scale) for blurred in [broad, medium, fine]]
         if self.detail != 'original':
             # Finishing marks read the full source, while the three approved
@@ -197,6 +193,10 @@ class Painting:
         remaining = max(0,self.limit-len(self.strokes))
         for coat, (pts, variety, step, (blurred, image_scale)) in enumerate(zip(
                 self.candidates, self.variants, self.steps, sources)):
+            # A full population cannot accept candidates. Keep transporting and
+            # recoloring its marks, but defer placement work until space opens.
+            if not remaining:
+                break
             if coat == 3:
                 if self.detail=='people':
                     priority = sample(attention,pts*self.factor)[:,0]
@@ -209,8 +209,14 @@ class Painting:
                     eligible = (contrast > 14) & (structure > .30)
                     eligible &= variety[:,3] < .80
             else:
-                detail = pigment(feature, pts)[:,0]
-                eligible = np.ones(len(pts), bool) if coat==0 else detail > (8 if coat==1 else 17)
+                if coat == 0:
+                    eligible = np.ones(len(pts), bool)
+                else:
+                    if feature is None:
+                        r,g,b = cv2.split(cv2.absdiff(fine,broad))
+                        feature = cv2.max(cv2.max(r,g),b)
+                    detail = pigment(feature, pts)[:,0]
+                    eligible = detail > (8 if coat==1 else 17)
                 if coat==2:
                     eligible &= variety[:,3]<.70
             existing = self.strokes[(self.strokes[:,11]==coat) & (self.strokes[:,10]>.18)]
@@ -237,6 +243,10 @@ class Painting:
                 continue
             xy, rv = pts[ids], variety[ids]
             c = pigment(blurred, xy, image_scale,coat==3)
+            if coat != 3 and dx is None:
+                field = cv2.GaussianBlur(gray, (0,0), 3*brush_scale)
+                dx = cv2.Sobel(field, cv2.CV_32F, 1, 0, ksize=3)*.125
+                dy = cv2.Sobel(field, cv2.CV_32F, 0, 1, ksize=3)*.125
             gx = pigment(ax if coat==3 else dx,xy,image_scale)[:,0]
             gy = pigment(ay if coat==3 else dy,xy,image_scale)[:,0]
             energy = np.hypot(gx,gy)

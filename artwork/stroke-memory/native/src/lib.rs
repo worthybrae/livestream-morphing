@@ -1,6 +1,24 @@
 //! Shared native brush raster for recorded studies and the live worker.
 //! Input per frame: little-endian u32 count, then 12 f32 values per mark.
-use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
+// Brush identities are trusted, internally generated integers. A small integer
+// mixer avoids repeating a keyed string hash for every mark and canvas band.
+#[derive(Default)]
+struct BrushHasher(u64);
+impl Hasher for BrushHasher {
+    fn finish(&self)->u64 { self.0 }
+    fn write_u32(&mut self,value:u32) {
+        let mut x=value as u64;
+        x=(x^(x>>16)).wrapping_mul(0x45d9f3b);
+        x=(x^(x>>16)).wrapping_mul(0x45d9f3b);
+        self.0=x^(x>>16);
+    }
+    fn write(&mut self,bytes:&[u8]) {
+        for &b in bytes { self.0=(self.0^b as u64).wrapping_mul(0x100000001b3); }
+    }
+}
+type HashMap<K,V> = std::collections::HashMap<K,V,BuildHasherDefault<BrushHasher>>;
+type HashSet<K> = std::collections::HashSet<K,BuildHasherDefault<BrushHasher>>;
 mod material;
 
 struct Stamp { w:usize, h:usize, ox:i32, oy:i32, pixels:Vec<[i16;2]>, spans:Vec<(usize,usize)>, prepared:Vec<[i16;2]>, key:Option<[i32;3]>, pending:[i32;3] }
@@ -169,16 +187,20 @@ unsafe fn blend_avx2(dest:&mut [u8],coverage:&[[i16;2]],color:[i32;4]) {
 }
 fn raster(canvas:&mut [u8],w:usize,h:usize,values:&[f32],cache:&HashMap<u32,Stamp>,threads:usize,clear:bool) {
     let rows=h.div_ceil(threads);
+    // Resolve each identity once, in deposition order, rather than looking it
+    // up independently in every worker's image band.
+    let commands:Vec<_>=values.chunks_exact(12).filter_map(|p| {
+        cache.get(&(p[0] as u32)).map(|stamp|(p,stamp))
+    }).collect();
     std::thread::scope(|scope| {
         for (band,dst) in canvas.chunks_mut(rows*w*4).enumerate() {
+            let commands=&commands;
             scope.spawn(move|| {
                 let top=band*rows;let bh=dst.len()/(w*4);
                 if clear {for pixel in dst.chunks_exact_mut(4) {pixel.copy_from_slice(&[81,83,74,255]);}}
-                for p in values.chunks_exact(12) {
-                    if let Some(stamp)=cache.get(&(p[0] as u32)) {
-                        let sy=p[2].floor() as i32+stamp.oy;
-                        if sy<=(top+bh) as i32 && sy+stamp.h as i32>=top as i32 {draw(dst,w,bh,top,p,stamp);}
-                    }
+                for &(p,stamp) in commands {
+                    let sy=p[2].floor() as i32+stamp.oy;
+                    if sy<=(top+bh) as i32 && sy+stamp.h as i32>=top as i32 {draw(dst,w,bh,top,p,stamp);}
                 }
             });
         }
@@ -190,12 +212,12 @@ pub struct Painter {
 impl Painter {
     pub fn new(w:usize,h:usize,style:&str)->Option<Self> {
         if w==0 || h==0 || w>8192 || h>8192 || w*h>16_777_216 {return None;}
-        Some(Self {w,h,canvas:vec![0;w*h*4],rgb:vec![0;w*h*3],cache:HashMap::new(),material:material::Material::parse(style)?})
+        Some(Self {w,h,canvas:vec![0;w*h*4],rgb:vec![0;w*h*3],cache:HashMap::default(),material:material::Material::parse(style)?})
     }
     pub fn paint(&mut self,values:&[f32],append:bool)->Option<&[u8]> {
         if values.len()%12!=0 || values.len()>100_000*12 {return None;}
         if values.chunks_exact(12).any(|p|!p.iter().all(|v|v.is_finite()) || p[3]<=0. || p[4]<=0. || p[3]>512. || p[4]>512.) {return None;}
-        let mut active=HashSet::with_capacity(values.len()/12);
+        let mut active=HashSet::with_capacity_and_hasher(values.len()/12,Default::default());
         let mut missing=Vec::new();
         for p in values.chunks_exact(12) {
             let id=p[0] as u32;
@@ -331,7 +353,7 @@ pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::
     #[test] fn thread_bands_preserve_overlapping_subpixel_brushes_at_seams() {
         let p=[1.,37.3,28.7,31.,13.,0.71,0.32,150.,80.,170.,0.9,0.];
         let q=[2.,9.1,44.2,42.,8.,-0.7,0.8,95.,180.,40.,1.,1.];
-        let mut cache=HashMap::from([(1,make_stamp(&p)),(2,make_stamp(&q))]);
+        let mut cache=[(1,make_stamp(&p)),(2,make_stamp(&q))].into_iter().collect::<HashMap<_,_>>();
         cache.get_mut(&1).unwrap().prepare(&p);cache.get_mut(&2).unwrap().prepare(&q);
         let mut serial=vec![0;79*61*3];let mut parallel=vec![0;79*61*4];
         for pixel in serial.chunks_exact_mut(3) {pixel.copy_from_slice(&[81,83,74]);}

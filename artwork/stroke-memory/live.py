@@ -163,6 +163,8 @@ def main():
                 for name,seconds in painting.cost.items():totals[name]=totals.get(name,0.)+seconds
                 if count==30:
                     print('Loaded paint '+json.dumps({'updates':painting.updates,'base_marks':len(painting.book.strokes),
+                        'base_coats':[int(np.count_nonzero(painting.book.strokes[:,11]==coat)) for coat in range(3)],
+                        'base_area':int(np.sum(painting.book.strokes[:,3]*painting.book.strokes[:,4])),
                         'detail_marks':len(painting.adaptive.strokes),'mean_ms':{k:round(v*1000/count,2) for k,v in totals.items()}}),file=sys.stderr,flush=True)
                     totals={};count=0
         except EOFError:
