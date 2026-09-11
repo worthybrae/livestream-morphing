@@ -52,13 +52,13 @@ fn draw(canvas:&mut [u8], w:usize,h:usize,top:usize,p:&[f32],stamp:&Stamp) {
         }
     }
 }
-fn raster(canvas:&mut [u8],w:usize,h:usize,values:&[f32],cache:&HashMap<u32,Stamp>,threads:usize) {
+fn raster(canvas:&mut [u8],w:usize,h:usize,values:&[f32],cache:&HashMap<u32,Stamp>,threads:usize,clear:bool) {
     let rows=h.div_ceil(threads);
     std::thread::scope(|scope| {
         for (band,dst) in canvas.chunks_mut(rows*w*3).enumerate() {
             scope.spawn(move|| {
                 let top=band*rows;let bh=dst.len()/(w*3);
-                for pixel in dst.chunks_exact_mut(3) {pixel.copy_from_slice(&[81,83,74]);}
+                if clear {for pixel in dst.chunks_exact_mut(3) {pixel.copy_from_slice(&[81,83,74]);}}
                 for p in values.chunks_exact(12) {
                     if let Some(stamp)=cache.get(&(p[0] as u32)) {
                         let sy=p[2].floor() as i32+stamp.oy;
@@ -77,7 +77,9 @@ fn main()->io::Result<()> {
     let mut canvas=vec![0u8;w*h*3];let mut raster_ms=0.;let mut frames=0;
     loop {
         match input.read_exact(&mut header) {Ok(())=>(),Err(e) if e.kind()==io::ErrorKind::UnexpectedEof=>break,Err(e)=>return Err(e)}
-        let count=u32::from_le_bytes(header) as usize;
+        let packet=u32::from_le_bytes(header);
+        let append=packet & (1<<31)!=0;
+        let count=(packet & !(1<<31)) as usize;
         if count>100_000 {return Err(io::Error::new(io::ErrorKind::InvalidData,"Unbounded stroke packet"));}
         let mut bytes=vec![0;count*12*4];input.read_exact(&mut bytes)?;
         let values:Vec<f32>=bytes.chunks_exact(4).map(|b|f32::from_le_bytes(b.try_into().unwrap())).collect();
@@ -87,8 +89,8 @@ fn main()->io::Result<()> {
             let id=p[0] as u32;active.insert(id);
             cache.entry(id).or_insert_with(||make_stamp(p));
         }
-        cache.retain(|id,_|active.contains(id));
-        raster(&mut canvas,w,h,&values,&cache,4);
+        if !append {cache.retain(|id,_|active.contains(id));}
+        raster(&mut canvas,w,h,&values,&cache,4,!append);
         raster_ms+=start.elapsed().as_secs_f64()*1000.;frames+=1;
         output.write_all(&canvas)?;output.flush()?;
     }
@@ -104,7 +106,13 @@ fn main()->io::Result<()> {
         let mut serial=vec![0;79*61*3];let mut parallel=serial.clone();
         for pixel in serial.chunks_exact_mut(3) {pixel.copy_from_slice(&[81,83,74]);}
         draw(&mut serial,79,61,0,&p,&cache[&1]);draw(&mut serial,79,61,0,&q,&cache[&2]);
-        raster(&mut parallel,79,61,&[p,q].concat(),&cache,4);
+        raster(&mut parallel,79,61,&[p,q].concat(),&cache,4,true);
         assert_eq!(serial,parallel);
+        // Refinement appends must preserve the entire existing canvas and
+        // produce exactly the same pixels as a single ordered paint packet.
+        let mut incremental=vec![0u8;79*61*3];
+        raster(&mut incremental,79,61,&p,&cache,4,true);
+        raster(&mut incremental,79,61,&q,&cache,4,false);
+        assert_eq!(serial,incremental);
     }
 }

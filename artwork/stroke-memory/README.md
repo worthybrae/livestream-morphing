@@ -176,3 +176,63 @@ is a reviewable subject-aware painting study, not a solved semantic rendering
 system. The live engine and portfolio remain unchanged.
 
 Preview: http://127.0.0.1:3092/stroke-memory/#moving-human-focus
+
+## Adaptive effort: let the painting determine what still needs work
+
+The next pass, `--detail adaptive`, allocates strokes according to remaining
+painting error. It does not load the person detector. A complicated region
+that is already described sufficiently should stop receiving marks; a small
+unresolved shape can earn additional strokes regardless of its object class.
+
+This is an independent adaptation of the coarse-to-fine idea in Aaron
+Hertzmann's *Painterly Rendering with Curved Brush Strokes of Multiple Sizes*
+(SIGGRAPH 1998): https://mrl.cs.nyu.edu/publications/painterly98/.
+Image error is a useful allocation signal, not a measure of artistic quality.
+
+The original three coats and broad ground are painted first, followed by
+retained adaptive marks. The planner compares the actual native raster with
+a source reference at each of three brush radii: 12, 6 and 2.5 pixels at
+1920-pixel width. It proposes marks at remaining local error maxima, shortens
+them at color boundaries, and estimates their error reduction using a filbert
+footprint. Each stroke must justify both its area and a per-stroke cost.
+Accepted marks update that estimate within a batch; after each scale, native
+brush masks are rasterized and the next scale sees the actual painted result.
+This avoids treating source contrast alone as a demand for endless detail.
+
+The Rust packet protocol now supports appending marks to the current canvas.
+That permits feedback between brush sizes without repainting all earlier marks
+three extra times. Reference images are cached within each paint update. The
+full-resolution color grading uses OpenCV float32 operations and differs from
+the existing sampled-pigment formula by at most one RGB byte in the test set.
+
+New-stroke planning runs every sixth output frame (4.995 Hz). Existing marks
+still follow validated motion and settle their pigment at 14.985 Hz, while
+the unchanged psychedelic wave and output run at 29.97 Hz. Mark geometry and
+identity persist; small color changes fall within a deadband. Inconsistent
+marks fade and retire. There is a hard limit of 20,000 adaptive marks, in
+addition to the original painting. When full, new proposals wait for capacity;
+existing marks continue moving and updating. This can limit later refinement.
+
+```sh
+python3 artwork/stroke-memory/render.py /absolute/street.ts /absolute/moving-adaptive-effort.mp4 --seconds 24.024 --detail adaptive
+```
+
+The full 720-frame recording took 91.14 seconds locally. Peak total population
+was 33,858 marks. Initial native raster round trips took 69.51 ms median;
+planning plus appended raster passes took 84.07 ms median per planning update.
+The latter runs at 5 Hz, not every output frame. The initial source processing,
+flow, all refinement and video encoding are included in wall time. The cap
+prevented proposals on 80 scale passes. The 1 Hz sampled reference error fell
+from 5.99 to 5.88 RGB levels across refinement passes; this diagnostic is neither
+a whole-clip aesthetic score nor a comparison with the original renderer.
+The implementation remains slower than real time and is not deployed.
+
+Fourteen Python tests pass. New tests cover color-grading parity, declining
+extra marks for already-described complexity and small camera noise, and
+allocating more, narrower strokes to nested shapes than to a simple color
+plane. The latter checks improvement against the actual Rust-rendered canvas
+and stable identities/pigments on a repeated static frame. Native tests also
+verify that incremental append packets produce exactly the same pixels as
+one ordered packet, preserving serial/four-band compositing parity.
+
+Preview: http://127.0.0.1:3092/stroke-memory/#moving-adaptive-effort

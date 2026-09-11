@@ -24,8 +24,7 @@ def sample(image, points):
                      for part in np.array_split(points, max(1,(len(points)+16383)//16384))])
 
 
-def grade(source, hour):
-    """Same day/night color anchors as the approved fine knife edition."""
+def palette(hour):
     smooth = lambda x: np.clip(x, 0, 1)**2*(3-2*np.clip(x, 0, 1))
     night = 1-smooth((hour-4.5)/3.5)+smooth((hour-18)/3)
     stops = [(0, [-13,-5,27]), (4, [-13,-5,27]), (6.5, [32,3,12]),
@@ -36,6 +35,12 @@ def grade(source, hour):
             t = smooth((hour-a)/(b-a))
             tint = np.array(ca)*(1-t)+np.array(cb)*t
             break
+    return night,tint
+
+
+def grade(source, hour):
+    """Same day/night color anchors as the approved fine knife edition."""
+    night,tint = palette(hour)
     rgb = source.astype(np.float32)
     gray = rgb[:,:,0]*.299+rgb[:,:,1]*.587+rgb[:,:,2]*.114
     peak = rgb.max(axis=2)
@@ -47,6 +52,29 @@ def grade(source, hour):
               gain[..., None]*(1.04-night*.42)+
               tint*weight[..., None]*(.75-night*.68))
     return np.clip(result, 0, 255).astype(np.uint8)
+
+
+def grade_reference(source, hour):
+    """Native color transform for the adaptive pass's full-resolution target.
+
+    Same palette math, within one 8-bit level of grade's float64 path.
+    """
+    night,tint = palette(hour)
+    rgb=source.astype(np.float32)
+    saturation=1.4-night*.98
+    matrix=np.eye(3,dtype=np.float32)*saturation+(1-saturation)*np.array([[.299,.587,.114]],np.float32)
+    result=cv2.transform(rgb,matrix)*(1.04-night*.42)
+    if night>0:
+        r,g,b=cv2.split(rgb);peak=cv2.max(cv2.max(r,g),b)
+        excess=np.maximum(peak-150,0)
+        compressed=peak-excess+excess/(1+excess/95)
+        gain=1+night*(compressed/np.maximum(peak,1)-1)
+        result*=gain[...,None]
+        weight=1-night*np.clip((peak-160)/95,0,1)*.85
+        result+=weight[...,None]*(tint*(.75-night*.68)).astype(np.float32)
+    else:
+        result+=(tint*.75).astype(np.float32)
+    return np.clip(result,0,255).astype(np.uint8)
 
 
 class Painting:
@@ -284,7 +312,7 @@ def main():
     ap.add_argument('--width',type=int,default=1920)
     ap.add_argument('--hour',type=float,default=15)
     ap.add_argument('--mode',choices=['transported','anchored'],default='transported')
-    ap.add_argument('--detail',choices=['original','selective','people'],default='original')
+    ap.add_argument('--detail',choices=['original','selective','people','adaptive'],default='original')
     ap.add_argument('--person-model',type=pathlib.Path,default=pathlib.Path(__file__).parent/'models/nanodet.onnx')
     args = ap.parse_args()
     root = pathlib.Path(args.output);root.parent.mkdir(parents=True,exist_ok=True)
@@ -295,7 +323,11 @@ def main():
     fw,fh=480,round(480*h/w)
     cv2.setNumThreads(2)
     dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
-    book = Painting(w,h,(fw,fh),args.mode,args.detail,args.hour)
+    book = Painting(w,h,(fw,fh),args.mode,'original' if args.detail=='adaptive' else args.detail,args.hour)
+    adaptive=None;adaptive_cost=[]
+    if args.detail=='adaptive':
+        from adaptive import AdaptiveBrushwork
+        adaptive=AdaptiveBrushwork(w,h,(fw,fh),mode=args.mode)
     detector=people=None;next_detection=0;detection_cost=[];people_counts=[]
     if args.detail=='people':
         from people import PersonDetector, PeopleAttention
@@ -308,6 +340,12 @@ def main():
     encoder = subprocess.Popen(['ffmpeg','-v','error','-y','-f','rawvideo','-pixel_format','rgb24',
             '-video_size',f'{w}x{h}','-framerate',str(fps),'-i','pipe:0','-an','-c:v','libx264',
             '-preset','veryfast','-crf','23','-threads','2','-pix_fmt','yuv420p','-movflags','+faststart',str(root)],stdin=subprocess.PIPE)
+    def raster(marks,append=False):
+        painter.stdin.write(struct.pack('<I',len(marks)|((1<<31) if append else 0)))
+        painter.stdin.write(marks.astype('<f4').tobytes());painter.stdin.flush()
+        raw=painter.stdout.read(w*h*3)
+        if len(raw)!=w*h*3:raise RuntimeError('Native painter stopped before completing the frame')
+        return np.frombuffer(raw,np.uint8).reshape(h,w,3)
     xx=np.arange(w,dtype=np.float32);yy=np.arange(h,dtype=np.float32)
     def edge(v,size):
         t=np.clip(np.minimum(v,size-1-v)/(size*.036),0,1)
@@ -343,14 +381,26 @@ def main():
                     attention=people.update(small,forward,backward,2/fps,detections)
                     people_counts.append(len(people.tracks))
                 marks=book.update(rgb,forward,backward,detail_rgb,attention)
+                if adaptive is not None:
+                    retained=adaptive.begin(grade_reference(detail_rgb,args.hour%24),forward,backward)
+                    marks=np.concatenate([marks,retained])
                 raster_start=time.perf_counter()
-                painter.stdin.write(struct.pack('<I',len(marks)))
-                painter.stdin.write(marks.astype('<f4').tobytes());painter.stdin.flush()
-                raw=painter.stdout.read(w*h*3)
-                if len(raw)!=w*h*3:raise RuntimeError('Native painter stopped before completing the frame')
-                paint=np.frombuffer(raw,np.uint8).reshape(h,w,3)
+                paint=raster(marks)
                 native_cost.append((time.perf_counter()-raster_start)*1000)
-                updates.append(len(marks))
+                if adaptive is not None and n%6==0:
+                    # Existing strokes still move and recolor at paint cadence.
+                    # Decide where NEW marks earn their cost at roughly 5 Hz.
+                    refinement_start=time.perf_counter()
+                    for level,radius in enumerate([12.,6.,2.5]):
+                        radius*=w/1920
+                        before=adaptive.error(paint,radius) if n%30==0 else None
+                        added=adaptive.propose(paint,radius,level,[700,1000,1400][level] if n==0 else [140,240,600][level])
+                        if len(added):
+                            paint=raster(added,append=True)
+                        if before is not None:
+                            adaptive.checks.append([before,adaptive.error(paint,radius),len(added)])
+                    adaptive_cost.append((time.perf_counter()-refinement_start)*1000)
+                updates.append(len(marks) if adaptive is None else len(book.strokes)+len(book.ground)+len(adaptive.strokes))
                 if n in [0,90,180,300,480]:
                     cv2.imwrite(str(root.with_name(root.stem+f'-unwarped-{n}.png')),cv2.cvtColor(paint,cv2.COLOR_RGB2BGR))
                     if people is not None:
@@ -376,6 +426,12 @@ def main():
            'flow_dimensions':[fw,fh],'source':str(pathlib.Path(args.source).resolve())}
     if people is not None:
         stats.update(person_detection_p50_ms=float(np.median(detection_cost)),person_detection_calls=len(detection_cost),maximum_person_tracks=max(people_counts),person_model=str(args.person_model.resolve()))
+    if adaptive is not None:
+        checks=np.array(adaptive.checks)
+        stats.update(adaptive_born=adaptive.born,adaptive_retired=adaptive.retired,adaptive_final_strokes=len(adaptive.strokes),adaptive_capacity_hits=adaptive.capacity_hits,
+                     adaptive_accepted_by_scale=adaptive.accepted_by_scale,adaptive_proposed_by_scale=adaptive.proposed_by_scale,
+                     adaptive_refinement_p50_ms=float(np.median(adaptive_cost)),adaptive_refinement_hz=fps/6,
+                     adaptive_sampled_error_before=float(checks[:,0].mean()),adaptive_sampled_error_after=float(checks[:,1].mean()))
     root.with_suffix('.json').write_text(json.dumps(stats,indent=2));print(json.dumps(stats),flush=True)
 
 
