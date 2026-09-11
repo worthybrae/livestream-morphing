@@ -751,7 +751,8 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
     let weather = if MODE >= 3 { knife_day_tint(environment) } else { [warmth, warmth * 0.15, -warmth] };
     let highlights = if MODE >= 4 { knife_highlight_table(knife_night_strength(environment[0])) } else { [(1., 1.); 256] };
     let night = knife_night_strength(environment[0]);
-    let grade = [1.4 - night*1.18, 1.04 - night*0.42, 0.75 - night*0.68];
+    // Retain more source hue in the live fine-knife night palette, at the same exposure.
+    let grade = [1.4 - night*(if MODE == 5 {0.98} else {1.18}), 1.04 - night*0.42, 0.75 - night*0.68];
     let source_color = |x: usize, y: usize, radius: usize| {
         let points = [(x,y), (x.saturating_sub(radius),y), ((x+radius).min(w-1),y),
                       (x,y.saturating_sub(radius)), (x,(y+radius).min(h-1))];
