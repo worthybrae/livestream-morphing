@@ -72,7 +72,7 @@ class Raster:
 
 class LoadedPainting:
     def __init__(self, width, height):
-        cv2.setNumThreads(2)
+        cv2.setNumThreads(max(1,min(4,int(os.environ.get('LOADED_CV_THREADS','4')))))
         self.w, self.h = width, height
         self.fw, self.fh = 480, round(480*height/width)
         self.dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)

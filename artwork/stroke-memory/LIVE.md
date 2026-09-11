@@ -10,13 +10,16 @@ worker uses the study's OpenCV motion and brush planning. Its native cdylib
 raster shares the paint buffer directly with Python. No network or model runs
 inside the worker, and no separate service is needed.
 
-The worker survives contiguous segments. Source gaps, errors, size changes and
-idle shutdown discard its state. Local socket timeouts bound startup and frame
+The worker survives contiguous segments and short skipped-source gaps. Backward
+timestamps, gaps over 30 seconds, errors, size changes and idle shutdown discard
+its state. Short gaps use the existing motion-confidence rejection so a slow
+startup does not repeatedly destroy and rebuild its brush cache.
+Local socket timeouts bound startup and frame
 responses; dropping the supervisor kills and reaps the worker. Brush identities
 are compacted before their float32 namespaces collide. Base and adaptive mark
 populations are bounded at 45,000 and 20,000.
 
-`LOADED_PAINT_STRIDE` is a deployment setting (2–6; default 3). Production starts
+`LOADED_PAINT_STRIDE` is a deployment setting (2–12; default 3). Production starts
 at 6: about 5 paint updates and 29.97 wave/output frames per second. The approved
 recorded study is 15 paint updates per second. No resolution, material or wave
 amplitude is reduced. Painting the next target overlaps wave/encoding of the
@@ -47,4 +50,10 @@ paths; production image paths are fixed under `/opt/paint` and `/opt/paint-worke
 
 Linux runtime disables NumPy huge-page advice to avoid long allocation stalls.
 Mask preparation is parallel, and gradient fields are only constructed when new
-brushwork is proposed. Both preserve the material and paint-planning equations.
+brushwork is proposed. Analysis buffers are reused. Empty brush coverage is
+excluded exactly, including its subpixel sampling support; a paired 13,519-mark
+local check reduced warm raster median from 50.67 to 31.06 ms with identical RGB.
+Only paint-target frames are converted to RGB; every source frame still advances
+the output timeline. The wave uses four independent row bands at large sizes.
+`LOADED_CV_THREADS` bounds OpenCV workers to 1–4, default 4. The worker logs mean
+stage timings and brush counts every 30 paint updates for production diagnosis.

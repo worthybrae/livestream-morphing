@@ -10,7 +10,7 @@ impl Drop for Worker {
 }
 pub struct LoadedPaint { worker:Option<Worker>,pub hour:f64,pub stride:usize,held:Option<RawFrame>,pub output_frames:u64 }
 impl LoadedPaint {
-    pub fn new()->Self {Self {worker:None,hour:15.,stride:std::env::var("LOADED_PAINT_STRIDE").ok().and_then(|v|v.parse().ok()).unwrap_or(3).clamp(2,6),held:None,output_frames:0}}
+    pub fn new()->Self {Self {worker:None,hour:15.,stride:std::env::var("LOADED_PAINT_STRIDE").ok().and_then(|v|v.parse().ok()).unwrap_or(3).clamp(2,12),held:None,output_frames:0}}
     pub fn reset(&mut self) {self.worker=None;self.held=None;self.output_frames=0;}
     fn connect(mut command:Command,width:u32,height:u32,timeout:Duration)->Result<Worker,Error> {
         let (mut socket,peer)=UnixStream::pair()?;
@@ -72,7 +72,10 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
         let t=Instant::now();let out_fps=fps/step as f64;
         if encoder.is_none() {
             if let (Some(last),Some(now))=(pipeline.source_end,first) {
-                if (now-last).abs()>2./fps {pipeline.reset();}
+                // A skipped live segment must not repeatedly destroy the
+                // expensive brush cache during catch-up. Motion confidence
+                // retires displaced marks; a restart or long outage resets all.
+                if now<last-2./fps || now-last>30. {pipeline.reset();}
             }
             dimensions=size;
             let t=Instant::now();encoder=Some(codec::TsEncoder::new(size.0,size.1,out_fps,pts)?);
@@ -145,6 +148,12 @@ while True:
         let b=render(&input,64,1,15000,5,&mut p,720).unwrap();
         assert_eq!(b.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),vec![60,90,90,90]);
         assert_eq!(p.loaded.as_ref().unwrap().output_frames,9);
+        // Skipping one six-second upstream segment must keep the costly cache
+        // alive, so startup catch-up does not repeatedly become another startup.
+        p.source_end=start.map(|v|v-6.006);
+        let c=render(&input,64,1,30000,9,&mut p,720).unwrap();
+        assert_eq!(c.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),vec![120,120,120,150]);
+        assert_eq!(p.loaded.as_ref().unwrap().output_frames,13);
         p.reset();assert!(p.loaded.as_ref().unwrap().worker.is_none());assert!(p.loaded.as_ref().unwrap().held.is_none());
     }
     #[test] fn stalled_or_invalid_worker_cannot_hang_startup() {

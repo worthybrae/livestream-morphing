@@ -7,7 +7,7 @@ use crate::registry::{Effect, FrameCtx, ParamDef, ParamValues};
 #[derive(Default)]
 pub struct Distortion {
     scratch: Option<RawFrame>,
-    rgb_rows: [Vec<wide::f32x4>; 2],
+    rgb_rows: [[Vec<wide::f32x4>; 2]; 4],
 }
 
 
@@ -71,27 +71,38 @@ impl Distortion {
             });
             (at.map(|v|v.0),at.map(|v|v.1),F::new(at.map(|v|v.2)))
         }).collect();
-        for cached in &mut self.rgb_rows {cached.resize(batches,F::ZERO);}
+        let threads=if w>=640 && h>=4 {4} else {1};
+        let rows=h.div_ceil(threads);
+        for cache in &mut self.rgb_rows[..threads] {for cached in cache {cached.resize(batches,F::ZERO);}}
+        let source_pixels=&frame.data;
+        std::thread::scope(|scope| {
+        for (band,(output,cache)) in dst.chunks_mut(rows*count).zip(self.rgb_rows.iter_mut()).enumerate() {
+            let packed=&packed;
+            scope.spawn(move|| {
         let mut tags=[usize::MAX;2];
-        for (y,row) in dst.chunks_exact_mut(count).enumerate() {
+        for (local_y,row) in output.chunks_exact_mut(count).enumerate() {
+            let y=band*rows+local_y;
             let sy=(y as f32+(phase+y as f32*frequency/h as f32).sin()*h as f32*amplitude*edge_weight(y,h,amplitude,anchored)).clamp(0.0,(h-1) as f32);
             let y0=sy as usize;let y1=(y0+1).min(h-1);let fy=sy.fract();
             for source_y in [y0,y1] {
                 let slot=source_y%2;
                 if tags[slot]==source_y {continue;}
-                let source=&frame.data[source_y*count..][..count];let cached=&mut self.rgb_rows[slot];
+                let source=&source_pixels[source_y*count..][..count];let cached=&mut cache[slot];
                 for (batch,&(a,b,fx)) in packed.iter().enumerate() {
                     cached[batch]=F::new(a.map(|i|source[i] as f32))*(F::ONE-fx)+F::new(b.map(|i|source[i] as f32))*fx;
                 }
                 tags[slot]=source_y;
             }
-            let a=&self.rgb_rows[y0%2];let b=&self.rgb_rows[y1%2];
+            let a=&cache[y0%2];let b=&cache[y1%2];
             for (batch,pixels) in row.chunks_mut(4).enumerate() {
                 let value=(a[batch]*(1.-fy)+b[batch]*fy)
                     .max(F::ZERO).min(F::splat(255.)).to_array();
                 for (k,out) in pixels.iter_mut().enumerate() {*out=value[k] as u8;}
             }
         }
+            });
+        }
+        });
         std::mem::swap(&mut frame.data,dst);
     }
 }
@@ -196,7 +207,7 @@ mod tests {
     }
     #[test]
     fn cached_rgb_warp_matches_scalar_within_one_rounding_level() {
-        for (w,h) in [(1,1),(2,3),(31,19),(64,36),(320,180)] {
+        for (w,h) in [(1,1),(2,3),(31,19),(64,36),(320,180),(641,361)] {
             let mut source=RawFrame::new(w,h);
             for (i,p) in source.data.iter_mut().enumerate() {*p=((i*71+i/17)%256) as u8;}
             for phase in [0.,0.13,1.7,8.2] {
