@@ -257,6 +257,24 @@ pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[cfg(target_arch="x86_64")]
+    #[test] fn vector_color_grade_preserves_day_night_and_rgb_tails() {
+        if !std::arch::is_x86_feature_detected!("avx2") {return;}
+        for count in [0,1,2,3,4,5,6,7,8,9,65539] {
+            let input:Vec<u8>=(0..count*3).map(|i| {
+                ((i as u32).wrapping_mul(1664525).wrapping_add(1013904223)>>16) as u8
+            }).collect();
+            for night in [0.,0.13,0.5,0.95,1.] {
+                for color in [[-13.,-5.,27.],[32.,3.,12.],[37.,1.,-16.]] {
+                    let mut expected=vec![0;input.len()];let mut actual=expected.clone();
+                    grade_scalar(&input,&mut expected,night,&color);
+                    unsafe {grade_avx2(&input,&mut actual,night,&color);}
+                    let mismatch=expected.iter().zip(&actual).position(|(a,b)|a!=b);
+                    assert_eq!(mismatch,None,"count={count}, night={night}");
+                }
+            }
+        }
+    }
     #[test] fn parallel_texture_generation_preserves_large_and_small_stroke_order() {
         let (w,h)=(129,97);
         let mut painter=Painter::new(w,h,"loaded").unwrap();
@@ -349,6 +367,14 @@ pub unsafe extern "C" fn paint_grade(src:*const u8,dst:*mut u8,count:usize,night
     } else {grade_pixels(input,output,night,color);}
 }
 fn grade_pixels(input:&[u8],output:&mut [u8],night:f64,color:&[f64]) {
+    #[cfg(target_arch="x86_64")]
+    if input.len()>=18 && std::arch::is_x86_feature_detected!("avx2") {
+        unsafe {grade_avx2(input,output,night,color);}
+        return;
+    }
+    grade_scalar(input,output,night,color);
+}
+fn grade_scalar(input:&[u8],output:&mut [u8],night:f64,color:&[f64]) {
     let saturation=(1.4-night*0.98) as f32;
     let brightness=(1.04-night*0.42) as f32;
     let strength=0.75-night*0.68;
@@ -365,6 +391,49 @@ fn grade_pixels(input:&[u8],output:&mut [u8],night:f64,color:&[f64]) {
             q[k]=(base as f64+color[k]*weight as f64*strength).clamp(0.,255.) as u8;
         }
     }
+}
+
+#[cfg(target_arch="x86_64")]
+#[target_feature(enable="avx2")]
+unsafe fn grade_avx2(input:&[u8],output:&mut [u8],night:f64,color:&[f64]) {
+    use std::arch::x86_64::*;
+    let zero=_mm_setzero_ps();let one=_mm_set1_ps(1.);let n=_mm_set1_ps(night as f32);
+    let saturation=_mm_set1_ps((1.4-night*0.98) as f32);
+    let brightness=_mm_set1_ps((1.04-night*0.42) as f32);
+    let strength=_mm256_set1_pd(0.75-night*0.68);
+    let byte_mask=_mm_set1_epi32(255);
+    let unpack=_mm_setr_epi8(0,1,2,-128,3,4,5,-128,6,7,8,-128,9,10,11,-128);
+    let pack=_mm_setr_epi8(0,1,2,4,5,6,8,9,10,12,13,14,-128,-128,-128,-128);
+    let mut at=0;
+    // Four RGB pixels occupy 12 bytes. Leave the tail to the scalar path so
+    // each 16-byte unaligned load stays entirely within the supplied image.
+    while at+16<=input.len() {
+        let raw=_mm_shuffle_epi8(_mm_loadu_si128(input.as_ptr().add(at).cast()),unpack);
+        let r=_mm_cvtepi32_ps(_mm_and_si128(raw,byte_mask));
+        let g=_mm_cvtepi32_ps(_mm_and_si128(_mm_srli_epi32::<8>(raw),byte_mask));
+        let b=_mm_cvtepi32_ps(_mm_and_si128(_mm_srli_epi32::<16>(raw),byte_mask));
+        let gray=_mm_add_ps(_mm_add_ps(_mm_mul_ps(r,_mm_set1_ps(0.299)),_mm_mul_ps(g,_mm_set1_ps(0.587))),_mm_mul_ps(b,_mm_set1_ps(0.114)));
+        let peak=_mm_max_ps(_mm_max_ps(r,g),b);
+        let excess=_mm_max_ps(_mm_sub_ps(peak,_mm_set1_ps(150.)),zero);
+        let compressed=_mm_add_ps(_mm_sub_ps(peak,excess),_mm_div_ps(excess,_mm_add_ps(one,_mm_div_ps(excess,_mm_set1_ps(95.)))));
+        let gain=_mm_add_ps(one,_mm_mul_ps(n,_mm_sub_ps(_mm_div_ps(compressed,_mm_max_ps(peak,one)),one)));
+        let level=_mm_min_ps(one,_mm_max_ps(zero,_mm_div_ps(_mm_sub_ps(peak,_mm_set1_ps(160.)),_mm_set1_ps(95.))));
+        let weight=_mm256_cvtps_pd(_mm_sub_ps(one,_mm_mul_ps(_mm_mul_ps(n,level),_mm_set1_ps(0.85))));
+        let mut channels=[_mm_setzero_si128();3];
+        for (k,channel) in [r,g,b].into_iter().enumerate() {
+            let base=_mm_mul_ps(_mm_mul_ps(_mm_add_ps(gray,_mm_mul_ps(_mm_sub_ps(channel,gray),saturation)),gain),brightness);
+            let tint=_mm256_mul_pd(_mm256_mul_pd(_mm256_set1_pd(color[k]),weight),strength);
+            let value=_mm256_add_pd(_mm256_cvtps_pd(base),tint);
+            channels[k]=_mm256_cvttpd_epi32(_mm256_min_pd(_mm256_set1_pd(255.),_mm256_max_pd(_mm256_setzero_pd(),value)));
+        }
+        let rgba=_mm_or_si128(channels[0],_mm_or_si128(_mm_slli_epi32::<8>(channels[1]),_mm_slli_epi32::<16>(channels[2])));
+        let rgb=_mm_shuffle_epi8(rgba,pack);
+        let dest=output.as_mut_ptr().add(at);
+        _mm_storel_epi64(dest.cast(),rgb);
+        std::ptr::write_unaligned(dest.add(8).cast::<i32>(),_mm_extract_epi32::<2>(rgb));
+        at+=12;
+    }
+    grade_scalar(&input[at..],&mut output[at..],night,color);
 }
 
 /// Sequential brush-effort acceptance against the same evolving float canvas.

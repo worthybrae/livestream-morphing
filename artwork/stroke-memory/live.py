@@ -76,7 +76,7 @@ class LoadedPainting:
         self.w, self.h = width, height
         self.fw, self.fh = 480, round(480*height/width)
         self.dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
-        self.book = Painting(width, height, (self.fw, self.fh), 'transported', limit=30000)
+        self.book = Painting(width, height, (self.fw, self.fh), 'transported', limit=18000)
         self.adaptive = AdaptiveBrushwork(width, height, (self.fw, self.fh))
         self.raster = Raster(width, height)
         self.adaptive.accept_filter = self.raster.select

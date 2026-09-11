@@ -17,10 +17,11 @@ startup does not repeatedly destroy and rebuild its brush cache.
 Local socket timeouts bound startup and frame
 responses; dropping the supervisor kills and reaps the worker. Brush identities
 are compacted before their float32 namespaces collide. Base and adaptive mark
-populations are bounded at 30,000 and 20,000. The live base limit prevents
-background marks accumulating far beyond the approved 24-second study (27,467
-base marks born in total, 13,230 remaining at its end). Fine-detail capacity is
-unchanged; retired base marks free space for new deposits.
+populations are bounded at 18,000 and 20,000. The live base limit prevents
+background marks accumulating far beyond the approved 24-second study. A replay
+of its 360 paint targets peaked at 13,230 base marks; all mark packets matched
+the previous 30,000 limit exactly. Fine-detail capacity is unchanged; retired
+base marks free space for new deposits.
 
 `LOADED_PAINT_STRIDE` sets the fastest permitted paint cadence (2–12; default 3).
 Production starts at 3: up to 9.99 paint updates and 29.97 wave/output frames per
@@ -45,7 +46,7 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
   an uneven segment boundary, skipped-source recovery, a cadence change without
   missing output frames, bounded load adaptation and stalled/invalid startup.
 - The x86 renderer batches two RGBA pixels with AVX2, selected at runtime, with
-  the scalar path retained for other CPUs. Four native tests include odd row
+  the scalar path retained for other CPUs. Five native tests include odd row
   lengths, transparent coverage, pigment saturation and rounding equivalence.
   A paired 22,794-mark benchmark on the production CPU with Rust 1.86 reduced
   warm raster median from 91.03 to 63.18 ms (31%), with identical output pixels
@@ -61,6 +62,11 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
   fell from 1,066.98 to 376.66 ms in the recorded-study case. All output pixels
   matched across seven poses per case. This measures rendering, not a guarantee
   of a fixed live frame rate.
+- The day/night grade processes four RGB pixels together on AVX2 hosts, with
+  scalar fallback and bounded tail loads. On the production CPU, full-resolution
+  grade medians fell from 11.44–12.47 to 3.31–3.92 ms across six palette times.
+  Paired output pixels matched exactly, as did scalar/vector tests covering
+  RGB tails, sunrise/day/night colors and highlight compression.
 - Production deployment `06708d79-9966-4f04-9234-c5c20dfec91b` (2026-09-11,
   commit `7c401a1`) sustained 5.994 paint updates/sec and 29.970 output fps at
   1920×1080 across 20 completed segments sampled over 122 seconds. Processing
