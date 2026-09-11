@@ -84,3 +84,6 @@ mod edition_forms;
 mod oil_paint;
 
 mod knife_layers;
+
+#[cfg(test)]
+mod oil_reference;

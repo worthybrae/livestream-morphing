@@ -287,7 +287,7 @@ impl Forms {
             63 => palette_knife::<15>(frame, luma, edition, environment, None),
             64 => palette_knife::<16>(frame, luma, edition, environment, None),
             65 => palette_knife::<17>(frame, luma, edition, environment, Some(fine_luma)),
-            66..=68 => self.oil.draw(frame, fine_luma, environment, edition - 66),
+            66..=74 => self.oil.draw(frame, fine_luma, environment, edition - 66),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
             28..=31 => filaments(frame, luma, edition, seconds),

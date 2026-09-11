@@ -233,12 +233,15 @@ pub struct AppState {
 
 // A deployment setting keeps the selected artwork across restarts, while an
 // unset value retains the original line drawing for other environments.
+fn live_paint_edition(value: Option<&str>) -> f32 {
+    value.and_then(|v|v.parse::<u32>().ok()).filter(|v|(65..=74).contains(v)).unwrap_or(65) as f32
+}
 fn startup_pipeline(style: &str) -> Pipeline {
     let mut p=Pipeline::new();
     if style=="fine_knife" || style=="fine_knife_nyc" {
         let slot=p.add_effect("ink_editions").expect("editions registered");
         p.update_params(&slot,&ParamValues::from([
-            ("edition".into(),if style=="fine_knife_nyc" {66.} else {46.}),("detail".into(),1.),("pigment".into(),1.)
+            ("edition".into(),if style=="fine_knife_nyc" {live_paint_edition(std::env::var("LIVE_PAINT_EDITION").ok().as_deref())} else {46.}),("detail".into(),1.),("pigment".into(),1.)
         ]));
     } else {
         let slot=p.add_effect("living_ink").expect("living ink registered");
@@ -373,7 +376,7 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
         // Snapshot city time once per segment; worker pipelines share this grade.
         let local = chrono::Utc::now().with_timezone(&chrono_tz::America::New_York);
         use chrono::Timelike;
-        for slot in pipeline.slots.iter_mut().filter(|s| s.effect_id == "ink_editions" && s.params.get("edition") == Some(&66.)) {
+        for slot in pipeline.slots.iter_mut().filter(|s| s.effect_id == "ink_editions" && s.params.get("edition").map(|v|(65.0..=74.0).contains(v)).unwrap_or(false)) {
             slot.params.insert("hour".into(), local.hour() as f32 + local.minute() as f32/60. + local.second() as f32/3600.);
         }
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
@@ -610,9 +613,15 @@ mod tests {
     }
 
     #[test]
+    fn live_paint_selection_is_bounded_and_defaults_to_known_release() {
+        assert_eq!(live_paint_edition(None),65.);
+        for value in ["", "0", "64", "75", "NaN", "66.5"] {assert_eq!(live_paint_edition(Some(value)),65.);}
+        for value in 65..=74 {assert_eq!(live_paint_edition(Some(&value.to_string())),value as f32);}
+    }
+    #[test]
     fn new_york_startup_selects_refined_paint() {
         let slots=startup_pipeline("fine_knife_nyc").view();
-        assert_eq!(slots[0].params["edition"],66.);
+        assert_eq!(slots[0].params["edition"],live_paint_edition(std::env::var("LIVE_PAINT_EDITION").ok().as_deref()));
     }
 
     #[test]

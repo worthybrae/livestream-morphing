@@ -1,7 +1,7 @@
 FROM rust:1.86-bookworm AS builder
-# Railway deployment is amd64; v3 enables eight-lane AVX2 brush shading (verified on the deployment CPU).
+# Railway deployment is amd64; v2 enables hardware SIMD rounding/integer ops.
 # Override with an empty value when building for another architecture.
-ARG RUSTFLAGS="-C target-cpu=x86-64-v3"
+ARG RUSTFLAGS="-C target-cpu=x86-64-v2"
 ENV RUSTFLAGS=${RUSTFLAGS}
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
@@ -13,6 +13,7 @@ RUN mkdir src && printf 'fn main() {}\n' > src/main.rs \
     && cargo build --release \
     && rm -f target/release/deps/livestream_morphing_rs*
 COPY livestream-morphing-rs/src/ src/
+COPY livestream-morphing-rs/assets/ assets/
 RUN cargo test && cargo build --release
 
 FROM debian:bookworm-slim

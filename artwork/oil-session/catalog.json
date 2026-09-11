@@ -1,6 +1,92 @@
 [
-{"id":65,"slug":"baseline","name":"Current live reference","description":"Fine knife with small-form accents.","params":{"hour":14}},
-{"id":66,"slug":"measured-brushwork","name":"Measured brushwork","description":"Pigment-aware strokes stop at color boundaries; finer brushes repair lost forms.","params":{"hour":14}},
-{"id":67,"slug":"broken-color","name":"Broken color","description":"Longer, narrower painted passages with irregular dry tips.","params":{"hour":14}},
-{"id":68,"slug":"loaded-brush","name":"Loaded brush","description":"Fuller paint deposits with stronger bristle relief.","params":{"hour":14}}
+  {
+    "id": 65,
+    "slug": "baseline",
+    "name": "Current live reference",
+    "description": "Fine knife with small-form accents.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 66,
+    "slug": "measured-brushwork",
+    "name": "Measured brushwork",
+    "description": "Pigment-aware strokes stop at color boundaries; finer brushes repair lost forms.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 67,
+    "slug": "broken-color",
+    "name": "Broken color",
+    "description": "Longer, narrower painted passages with irregular dry tips.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 68,
+    "slug": "loaded-brush",
+    "name": "Loaded brush",
+    "description": "Fuller paint deposits with stronger bristle relief.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 69,
+    "slug": "loaded-fibers",
+    "name": "Loaded fibers",
+    "description": "Individual bristles form pressure-shaped paint deposits, with filtered relief that stays quiet at small scales.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 70,
+    "slug": "impasto-fibers",
+    "name": "Impasto fibers",
+    "description": "Stronger directional light across loaded paint and irregular bristle tips.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 71,
+    "slug": "layered-oil",
+    "name": "Layered oil",
+    "description": "A broad bristled underpainting, finished with fine full-resolution marks.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 72,
+    "slug": "coherent-accents",
+    "name": "Coherent accents",
+    "description": "Bristled underpainting with compact pigment marks for people and narrow strokes for edges.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 73,
+    "slug": "confident-passages",
+    "name": "Confident passages",
+    "description": "Opaque bristled passages follow the architecture, with compact finishing marks.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 74,
+    "slug": "quiet-impasto",
+    "name": "Quiet impasto",
+    "description": "Fuller middle brushes and restrained accents leave room for the broad paint.",
+    "params": {
+      "hour": 14
+    }
+  }
 ]

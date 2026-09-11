@@ -119,7 +119,7 @@ impl Effect for Editions {
     }
     fn params(&self) -> Vec<ParamDef> {
         vec![
-            ParamDef::new("edition", "Edition", 0., 68., 0., 1.),
+            ParamDef::new("edition", "Edition", 0., 74., 0., 1.),
             ParamDef::new("hour", "Local hour", 0., 24., 14., 0.25),
             ParamDef::new("cloud", "Cloud cover", 0., 1., 0.3, 0.05),
             ParamDef::new("rain", "Wet atmosphere", 0., 1., 0., 0.05),
@@ -153,29 +153,33 @@ impl Effect for Editions {
                 .filter(|x| x.is_finite())
                 .unwrap_or(default)
         };
-        let edition = get("edition", 0.).round().clamp(0., 68.) as u32;
+        let edition = get("edition", 0.).round().clamp(0., 74.) as u32;
         let detail = get("detail", 1.).clamp(0.5, 2.);
         let pigment = get("pigment", 1.).clamp(0.5, 1.5);
         for (i, p) in frame.data.chunks_exact(3).enumerate() {
             self.luma[i] = (p[0] as f32 * 0.299 + p[1] as f32 * 0.587 + p[2] as f32 * 0.114) / 255.
         }
-        // Small spatial average quiets sensor grain; it never smears moving objects over time.
-        super::living_ink::blur(
-            &self.luma,
-            &mut self.scratch,
-            &mut self.smooth,
-            w,
-            h,
-            if edition >= 26 {
-                8
-            } else if edition == 5 || edition == 20 {
-                6
-            } else if edition >= 17 {
-                3
-            } else {
-                2
-            },
-        );
+        // The reconstructed oil painter uses only the fine luminance field.
+        // Earlier materials still need the broad field for their geometry.
+        if edition < 66 {
+            // Small spatial average quiets sensor grain; it never smears moving objects over time.
+            super::living_ink::blur(
+                &self.luma,
+                &mut self.scratch,
+                &mut self.smooth,
+                w,
+                h,
+                if edition >= 26 {
+                    8
+                } else if edition == 5 || edition == 20 {
+                    6
+                } else if edition >= 17 {
+                    3
+                } else {
+                    2
+                },
+            );
+        }
         if edition >= 22 {
             let seconds = ctx.frame_number as f64 * ctx.delta_seconds.max(0.) as f64;
             let hour = if get("day_cycle", 0.) >= 0.5 { repeat(seconds as f32, 24.) } else { get("hour", 14.).clamp(0.,24.) };
@@ -549,7 +553,7 @@ mod tests {
     #[test]
     fn every_material_is_distinct_deterministic_and_keeps_moving() {
         let mut results = std::collections::HashSet::new();
-        for edition in 0..=68 {
+        for edition in 0..=74 {
             let params = ParamValues::from([("edition".into(), edition as f32), ("hour".into(), 0.)]);
             let mut a = image();
             let mut b = image();
@@ -559,7 +563,7 @@ mod tests {
             Editions::default().apply(&mut c, &params, &context(45));
             assert_eq!(a.data, b.data);
             assert_ne!(a.data, c.data);
-            assert!(results.insert(a.data));
+            assert!(results.insert(a.data), "edition {edition} duplicates a previous material");
         }
     }
 }
