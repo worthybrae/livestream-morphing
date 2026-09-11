@@ -60,12 +60,14 @@ pub fn stamp(p:&[f32],material:Material)->Stamp {
         let wobble=(u*(7.+seed*4.)+seed*22.).sin()*0.045
             +(u*17.+seed*63.).sin()*0.020;
         let pressure=(0.84-u*0.12+belly*0.10+wobble*detail)*head*tail;
+        let edge=(pressure-across.abs())*width;
+        // Even the highest bristle ridge cannot reach this pixel. Avoid noise
+        // and relief calculations in the empty corners of the brush rectangle.
+        if edge < -0.20*detail-0.001 {continue;}
         let clump=noise(u*length*0.13,across*width*0.39,(seed*100000.) as u32);
-        let grain=noise(u*length*0.65,across*width*1.1,(seed*730001.) as u32);
         let phase=across*width*(1.05+seed*0.9)+seed*27.+u*(1.+seed*2.)+clump*2.5;
         let ridge=phase.sin();
         let bundle=(across*9.+u*0.9+seed*31.).sin();
-        let edge=(pressure-across.abs())*width;
         let cover=(edge+ridge*0.18*detail).clamp(0.,1.);
         if cover==0. {continue;}
         let tip=((u-0.10)/0.9).clamp(0.,1.);
@@ -79,6 +81,7 @@ pub fn stamp(p:&[f32],material:Material)->Stamp {
                 (0.98-dry,relief*detail+(seed-0.5)*4.)
             },
             Material::Scumble=>{
+                let grain=noise(u*length*0.65,across*width*1.1,(seed*730001.) as u32);
                 // Broken islands of pigment reveal earlier painted coats.
                 // The underpainting supplies continuity instead of raw video.
                 let breakup=((clump*0.65+grain*0.35-0.32)*2.8).clamp(0.,1.);
@@ -96,5 +99,5 @@ pub fn stamp(p:&[f32],material:Material)->Stamp {
         let shade=light.round().clamp(-40.,40.) as i16;
         pixels[(y+by) as usize*w+(x+bx) as usize]=[alpha,alpha*shade];
     }}
-    Stamp {w,h,ox:-bx,oy:-by,pixels,prepared:Vec::new(),key:None,pending:[0;3]}
+    Stamp::new(w,h,-bx,-by,pixels)
 }

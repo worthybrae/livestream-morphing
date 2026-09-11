@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 mod material;
 
-struct Stamp { w:usize, h:usize, ox:i32, oy:i32, pixels:Vec<[i16;2]>, prepared:Vec<[i16;2]>, key:Option<[i32;3]>, pending:[i32;3] }
+struct Stamp { w:usize, h:usize, ox:i32, oy:i32, pixels:Vec<[i16;2]>, spans:Vec<(usize,usize)>, prepared:Vec<[i16;2]>, key:Option<[i32;3]>, pending:[i32;3] }
 fn make_stamp(p:&[f32])->Stamp {
     let (length,width,angle,seed)=(p[3],p[4],p[5],p[6]);
     let (sn,cs)=angle.sin_cos();
@@ -28,9 +28,24 @@ fn make_stamp(p:&[f32])->Stamp {
             + ((across/pressure.max(0.05)).clamp(-1.,1.))*2.).round() as i16;
         pixels[(y+by) as usize*w+(x+bx) as usize]=[alpha,alpha*light];
     }}
-    Stamp {w,h,ox:-bx,oy:-by,pixels,prepared:Vec::new(),key:None,pending:[0;3]}
+    Stamp::new(w,h,-bx,-by,pixels)
 }
 impl Stamp {
+    fn new(w:usize,h:usize,ox:i32,oy:i32,pixels:Vec<[i16;2]>)->Self {
+        // A rotated thin brush has a mostly empty bounding rectangle. Include
+        // both source rows and the extra column reached by subpixel sampling,
+        // then never interpolate or blend outside that exact support.
+        let rows:Vec<_>=pixels.chunks_exact(w).map(|row| {
+            (row.iter().position(|p|p[0]!=0||p[1]!=0),row.iter().rposition(|p|p[0]!=0||p[1]!=0))
+        }).collect();
+        let mut spans=vec![(0,0);h];
+        for y in 1..h {
+            let first=[rows[y-1].0,rows[y].0].into_iter().flatten().min();
+            let last=[rows[y-1].1,rows[y].1].into_iter().flatten().max();
+            if let (Some(a),Some(b))=(first,last) {spans[y]=(a.max(1),(b+2).min(w));}
+        }
+        Self {w,h,ox,oy,pixels,spans,prepared:Vec::new(),key:None,pending:[0;3]}
+    }
     fn prepare(&mut self,p:&[f32]) {
         self.set_phase(p);self.prepare_phase();
     }
@@ -46,7 +61,7 @@ impl Stamp {
         self.key=Some(key);
         self.prepared.resize(self.pixels.len(),[0,0]);
         let weights=[(256-fx)*(256-fy),fx*(256-fy),(256-fx)*fy,fx*fy];
-        for sy in 1..self.h {for sx in 1..self.w {
+        for sy in 1..self.h {for sx in self.spans[sy].0..self.spans[sy].1 {
             let at=sy*self.w+sx;
             let ids=[at,at-1,at-self.w,at-self.w-1];
             let mut a=0;let mut b=0;
@@ -90,7 +105,7 @@ fn draw(canvas:&mut [u8],w:usize,h:usize,top:usize,p:&[f32],stamp:&Stamp) {
     let color=[p[7].clamp(0.,255.) as i32,p[8].clamp(0.,255.) as i32,p[9].clamp(0.,255.) as i32,255];
     for sy in y0..y1 {
         let row=((cy+sy as i32) as usize-top)*w;
-        for sx in x0..x1 {
+        for sx in x0.max(stamp.spans[sy].0)..x1.min(stamp.spans[sy].1) {
             let [a,b]=stamp.prepared[sy*stamp.w+sx];let alpha=a as i32;let shade=b as i32;
             if alpha==0 {continue;}
             let at=(row+(cx+sx as i32) as usize)*4;
@@ -184,6 +199,21 @@ pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn sparse_blending_matches_scalar_paint_for_loaded_shadows_and_opacity() {
+        for material in [material::Material::Loaded,material::Material::Scumble,material::Material::Swept] {
+            for seed in 0..20 {
+                let mut p=[1.,37.3,28.7,31.,13.,0.71,seed as f32/20.,0.,255.,170.,(seed+1) as f32/20.,0.];
+                p[1]+=seed as f32*0.027;p[2]-=seed as f32*0.031;
+                let mut stamp=material::stamp(&p,material);stamp.prepare(&p);
+                let mut scalar=vec![0;79*61*3];let mut simd=vec![0;79*61*4];
+                for (at,pixel) in scalar.chunks_exact_mut(3).enumerate() {pixel.copy_from_slice(&[(at%256) as u8,0,255]);}
+                for (a,b) in simd.chunks_exact_mut(4).zip(scalar.chunks_exact(3)) {a[..3].copy_from_slice(b);a[3]=255;}
+                draw_reference(&mut scalar,79,61,0,&p,&stamp);
+                draw(&mut simd,79,61,0,&p,&stamp);
+                assert_eq!(scalar,simd.chunks_exact(4).flat_map(|p|p[..3].to_vec()).collect::<Vec<_>>());
+            }
+        }
+    }
     #[test] fn thread_bands_preserve_overlapping_subpixel_brushes_at_seams() {
         let p=[1.,37.3,28.7,31.,13.,0.71,0.32,150.,80.,170.,0.9,0.];
         let q=[2.,9.1,44.2,42.,8.,-0.7,0.8,95.,180.,40.,1.,1.];

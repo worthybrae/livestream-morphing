@@ -68,19 +68,19 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
     let mut dimensions=(0,0);let started=Instant::now();
     #[cfg(test)] let mut painted_frames=Vec::new();
     let result=(|| -> Result<Rendered,Error> {
-    let info=codec::decode_visit_bounded(input,width,step,limit,|frame,fps,_,first| {
+    let info=codec::decode_visit_lazy(input,width,step,limit,|convert,size,fps,_,first| {
         let t=Instant::now();let out_fps=fps/step as f64;
         if encoder.is_none() {
             if let (Some(last),Some(now))=(pipeline.source_end,first) {
                 if (now-last).abs()>2./fps {pipeline.reset();}
             }
-            dimensions=(frame.width,frame.height);
-            let t=Instant::now();encoder=Some(codec::TsEncoder::new(frame.width,frame.height,out_fps,pts)?);
+            dimensions=size;
+            let t=Instant::now();encoder=Some(codec::TsEncoder::new(size.0,size.1,out_fps,pts)?);
             encode_ms+=t.elapsed().as_secs_f64()*1000.;
         }
         let paint=pipeline.loaded.as_mut().ok_or("Loaded paint missing")?;
         if paint.held.as_ref().map(|f|(f.width,f.height))!=Some(dimensions) || paint.output_frames%paint.stride as u64==0 {
-            let t=Instant::now();paint.request(&frame)?;
+            let t=Instant::now();paint.request(&convert()?)?;
             // The worker paints the next target while Rust waves/encodes the
             // preceding held canvas. Neither side owns an unbounded frame queue.
             if pending>0 {

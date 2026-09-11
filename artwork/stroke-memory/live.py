@@ -4,6 +4,7 @@ A bounded local socket carries RGB frames; ctypes shares the raster canvas
 without a second process or frame copy. No model, network access or disk state.
 """
 import ctypes
+import json
 import os
 import pathlib
 import socket
@@ -151,12 +152,19 @@ def main():
     # this worker exits instead of retaining a canvas or becoming an orphan.
     with socket.socket(fileno=0) as sock:
         sock.sendall(b'PAINT1')
+        totals={};count=0
         try:
             while True:
                 hour, = struct.unpack('<d', read_exact(sock, 8))
                 rgb = np.frombuffer(read_exact(sock, w*h*3), np.uint8).reshape(h, w, 3)
                 paint = painting.paint(rgb, hour)
                 sock.sendall(memoryview(paint).cast('B'))
+                count+=1
+                for name,seconds in painting.cost.items():totals[name]=totals.get(name,0.)+seconds
+                if count==30:
+                    print('Loaded paint '+json.dumps({'updates':painting.updates,'base_marks':len(painting.book.strokes),
+                        'detail_marks':len(painting.adaptive.strokes),'mean_ms':{k:round(v*1000/count,2) for k,v in totals.items()}}),file=sys.stderr,flush=True)
+                    totals={};count=0
         except EOFError:
             pass
         finally:

@@ -50,6 +50,13 @@ where F: FnMut(RawFrame,f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Er
 
 pub fn decode_visit_bounded<F>(ts_bytes: &[u8], max_width: u32, step: usize, frame_limit: usize, mut visit: F) -> Result<DecodeInfo, Box<dyn std::error::Error + Send + Sync>>
 where F: FnMut(RawFrame,f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Error + Send + Sync>> {
+    decode_visit_lazy(ts_bytes,max_width,step,frame_limit,|convert,_,fps,index,first|visit(convert()?,fps,index,first))
+}
+
+/// Visit the full timeline, converting to RGB only when the caller needs paint.
+/// Held-canvas output still gets every source timestamp and callback.
+pub fn decode_visit_lazy<F>(ts_bytes: &[u8], max_width: u32, step: usize, frame_limit: usize, mut visit: F) -> Result<DecodeInfo, Box<dyn std::error::Error + Send + Sync>>
+where F: FnMut(&mut dyn FnMut()->Result<RawFrame,Box<dyn std::error::Error + Send + Sync>>,(u32,u32),f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Error + Send + Sync>> {
     let step = step.max(1);
     // Write to temp file (ffmpeg-next requires file path for input)
     let mut tmp = NamedTempFile::new()?;
@@ -101,8 +108,9 @@ where F: FnMut(RawFrame,f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Er
                 let selected = source_frames % step == 0;
                 source_frames += 1;
                 if !selected { continue; }
-                let mut rgb = Video::empty();
-                scaler.run(&decoded, &mut rgb)?;
+                let mut convert=||->Result<RawFrame,Box<dyn std::error::Error + Send + Sync>> {
+                    let mut rgb = Video::empty();
+                    scaler.run(&decoded, &mut rgb)?;
 
                 // Copy RGB data, accounting for stride alignment
                 let stride = rgb.stride(0);
@@ -113,7 +121,9 @@ where F: FnMut(RawFrame,f64,usize,Option<f64>)->Result<(),Box<dyn std::error::Er
                     data.extend_from_slice(&rgb.data(0)[offset..offset + row_bytes]);
                 }
 
-                visit(RawFrame { data, width, height },fps,source_frames-1,first_seconds)?;
+                    Ok(RawFrame { data, width, height })
+                };
+                visit(&mut convert,(width,height),fps,source_frames-1,first_seconds)?;
                 selected_frames+=1;
             }
             Ok(())
