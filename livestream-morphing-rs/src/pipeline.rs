@@ -238,10 +238,10 @@ fn live_paint_edition(value: Option<&str>) -> f32 {
 }
 fn startup_pipeline(style: &str) -> Pipeline {
     let mut p=Pipeline::new();
-    if style=="fine_knife" || style=="fine_knife_nyc" {
+    if style=="fine_knife" || style=="fine_knife_nyc" || style=="fine_knife_london" {
         let slot=p.add_effect("ink_editions").expect("editions registered");
         p.update_params(&slot,&ParamValues::from([
-            ("edition".into(),if style=="fine_knife_nyc" {live_paint_edition(std::env::var("LIVE_PAINT_EDITION").ok().as_deref())} else {46.}),("detail".into(),1.),("pigment".into(),1.)
+            ("edition".into(),if style=="fine_knife_nyc" {live_paint_edition(std::env::var("LIVE_PAINT_EDITION").ok().as_deref())} else if style=="fine_knife_london" {53.} else {46.}),("detail".into(),1.),("pigment".into(),1.)
         ]));
     } else {
         let slot=p.add_effect("living_ink").expect("living ink registered");
@@ -374,9 +374,11 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
     let rendered={
         let mut pipeline=state.pipeline.lock().unwrap();
         // Snapshot city time once per segment; worker pipelines share this grade.
-        let local = chrono::Utc::now().with_timezone(&chrono_tz::America::New_York);
+        let local = chrono::Utc::now();
         use chrono::Timelike;
-        for slot in pipeline.slots.iter_mut().filter(|s| s.effect_id == "ink_editions" && s.params.get("edition").map(|v|(65.0..=80.0).contains(v)).unwrap_or(false)) {
+        for slot in pipeline.slots.iter_mut().filter(|s| s.effect_id == "ink_editions" && s.params.get("edition").map(|v|*v == 53.0 || (65.0..=80.0).contains(v)).unwrap_or(false)) {
+            let timezone = if slot.params.get("edition") == Some(&53.) { chrono_tz::Europe::London } else { chrono_tz::America::New_York };
+            let local = local.with_timezone(&timezone);
             slot.params.insert("hour".into(), local.hour() as f32 + local.minute() as f32/60. + local.second() as f32/3600.);
         }
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
@@ -626,6 +628,9 @@ mod tests {
 
     #[test]
     fn fine_knife_startup_selects_the_approved_edition() {
+        let dynamic = startup_pipeline("fine_knife_london").view();
+        assert_eq!(dynamic[0].params["edition"],53.);
+        assert!(dynamic[0].params.get("day_cycle").copied().unwrap_or(0.) < 0.5);
         let slots=startup_pipeline("fine_knife").view();
         assert_eq!(slots.len(),1);
         assert_eq!(slots[0].effect_id,"ink_editions");
