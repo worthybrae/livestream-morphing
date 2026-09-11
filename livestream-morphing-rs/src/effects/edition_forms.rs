@@ -94,6 +94,7 @@ impl Forms {
         edition: u32,
         seconds: f32,
         environment: [f32; 3],
+        calm: bool,
     ) {
         let w = frame.width as usize;
         let h = frame.height as usize;
@@ -269,24 +270,24 @@ impl Forms {
                 }
             }
             47 | 48 => self.knife.draw(frame, luma, seconds, edition == 48),
-            45 | 46 => palette_knife::<0>(frame, luma, edition, environment, None),
-            49 => palette_knife::<1>(frame, luma, edition, environment, None),
-            50 => palette_knife::<2>(frame, luma, edition, environment, None),
-            51 => palette_knife::<3>(frame, luma, edition, environment, None),
-            52 => palette_knife::<4>(frame, luma, edition, environment, None),
-            53 => palette_knife::<5>(frame, luma, edition, environment, None),
-            54 => palette_knife::<6>(frame, luma, edition, environment, None),
-            55 => palette_knife::<7>(frame, luma, edition, environment, None),
-            56 => palette_knife::<8>(frame, luma, edition, environment, None),
-            57 => palette_knife::<9>(frame, luma, edition, environment, None),
-            58 => palette_knife::<10>(frame, luma, edition, environment, None),
-            59 => palette_knife::<11>(frame, luma, edition, environment, None),
-            60 => palette_knife::<12>(frame, luma, edition, environment, None),
-            61 => palette_knife::<13>(frame, luma, edition, environment, None),
-            62 => palette_knife::<14>(frame, luma, edition, environment, None),
-            63 => palette_knife::<15>(frame, luma, edition, environment, None),
-            64 => palette_knife::<16>(frame, luma, edition, environment, None),
-            65 => palette_knife::<17>(frame, luma, edition, environment, Some(fine_luma)),
+            45 | 46 => palette_knife::<0>(frame, luma, edition, environment, None, false),
+            49 => palette_knife::<1>(frame, luma, edition, environment, None, false),
+            50 => palette_knife::<2>(frame, luma, edition, environment, None, false),
+            51 => palette_knife::<3>(frame, luma, edition, environment, None, false),
+            52 => palette_knife::<4>(frame, luma, edition, environment, None, false),
+            53 => palette_knife::<5>(frame, luma, edition, environment, None, calm),
+            54 => palette_knife::<6>(frame, luma, edition, environment, None, false),
+            55 => palette_knife::<7>(frame, luma, edition, environment, None, false),
+            56 => palette_knife::<8>(frame, luma, edition, environment, None, false),
+            57 => palette_knife::<9>(frame, luma, edition, environment, None, false),
+            58 => palette_knife::<10>(frame, luma, edition, environment, None, false),
+            59 => palette_knife::<11>(frame, luma, edition, environment, None, false),
+            60 => palette_knife::<12>(frame, luma, edition, environment, None, false),
+            61 => palette_knife::<13>(frame, luma, edition, environment, None, false),
+            62 => palette_knife::<14>(frame, luma, edition, environment, None, false),
+            63 => palette_knife::<15>(frame, luma, edition, environment, None, false),
+            64 => palette_knife::<16>(frame, luma, edition, environment, None, false),
+            65 => palette_knife::<17>(frame, luma, edition, environment, Some(fine_luma), false),
             66..=80 => self.oil.draw(frame, fine_luma, environment, edition - 66),
             26 | 27 => paper_relief(frame, luma, edition, seconds),
             32..=44 => paper_cutouts(frame, luma, edition, seconds, environment),
@@ -729,7 +730,7 @@ fn impasto_dimensions(kind: f32, length_seed: f32, width_seed: f32) -> (f32, f32
 }
 
 // MODE 0 retains the reference pixels. New studies share its optimized geometry.
-fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u32, environment: [f32; 3], fine_luma: Option<&[f32]>) {
+fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u32, environment: [f32; 3], fine_luma: Option<&[f32]>, calm: bool) {
     let w = frame.width as usize;
     let h = frame.height as usize;
     let scale = w as f32 / 1920.;
@@ -850,7 +851,7 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                 // Preserve broad paint fields. Fine accents have stable sparse
                 // placement; their opacity still responds continuously to detail.
                 if geometry >= 10 && coat == 2 && hash(gx+913, gy+227) > if geometry == 10 { 0.55 } else { 0.34 } { continue; }
-                let opacity = if MODE >= 16 {
+                let opacity = if calm && MODE == 5 && coat == 2 { painted_detail_opacity(gradient) } else if MODE >= 16 {
                     if coat == 2 {
                         let t=((gradient-0.065)/0.065).clamp(0.,1.);
                         t*t*(3.-2.*t)
@@ -864,10 +865,10 @@ fn palette_knife<const MODE: u8>(frame: &mut RawFrame, luma: &[f32], edition: u3
                     let base = if geometry == 10 { 0.55 } else { 0.30 };
                     base + painted_detail_opacity(gradient)*(1.-base)
                 } else if geometry >= 6 && coat == 2 { painted_detail_opacity(gradient) } else { 1. };
-                if ((geometry >= 6 || MODE >= 16) && opacity <= 0.) || (MODE < 13 && geometry < 6 && coat == 2 && gradient < 0.065) {
+                if ((geometry >= 6 || MODE >= 16 || (calm && MODE == 5)) && opacity <= 0.) || (MODE < 13 && geometry < 6 && !(calm && MODE == 5) && coat == 2 && gradient < 0.065) {
                     continue;
                 }
-                let angle = if MODE >= 16 {
+                let angle = if (calm && MODE == 5) || MODE >= 16 {
                     painted_stroke_direction(dx, dy, seed)
                 } else if MODE >= 13 {
                     // Fixed stroke identities: no per-frame rotation or changing silhouette.
@@ -1044,7 +1045,7 @@ fn knife_pixels<const MODE: u8>(
         let bristle=((phase-phase.floor())-0.5).abs()*2.;
         let dry=(u+0.1).max(F::ZERO)*(F::ONE-bristle)*0.18;
         let fringe=(scrape-0.45).max(F::ZERO)*0.04;
-        (-(distance+fringe)*width).max(F::ZERO).min(F::ONE)*(F::splat(0.96)-dry)
+        (-(distance+fringe)*width).max(F::ZERO).min(F::ONE)*(F::splat(0.96)-dry)*opacity
     } else if MODE >= 16 { cover * opacity } else if MODE >= 13 {
         let t = (u+1.)*0.5;
         let phase = v*(12.+seed*9.) + seed*31.;
@@ -1528,8 +1529,8 @@ mod knife_batch_tests {
         let luma = vec![0.4; 96*54];
         let mut a = RawFrame::filled(96, 54, 235, 195, 110);
         let mut b = a.clone();
-        palette_knife::<3>(&mut a, &luma, 51, [12., 0.3, 0.], None);
-        palette_knife::<4>(&mut b, &luma, 52, [12., 0.3, 0.], None);
+        palette_knife::<3>(&mut a, &luma, 51, [12., 0.3, 0.], None, false);
+        palette_knife::<4>(&mut b, &luma, 52, [12., 0.3, 0.], None, false);
         assert_eq!(a.data, b.data);
     }
     #[test]
@@ -1562,8 +1563,8 @@ mod knife_batch_tests {
             let make = || RawFrame::filled(96, 54, rgb[0], rgb[1], rgb[2]);
             let mut neutral = make();
             let mut rainy = make();
-            palette_knife::<2>(&mut neutral, &luma, 50, [14., 1., 0.], None);
-            palette_knife::<2>(&mut rainy, &luma, 50, [14., 1., 1.], None);
+            palette_knife::<2>(&mut neutral, &luma, 50, [14., 1., 0.], None, false);
+            palette_knife::<2>(&mut rainy, &luma, 50, [14., 1., 1.], None, false);
             let dominant = rgb.iter().enumerate().max_by_key(|(_,v)| *v).unwrap().0;
             for p in neutral.data.chunks_exact(3) {
                 assert!((0..3).all(|k| k == dominant || p[dominant] > p[k]));

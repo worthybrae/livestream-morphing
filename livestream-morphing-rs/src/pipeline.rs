@@ -191,6 +191,8 @@ pub struct ProcessingStats {
     pub width: u32,
     pub height: u32,
     pub source_fps: f64,
+    pub paint_fps: f64,
+    pub post_ms: u64,
     pub frame_p50_ms: f64,
     pub frame_p95_ms: f64,
     pub duration_seconds: f64,
@@ -247,7 +249,11 @@ fn startup_pipeline(style: &str) -> Pipeline {
             ("edition".into(),if style=="fine_knife_nyc" {live_paint_edition(std::env::var("LIVE_PAINT_EDITION").ok().as_deref())} else if style=="fine_knife_london" {53.} else {46.}),("detail".into(),1.),("pigment".into(),1.)
         ]));
         if style=="fine_knife_london" && std::env::var("LIVE_REPAINT").as_deref()==Ok("true") {
-            p.update_params(&slot,&ParamValues::from([("repaint".into(),1.)]));
+            p.update_params(&slot,&ParamValues::from([
+                ("repaint".into(),1.),
+                ("calm".into(),if std::env::var("LIVE_CALM").as_deref()==Ok("true") {1.} else {0.}),
+                ("paint_stride".into(),std::env::var("LIVE_PAINT_STRIDE").ok().and_then(|v|v.parse::<u8>().ok()).unwrap_or(1).clamp(1,3) as f32)
+            ]));
         }
     } else {
         let slot=p.add_effect("living_ink").expect("living ink registered");
@@ -402,7 +408,7 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
     let encoded=rendered.bytes;
     let stats=ProcessingStats {
         effects_ms,total_ms:start.elapsed().as_millis() as u64,frames:rendered.frames as u64,
-        width:rendered.width,height:rendered.height,source_fps:rendered.fps,
+        width:rendered.width,height:rendered.height,source_fps:rendered.fps,paint_fps:rendered.paint_fps,post_ms:rendered.post_ms.round() as u64,
         frame_p50_ms:times[times.len()/2],frame_p95_ms:times[(times.len()*95/100).min(times.len()-1)],
         duration_seconds:duration,rendered_frames:previous_stats.rendered_frames+rendered.frames as u64,
         encoded_bytes:encoded.len(),segment_completed_at:0,

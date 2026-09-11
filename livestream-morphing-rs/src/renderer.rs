@@ -5,12 +5,30 @@ type Error=Box<dyn std::error::Error+Send+Sync>;
 pub struct Rendered {
     #[cfg(test)]
     pub painted_frames: Vec<Vec<u8>>,
-    pub bytes:Vec<u8>, pub fps:f64, pub frames:usize, pub width:u32, pub height:u32,
-    pub first_seconds:Option<f64>, pub times:Vec<f64>, pub decode_ms:f64, pub encode_ms:f64,
+    pub bytes:Vec<u8>, pub fps:f64, pub paint_fps:f64, pub frames:usize, pub width:u32, pub height:u32,
+    pub first_seconds:Option<f64>, pub times:Vec<f64>, pub decode_ms:f64, pub encode_ms:f64, pub post_ms:f64,
 }
 struct Job { frame:RawFrame, number:u32, dt:f32 }
 struct Done { frame:RawFrame, milliseconds:f64 }
 struct Worker { input:mpsc::SyncSender<Job>, output:mpsc::Receiver<Done> }
+
+
+fn emit_paint(target:RawFrame, first:u64, repeats:usize, fps:f64, repaint:bool, calm:bool,
+    pipeline:&mut Pipeline, encoder:&mut Option<codec::TsEncoder>, encode_ms:&mut f64, post_ms:&mut f64,
+    #[cfg(test)] painted_frames:&mut Vec<Vec<u8>>) -> Result<(),Error> {
+    let held=if repeats>1 {Some(target.data.clone())} else {None};
+    let mut frame=target;
+    for repeat in 0..repeats {
+        if repeat>0 {frame.data.copy_from_slice(held.as_ref().unwrap());}
+        let post_start=Instant::now();
+        if repaint {pipeline.repaint.apply_mode(&mut frame,(first+repeat as u64) as u32,(1./fps) as f32,calm);}
+        *post_ms+=post_start.elapsed().as_secs_f64()*1000.;
+        #[cfg(test)] painted_frames.push(frame.data.clone());
+        let started=Instant::now();encoder.as_mut().unwrap().push(&frame)?;
+        *encode_ms+=started.elapsed().as_secs_f64()*1000.;
+    }
+    Ok(())
+}
 
 pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut Pipeline,requested_workers:usize)->Result<Rendered,Error> {
     render_bounded(input,width,step,pts,offset,pipeline,requested_workers,720)
@@ -23,6 +41,9 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
     // Effects with temporal state must stay serial. This whitelist is intentionally narrow.
     let config=pipeline.view();
     let repaint=config.iter().any(|s|s.enabled && s.effect_id=="ink_editions" && s.params.get("edition")==Some(&53.) && s.params.get("repaint").copied().unwrap_or(0.)>=0.5);
+    let calm=repaint && config.iter().any(|s|s.enabled && s.effect_id=="ink_editions" && s.params.get("calm").copied().unwrap_or(0.)>=0.5);
+    // Hold complete painted targets; the ordered repaint and wave still run at output cadence.
+    let paint_stride=if repaint && config.iter().filter(|s|s.enabled).count()==1 {config.iter().filter(|s|s.enabled && s.effect_id=="ink_editions").map(|s|s.params.get("paint_stride").copied().unwrap_or(1.) as usize).max().unwrap_or(1).clamp(1,3)} else {1};
     let independent=config.iter().filter(|s|s.enabled).all(|s|s.effect_id=="ink_editions" || (s.effect_id=="living_ink" && s.params.get("trail_strength").copied().unwrap_or(0.22)==0.0));
     let count=if independent {requested_workers.clamp(1,6)} else {1};
     std::thread::scope(|scope| {
@@ -53,8 +74,8 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
             #[cfg(test)]
             let mut painted_frames=Vec::new();
             let mut encoder=None;
-            let mut times=Vec::new(); let mut dimensions=(0,0); let mut submitted=0usize;
-            let mut encode_ms=0.0; let mut callback_ms=0.0;
+            let mut times=Vec::new(); let mut dimensions=(0,0); let mut submitted=0usize;let mut painted=0usize;let mut emitted=0usize;let mut pending_serial:Option<Done>=None;
+            let mut encode_ms=0.0; let mut post_ms=0.; let mut callback_ms=0.0;
             let decode_start=Instant::now();
             let info=codec::decode_visit_bounded(input,width,step,frame_limit,|mut frame,fps,_,first| {
                 let start=Instant::now(); let out_fps=fps/step as f64;
@@ -69,47 +90,50 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
                     encode_ms+=t.elapsed().as_secs_f64()*1000.0;
                 }
                 let number=(offset+submitted as u64) as u32;
-                if workers.is_empty() {
-                    let t=Instant::now(); pipeline.process_frame_timed(&mut frame,number,(1.0/out_fps) as f32);
-                    times.push(t.elapsed().as_secs_f64()*1000.0);
-                    if repaint {pipeline.repaint.apply(&mut frame,number,(1.0/out_fps) as f32);}
-                    #[cfg(test)]
-                    painted_frames.push(frame.data.clone());
-                    let t=Instant::now(); encoder.as_mut().unwrap().push(&frame)?;
-                    encode_ms+=t.elapsed().as_secs_f64()*1000.0;
-                } else {
-                    let worker=&workers[submitted%count];
-                    let done=if submitted>=count {Some(worker.output.recv()?)} else {None};
-                    // Refill this worker before encoding its previous result. The
-                    // ordered drain is unchanged, but painting can overlap encoding.
-                    worker.input.send(Job {frame,number,dt:(1.0/out_fps) as f32})?;
-                    if let Some(mut done)=done {
+                if submitted%paint_stride==0 {
+                    let done=if workers.is_empty() {
+                        let t=Instant::now();pipeline.process_frame_timed(&mut frame,number,(1./out_fps) as f32);
+                        pending_serial.replace(Done {frame,milliseconds:t.elapsed().as_secs_f64()*1000.})
+                    } else {
+                        let worker=&workers[painted%count];
+                        let done=if painted>=count {Some(worker.output.recv()?)} else {None};
+                        worker.input.send(Job {frame,number,dt:(1./out_fps) as f32})?;
+                        done
+                    };
+                    if let Some(done)=done {
                         times.push(done.milliseconds);
-                        if repaint {pipeline.repaint.apply(&mut done.frame,(offset+times.len() as u64-1) as u32,(1.0/out_fps) as f32);}
-                        #[cfg(test)]
-                        painted_frames.push(done.frame.data.clone());
-                        let t=Instant::now(); encoder.as_mut().unwrap().push(&done.frame)?;
-                        encode_ms+=t.elapsed().as_secs_f64()*1000.0;
+                        emit_paint(done.frame,offset+emitted as u64,paint_stride,out_fps,repaint,calm,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
+                            #[cfg(test)] &mut painted_frames)?;
+                        emitted+=paint_stride;
                     }
+                    painted+=1;
                 }
                 submitted+=1; callback_ms+=start.elapsed().as_secs_f64()*1000.0; Ok(())
             })?;
             let decode_ms=(decode_start.elapsed().as_secs_f64()*1000.0-callback_ms).max(0.0);
-            for index in submitted.saturating_sub(count)..submitted {
-                if workers.is_empty() {break;}
-                let mut done=workers[index%count].output.recv()?; times.push(done.milliseconds);
-                if repaint {pipeline.repaint.apply(&mut done.frame,(offset+times.len() as u64-1) as u32,(step as f64/info.fps) as f32);}
-                #[cfg(test)]
-                        painted_frames.push(done.frame.data.clone());
-                        let t=Instant::now(); encoder.as_mut().unwrap().push(&done.frame)?;
-                encode_ms+=t.elapsed().as_secs_f64()*1000.0;
+            let out_fps=info.fps/step as f64;
+            if let Some(done)=pending_serial {
+                times.push(done.milliseconds);
+                let repeats=(info.frames-emitted).min(paint_stride);
+                emit_paint(done.frame,offset+emitted as u64,repeats,out_fps,repaint,calm,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
+                    #[cfg(test)] &mut painted_frames)?;
+                emitted+=repeats;
             }
+            for index in painted.saturating_sub(count)..painted {
+                if workers.is_empty() {break;}
+                let done=workers[index%count].output.recv()?;times.push(done.milliseconds);
+                let repeats=(info.frames-emitted).min(paint_stride);
+                emit_paint(done.frame,offset+emitted as u64,repeats,out_fps,repaint,calm,pipeline,&mut encoder,&mut encode_ms,&mut post_ms,
+                    #[cfg(test)] &mut painted_frames)?;
+                emitted+=repeats;
+            }
+            debug_assert_eq!(emitted,info.frames);
             let t=Instant::now(); let bytes=encoder.ok_or("No decoded frames")?.finish()?;
             encode_ms+=t.elapsed().as_secs_f64()*1000.0;
             let fps=info.fps/step as f64;
             if !workers.is_empty() {pipeline.clear_enabled_history();}
             pipeline.source_end=info.first_seconds.map(|first|first+info.frames as f64/fps);
-            Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,frames:info.frames,width:dimensions.0,height:dimensions.1,first_seconds:info.first_seconds,times,decode_ms,encode_ms})
+            Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:fps/paint_stride as f64,frames:info.frames,width:dimensions.0,height:dimensions.1,first_seconds:info.first_seconds,times,decode_ms,encode_ms,post_ms})
         })();
         drop(workers);
         result
@@ -180,6 +204,70 @@ mod tests {
             let a=render(input,64,1,segment as i64*90000,segment as u64*30,&mut serial,1).unwrap();
             let b=render(input,64,1,segment as i64*90000,segment as u64*30,&mut parallel,3).unwrap();
             assert_eq!(a.painted_frames,b.painted_frames,"segment {segment}");
+        }
+    }
+    #[test]
+    fn held_targets_keep_output_cadence_order_and_partial_tail() {
+        codec::init();
+        let make=|stride| {
+            let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();
+            p.update_params(&id,&crate::registry::ParamValues::from([
+                ("edition".into(),53.),("repaint".into(),1.),("calm".into(),1.),("paint_stride".into(),stride)
+            ]));p
+        };
+        let mut frame=RawFrame::filled(192,108,30,40,50);
+        for y in 12..98 {for x in 40..94 {frame.data[(y*192+x)*3..][..3].fill(210);}}
+        for length in [7,18,19] {
+            let input=codec::encode_segment(&vec![frame.clone();length],30,0).unwrap();
+            for stride in [2,3] {
+                let serial=render(&input,192,1,0,71,&mut make(stride as f32),1).unwrap();
+                assert_eq!(serial.frames,length);
+                assert_eq!(serial.times.len(),length.div_ceil(stride));
+                assert!((serial.fps-30.).abs()<0.01);
+                assert!((serial.paint_fps-30./stride as f64).abs()<0.01);
+                if length>1 {assert_ne!(serial.painted_frames[0],serial.painted_frames[1],"wave must move on the held target");}
+                for workers in [3,6] {
+                    let parallel=render(&input,192,1,0,71,&mut make(stride as f32),workers).unwrap();
+                    assert_eq!(serial.painted_frames,parallel.painted_frames);
+                    let mut encoded_frames=0;
+                    let decoded=codec::decode_visit_bounded(&parallel.bytes,192,1,30,|_,fps,_,_| {
+                        assert!((fps-30.).abs()<0.01);encoded_frames+=1;Ok(())
+                    }).unwrap();
+                    assert_eq!(encoded_frames,length);assert_eq!(decoded.frames,length);
+                }
+            }
+        }
+    }
+    #[test]
+    fn held_target_wave_and_paint_state_continue_between_segments() {
+        codec::init();
+        let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();
+        p.update_params(&id,&crate::registry::ParamValues::from([
+            ("edition".into(),53.),("repaint".into(),1.),("calm".into(),1.),("paint_stride".into(),2.)
+        ]));
+        let mut frame=RawFrame::filled(192,108,30,40,50);
+        for y in 12..98 {for x in 40..94 {frame.data[(y*192+x)*3..][..3].fill(210);}}
+        let first=codec::encode_segment(&vec![frame.clone();8],30,0).unwrap();
+        for y in 12..98 {for x in 40..94 {frame.data[(y*192+x)*3..][..3].fill(100);}}
+        let second=codec::encode_segment(&vec![frame;8],30,8).unwrap();
+        // Sequential oracle consumes the same decoded pixels, avoiding differences
+        // from encoding a separate longer fixture with different H.264 quantization.
+        let mut oracle=Pipeline::new();let id=oracle.add_effect("ink_editions").unwrap();oracle.update_params(&id,&p.view()[0].params);
+        let mut expected=Vec::new();let mut held=None;let mut number=0;
+        for input in [&first,&second] {
+            codec::decode_visit_bounded(input,192,1,30,|mut frame,fps,_,_| {
+                if number%2==0 {
+                    oracle.set_dimensions(192,108);oracle.process_frame_timed(&mut frame,number,(1./fps) as f32);held=Some(frame);
+                }
+                let mut output=held.as_ref().unwrap().clone();
+                oracle.repaint.apply_mode(&mut output,number,(1./fps) as f32,true);
+                expected.push(output.data);number+=1;Ok(())
+            }).unwrap();
+        }
+        let a=render(&first,192,1,0,0,&mut p,6).unwrap();
+        let b=render(&second,192,1,8*3000,8,&mut p,6).unwrap();
+        for (index,(actual,expected)) in [a.painted_frames,b.painted_frames].concat().iter().zip(&expected).enumerate() {
+            assert!(actual==expected,"paint state or wave restarted at frame {index}");
         }
     }
     #[test]

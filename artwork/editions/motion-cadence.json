@@ -1,0 +1,35 @@
+[
+  {
+    "id": 53,
+    "slug": "current-30",
+    "name": "Current / 30 paintings per second",
+    "description": "Control: current brush motion and rounded repainting.",
+    "params": {
+      "hour": 4,
+      "repaint": 1
+    }
+  },
+  {
+    "id": 53,
+    "slug": "steady-30",
+    "name": "Steady strokes / 30",
+    "description": "Continuous stroke direction and detail, with restrained light response.",
+    "params": {
+      "hour": 4,
+      "repaint": 1,
+      "calm": 1
+    }
+  },
+  {
+    "id": 53,
+    "slug": "paint-15-wave-30",
+    "name": "15 paintings / 30 waves",
+    "description": "The painter updates every other frame. Pigment settles and the wave moves on every output frame.",
+    "params": {
+      "hour": 4,
+      "repaint": 1,
+      "calm": 1,
+      "paint_stride": 2
+    }
+  }
+]
