@@ -39,6 +39,19 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
 
 ## Validation
 
+- Production deployment `4e8706a3-7a4f-4b43-a6b6-a5b176a7f0e9` (2026-09-11,
+  commit `db305e3`) held 9.990 paint updates/sec and 29.970 output fps across
+  38 observed completed segments sampled over 238 seconds. Processing averaged
+  4.312 s per 6.006 s segment (range 3.777–4.740 s). Every sample after startup
+  was live, the buffer filled to 10, and logs confirmed the full 14,000-base /
+  20,000-detail budget. Browser playback and the Loaded material were checked;
+  ffprobe confirmed 1920×1080 H.264, 180 frames per sampled output segment and
+  30000/1001 fps. The 166 engine, five native and 19 Python checks passed.
+  These are measured results on the existing eight-vCPU EPYC allocation, not
+  a guaranteed fixed cadence or a billing estimate. Separate Icelake allocations
+  were substantially slower even in paired old/new renderer benchmarks; compare
+  host performance before attributing a rollout slowdown to the code. The load
+  guard remains enabled for busy scenes and slower allocations.
 - Original vs shared raster, before fused math: frames 0 and 90 matched exactly.
 - Fused palette differs from the original by at most one RGB level across tested
   day/night anchors. Native effort selection matches the reference fixture.
