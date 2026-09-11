@@ -191,6 +191,7 @@ class Painting:
             self.strokes, self.age, self.failures = self.strokes[keep], self.age[keep], self.failures[keep]
 
         additions = []
+        remaining = max(0,45000-len(self.strokes))
         for coat, (pts, variety, step, (blurred, image_scale)) in enumerate(zip(
                 self.candidates, self.variants, self.steps, sources)):
             if coat == 3:
@@ -227,6 +228,8 @@ class Painting:
                 # A fixed replenishment budget prevents a noisy frame from exploding count.
                 budget = 1200 if coat==3 and self.detail=='people' else max(24,int(len(pts)*(.015 if coat==3 else .035)))
                 ids = ids[:budget]
+            ids = ids[:remaining]
+            remaining -= len(ids)
             if not len(ids):
                 continue
             xy, rv = pts[ids], variety[ids]

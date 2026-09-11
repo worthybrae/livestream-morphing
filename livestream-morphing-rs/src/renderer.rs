@@ -43,6 +43,7 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
 /// Public ingestion continues to use `render`, with the original segment limit.
 pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut Pipeline,requested_workers:usize,frame_limit:usize)->Result<Rendered,Error> {
     let step=step.max(1);pipeline.repaint.take_timings();
+    if pipeline.loaded.is_some() {return crate::loaded::render(input,width,step,pts,offset,pipeline,frame_limit);}
     // Effects with temporal state must stay serial. This whitelist is intentionally narrow.
     let config=pipeline.view();
     let repaint=config.iter().any(|s|s.enabled && s.effect_id=="ink_editions" && s.params.get("edition")==Some(&53.) && s.params.get("repaint").copied().unwrap_or(0.)>=0.5);

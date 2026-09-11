@@ -1,0 +1,248 @@
+//! Shared native brush raster for recorded studies and the live worker.
+//! Input per frame: little-endian u32 count, then 12 f32 values per mark.
+use std::collections::{HashMap, HashSet};
+mod material;
+
+struct Stamp { w:usize, h:usize, ox:i32, oy:i32, pixels:Vec<[i16;2]>, prepared:Vec<[i16;2]>, key:Option<[i32;3]> }
+fn make_stamp(p:&[f32])->Stamp {
+    let (length,width,angle,seed)=(p[3],p[4],p[5],p[6]);
+    let (sn,cs)=angle.sin_cos();
+    let bx=(cs.abs()*length+sn.abs()*width*1.4).ceil() as i32+2;
+    let by=(sn.abs()*length+cs.abs()*width*1.4).ceil() as i32+2;
+    let (w,h)=((bx*2+1) as usize,(by*2+1) as usize);
+    let mut pixels=vec![[0,0];w*h];
+    for y in -by..=by {for x in -bx..=bx {
+        let u=(x as f32*cs+y as f32*sn)/length;
+        let v=(-x as f32*sn+y as f32*cs)/width;
+        if u.abs()>=1. {continue;}
+        let belly=1.-u*u;
+        let across=v-belly*(seed-0.5)*0.45;
+        let cap=(1.-((u.abs()-0.50).max(0.)/0.5).powi(2)).max(0.).sqrt();
+        let pressure=(0.78-u*0.13+belly*0.10)*cap;
+        let bristle=((across*(7.+seed*9.)+seed*31.).fract().abs()-0.5).abs()*2.;
+        let edge=(across*31.+u*11.+seed*99.).sin()*0.026;
+        let cover=((pressure-across.abs()+edge)*width).clamp(0.,1.);
+        let dry=(u+0.2).max(0.)*(1.-bristle)*0.23;
+        let alpha=(cover*(0.98-dry)*255.).round() as i16;
+        let light=((bristle-0.5)*5.*belly + (seed-0.5)*3.
+            + ((across/pressure.max(0.05)).clamp(-1.,1.))*2.).round() as i16;
+        pixels[(y+by) as usize*w+(x+bx) as usize]=[alpha,alpha*light];
+    }}
+    Stamp {w,h,ox:-bx,oy:-by,pixels,prepared:Vec::new(),key:None}
+}
+impl Stamp {
+    fn prepare(&mut self,p:&[f32]) {
+        let fx=((p[1]-p[1].floor())*256.) as i32;
+        let fy=((p[2]-p[2].floor())*256.) as i32;
+        let opacity=(p[10].clamp(0.,1.)*256.) as i32;
+        let key=[fx,fy,opacity];
+        if self.key==Some(key) {return;}
+        self.key=Some(key);
+        self.prepared.resize(self.pixels.len(),[0,0]);
+        let weights=[(256-fx)*(256-fy),fx*(256-fy),(256-fx)*fy,fx*fy];
+        for sy in 1..self.h {for sx in 1..self.w {
+            let at=sy*self.w+sx;
+            let ids=[at,at-1,at-self.w,at-self.w-1];
+            let mut a=0;let mut b=0;
+            for k in 0..4 {a+=self.pixels[ids[k]][0] as i32*weights[k];b+=self.pixels[ids[k]][1] as i32*weights[k];}
+            self.prepared[at]=[(((a>>16)*opacity)>>8) as i16,(((b>>16)*opacity)>>8) as i16];
+        }}
+    }
+}
+#[cfg(test)]
+fn draw_reference(canvas:&mut [u8], w:usize,h:usize,top:usize,p:&[f32],stamp:&Stamp) {
+    let (cx,cy)=(p[1].floor() as i32,p[2].floor() as i32);
+    let (fx,fy)=(((p[1]-p[1].floor())*256.) as i32,((p[2]-p[2].floor())*256.) as i32);
+    let weights=[(256-fx)*(256-fy),fx*(256-fy),(256-fx)*fy,fx*fy];
+    let opacity=(p[10].clamp(0.,1.)*256.) as i32;
+    if opacity==0 {return;}
+    let color=[p[7].clamp(0.,255.) as i32,p[8].clamp(0.,255.) as i32,p[9].clamp(0.,255.) as i32];
+    for sy in 1..stamp.h {let y=cy+stamp.oy+sy as i32;
+        if y<top as i32 || y>=(top+h) as i32 {continue;}
+        for sx in 1..stamp.w {let x=cx+stamp.ox+sx as i32;
+            if x<0 || x>=w as i32 {continue;}
+            let index=sy*stamp.w+sx;
+            let ids=[index,index-1,index-stamp.w,index-stamp.w-1];
+            let mut alpha=0;let mut shade=0;
+            for k in 0..4 {alpha+=stamp.pixels[ids[k]][0] as i32*weights[k];shade+=stamp.pixels[ids[k]][1] as i32*weights[k];}
+            let alpha=((alpha>>16)*opacity)>>8;
+            if alpha==0 {continue;}
+            let shade=((shade>>16)*opacity)>>8;
+            let at=((y as usize-top)*w+x as usize)*3;
+            for k in 0..3 {canvas[at+k]=((canvas[at+k] as i32*(255-alpha)+color[k]*alpha+shade+127)/255).clamp(0,255) as u8;}
+        }
+    }
+}
+fn draw(canvas:&mut [u8],w:usize,h:usize,top:usize,p:&[f32],stamp:&Stamp) {
+    let cx=p[1].floor() as i32+stamp.ox;
+    let cy=p[2].floor() as i32+stamp.oy;
+    let y0=(top as i32-cy).max(1) as usize;
+    let y1=((top+h) as i32-cy).clamp(0,stamp.h as i32) as usize;
+    let x0=(-cx).max(1) as usize;
+    let x1=(w as i32-cx).clamp(0,stamp.w as i32) as usize;
+    if x0>=x1 || y0>=y1 {return;}
+    let color=[p[7].clamp(0.,255.) as i32,p[8].clamp(0.,255.) as i32,p[9].clamp(0.,255.) as i32,255];
+    for sy in y0..y1 {
+        let row=((cy+sy as i32) as usize-top)*w;
+        for sx in x0..x1 {
+            let [a,b]=stamp.prepared[sy*stamp.w+sx];let alpha=a as i32;let shade=b as i32;
+            if alpha==0 {continue;}
+            let at=(row+(cx+sx as i32) as usize)*4;
+            let old:[u8;4]=canvas[at..at+4].try_into().unwrap();
+            let mut out=[0u8;4];
+            for k in 0..4 {
+                let sum=(old[k] as i32*(255-alpha)+color[k]*alpha+shade+127).clamp(0,65025);
+                out[k]=((sum+1+(sum>>8))>>8) as u8;
+            }
+            canvas[at..at+4].copy_from_slice(&out);
+        }
+    }
+}
+fn raster(canvas:&mut [u8],w:usize,h:usize,values:&[f32],cache:&HashMap<u32,Stamp>,threads:usize,clear:bool) {
+    let rows=h.div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (band,dst) in canvas.chunks_mut(rows*w*4).enumerate() {
+            scope.spawn(move|| {
+                let top=band*rows;let bh=dst.len()/(w*4);
+                if clear {for pixel in dst.chunks_exact_mut(4) {pixel.copy_from_slice(&[81,83,74,255]);}}
+                for p in values.chunks_exact(12) {
+                    if let Some(stamp)=cache.get(&(p[0] as u32)) {
+                        let sy=p[2].floor() as i32+stamp.oy;
+                        if sy<=(top+bh) as i32 && sy+stamp.h as i32>=top as i32 {draw(dst,w,bh,top,p,stamp);}
+                    }
+                }
+            });
+        }
+    });
+}
+pub struct Painter {
+    w:usize,h:usize,canvas:Vec<u8>,rgb:Vec<u8>,cache:HashMap<u32,Stamp>,material:material::Material,
+}
+impl Painter {
+    pub fn new(w:usize,h:usize,style:&str)->Option<Self> {
+        if w==0 || h==0 || w>8192 || h>8192 || w*h>16_777_216 {return None;}
+        Some(Self {w,h,canvas:vec![0;w*h*4],rgb:vec![0;w*h*3],cache:HashMap::new(),material:material::Material::parse(style)?})
+    }
+    pub fn paint(&mut self,values:&[f32],append:bool)->Option<&[u8]> {
+        if values.len()%12!=0 || values.len()>100_000*12 {return None;}
+        if values.chunks_exact(12).any(|p|!p.iter().all(|v|v.is_finite()) || p[3]<=0. || p[4]<=0. || p[3]>512. || p[4]>512.) {return None;}
+        let mut active=HashSet::with_capacity(values.len()/12);
+        for p in values.chunks_exact(12) {
+            let id=p[0] as u32;active.insert(id);
+            self.cache.entry(id).or_insert_with(||material::stamp(p,self.material)).prepare(p);
+        }
+        if !append {self.cache.retain(|id,_|active.contains(id));}
+        raster(&mut self.canvas,self.w,self.h,values,&self.cache,4,!append);
+        for (dst,src) in self.rgb.chunks_exact_mut(3).zip(self.canvas.chunks_exact(4)) {dst.copy_from_slice(&src[..3]);}
+        Some(&self.rgb)
+    }
+}
+
+// Private local-process ABI. The caller supplies a valid contiguous f32 array
+// of count*12 elements and does not retain canvas views after free/repaint.
+#[no_mangle]
+pub extern "C" fn paint_new(w:usize,h:usize,loaded:bool)->*mut Painter {
+    Painter::new(w,h,if loaded {"loaded"} else {"plain"}).map(|p|Box::into_raw(Box::new(p))).unwrap_or(std::ptr::null_mut())
+}
+#[no_mangle]
+pub unsafe extern "C" fn paint_frame(p:*mut Painter,marks:*const f32,count:usize,append:bool)->*const u8 {
+    if p.is_null() || count>100_000 || (count>0 && marks.is_null()) {return std::ptr::null();}
+    let values=if count==0 {&[]} else {std::slice::from_raw_parts(marks,count*12)};
+    (*p).paint(values,append).map(|pixels|pixels.as_ptr()).unwrap_or(std::ptr::null())
+}
+#[no_mangle]
+pub unsafe extern "C" fn paint_clear(p:*mut Painter) {if !p.is_null() {(*p).cache.clear();}}
+#[no_mangle]
+pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::from_raw(p));}}
+
+#[cfg(test)] mod tests {
+    use super::*;
+    #[test] fn thread_bands_preserve_overlapping_subpixel_brushes_at_seams() {
+        let p=[1.,37.3,28.7,31.,13.,0.71,0.32,150.,80.,170.,0.9,0.];
+        let q=[2.,9.1,44.2,42.,8.,-0.7,0.8,95.,180.,40.,1.,1.];
+        let mut cache=HashMap::from([(1,make_stamp(&p)),(2,make_stamp(&q))]);
+        cache.get_mut(&1).unwrap().prepare(&p);cache.get_mut(&2).unwrap().prepare(&q);
+        let mut serial=vec![0;79*61*3];let mut parallel=vec![0;79*61*4];
+        for pixel in serial.chunks_exact_mut(3) {pixel.copy_from_slice(&[81,83,74]);}
+        draw_reference(&mut serial,79,61,0,&p,&cache[&1]);draw_reference(&mut serial,79,61,0,&q,&cache[&2]);
+        raster(&mut parallel,79,61,&[p,q].concat(),&cache,4,true);
+        assert_eq!(serial,parallel.chunks_exact(4).flat_map(|p|p[..3].to_vec()).collect::<Vec<_>>());
+        // Refinement appends must preserve the entire existing canvas and
+        // produce exactly the same pixels as a single ordered paint packet.
+        let mut incremental=vec![0u8;79*61*4];
+        raster(&mut incremental,79,61,&p,&cache,4,true);
+        raster(&mut incremental,79,61,&q,&cache,4,false);
+        assert_eq!(serial,incremental.chunks_exact(4).flat_map(|p|p[..3].to_vec()).collect::<Vec<_>>());
+    }
+}
+
+/// Fused day/night grade avoids full-frame temporary arrays in the live worker.
+/// The original palette anchors are supplied by the shared Python palette.
+#[no_mangle]
+pub unsafe extern "C" fn paint_grade(src:*const u8,dst:*mut u8,count:usize,night:f64,tint:*const f64) {
+    if src.is_null() || dst.is_null() || tint.is_null() || count>4_147_200 {return;}
+    let input=std::slice::from_raw_parts(src,count*3);
+    let output=std::slice::from_raw_parts_mut(dst,count*3);
+    let color=std::slice::from_raw_parts(tint,3);
+    let saturation=(1.4-night*0.98) as f32;
+    let brightness=(1.04-night*0.42) as f32;
+    let strength=0.75-night*0.68;
+    for (p,q) in input.chunks_exact(3).zip(output.chunks_exact_mut(3)) {
+        let rgb=[p[0] as f32,p[1] as f32,p[2] as f32];
+        let gray=rgb[0]*0.299+rgb[1]*0.587+rgb[2]*0.114;
+        let peak=rgb[0].max(rgb[1]).max(rgb[2]);
+        let excess=(peak-150.).max(0.);
+        let compressed=peak-excess+excess/(1.+excess/95.);
+        let gain=1.+night as f32*(compressed/peak.max(1.)-1.);
+        let weight=1.-night as f32*((peak-160.)/95.).clamp(0.,1.)*0.85;
+        for k in 0..3 {
+            let base=(gray+(rgb[k]-gray)*saturation)*gain*brightness;
+            q[k]=(base as f64+color[k]*weight as f64*strength).clamp(0.,255.) as u8;
+        }
+    }
+}
+
+/// Sequential brush-effort acceptance against the same evolving float canvas.
+/// Each candidate is x,y,half length,half width,angle,r,g,b (f64).
+#[no_mangle]
+pub unsafe extern "C" fn paint_select(work:*mut f32,target:*const f32,w:usize,h:usize,candidates:*const f64,count:usize,budget:usize,scale:f64,accepted:*mut u32)->usize {
+    if work.is_null() || target.is_null() || candidates.is_null() || accepted.is_null() || w*h>4_147_200 || count>100_000 {return 0;}
+    let working=std::slice::from_raw_parts_mut(work,w*h*3);
+    let reference=std::slice::from_raw_parts(target,w*h*3);
+    let marks=std::slice::from_raw_parts(candidates,count*8);
+    let out=std::slice::from_raw_parts_mut(accepted,budget.min(count));
+    let mut n=0;
+    for (index,p) in marks.chunks_exact(8).enumerate() {
+        if n>=out.len() {break;}
+        let (sn,cs)=p[4].sin_cos();
+        let bx=cs.abs()*p[2]+sn.abs()*p[3]*1.2+2.;
+        let by=sn.abs()*p[2]+cs.abs()*p[3]*1.2+2.;
+        let x0=((p[0]-bx) as i32).max(0) as usize;let x1=(((p[0]+bx) as i32+1).max(0) as usize).min(w);
+        let y0=((p[1]-by) as i32).max(0) as usize;let y1=(((p[1]+by) as i32+1).max(0) as usize).min(h);
+        let coverage=|x:usize,y:usize| {
+            let dx=x as f64-p[0];let dy=y as f64-p[1];
+            let u=(dx*cs+dy*sn)/p[2];if u.abs()>=1. {return 0.;}
+            let v=(-dx*sn+dy*cs)/p[3];
+            let cap=(1.-((u.abs()-0.5).max(0.)/0.5).powi(2)).max(0.).sqrt();
+            ((cap*0.85-v.abs())*p[3]).clamp(0.,1.)*0.82
+        };
+        let mut gain=0.;let mut area=0.;
+        for y in y0..y1 {for x in x0..x1 {
+            let a=coverage(x,y);if a==0. {continue;}area+=a;
+            let at=(y*w+x)*3;
+            for k in 0..3 {
+                let present=working[at+k] as f64;let target=reference[at+k] as f64;
+                let predicted=present*(1.-a)+p[5+k]*a;
+                gain+=(target-present).powi(2)-(target-predicted).powi(2);
+            }
+        }}
+        if gain/3.<=120.*area+1200.*scale*scale {continue;}
+        out[n]=index as u32;n+=1;
+        for y in y0..y1 {for x in x0..x1 {
+            let a=coverage(x,y);if a==0. {continue;}
+            let at=(y*w+x)*3;
+            for k in 0..3 {working[at+k]=(working[at+k] as f64*(1.-a)+p[5+k]*a) as f32;}
+        }}
+    }
+    n
+}

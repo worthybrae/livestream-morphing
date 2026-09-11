@@ -29,6 +29,7 @@ pub struct PipelineSlotView {
 /// The dynamic effect pipeline.
 pub struct Pipeline {
     slots: Vec<PipelineSlot>,
+    pub(crate) loaded: Option<crate::loaded::LoadedPaint>,
     dimensions: Option<(u32, u32)>,
     pub(crate) source_end: Option<f64>,
     pub(crate) repaint: crate::repaint::Repaint,
@@ -39,6 +40,7 @@ impl Pipeline {
     pub fn new() -> Self {
         Self {
             slots: Vec::new(),
+            loaded: None,
             dimensions: None,
             source_end: None,
             repaint: Default::default(),
@@ -63,6 +65,7 @@ impl Pipeline {
             Some(i) => all.remove(i),
             None => return Err(format!("Unknown effect: {}", effect_id)),
         };
+        if self.loaded.take().is_some() {self.reset();}
         let params = default_params(&effect.params());
         let slot_id = uuid::Uuid::new_v4().to_string();
         let mut slot = PipelineSlot {
@@ -128,6 +131,8 @@ impl Pipeline {
                 enabled,
             });
         }
+        self.loaded=None;
+        self.reset();
         self.slots = new_slots;
         Ok(())
     }
@@ -161,6 +166,7 @@ impl Pipeline {
 
     pub fn reset(&mut self) {
         self.source_end = None;
+        if let Some(paint)=self.loaded.as_mut() {paint.reset();}
         self.repaint = Default::default();
         if let Some((w,h)) = self.dimensions {
             for slot in &mut self.slots { slot.effect.init(w,h); }
@@ -245,6 +251,10 @@ fn live_paint_edition(value: Option<&str>) -> f32 {
 }
 fn startup_pipeline(style: &str) -> Pipeline {
     let mut p=Pipeline::new();
+    if style=="loaded_bristle" {
+        p.loaded=Some(crate::loaded::LoadedPaint::new());
+        return p;
+    }
     if style=="fine_knife" || style=="fine_knife_nyc" || style=="fine_knife_london" {
         let slot=p.add_effect("ink_editions").expect("editions registered");
         p.update_params(&slot,&ParamValues::from([
@@ -391,6 +401,10 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
         // Snapshot city time once per segment; worker pipelines share this grade.
         let local = chrono::Utc::now();
         use chrono::Timelike;
+        if let Some(paint)=pipeline.loaded.as_mut() {
+            let london=local.with_timezone(&chrono_tz::Europe::London);
+            paint.hour=london.hour() as f64+london.minute() as f64/60.+london.second() as f64/3600.;
+        }
         for slot in pipeline.slots.iter_mut().filter(|s| s.effect_id == "ink_editions" && s.params.get("edition").map(|v|*v == 53.0 || (65.0..=80.0).contains(v)).unwrap_or(false)) {
             let timezone = if slot.params.get("edition") == Some(&53.) { chrono_tz::Europe::London } else { chrono_tz::America::New_York };
             let local = local.with_timezone(&timezone);
@@ -412,7 +426,7 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
     let stats=ProcessingStats {
         effects_ms,total_ms:start.elapsed().as_millis() as u64,frames:rendered.frames as u64,
         width:rendered.width,height:rendered.height,source_fps:rendered.fps,paint_fps:rendered.paint_fps,post_ms:rendered.post_ms.round() as u64,repaint_ms:rendered.repaint_ms.round() as u64,warp_ms:rendered.warp_ms.round() as u64,
-        frame_p50_ms:times[times.len()/2],frame_p95_ms:times[(times.len()*95/100).min(times.len()-1)],
+        frame_p50_ms:times.get(times.len()/2).copied().unwrap_or(0.),frame_p95_ms:times.get(times.len()*95/100).copied().unwrap_or(0.),
         duration_seconds:duration,rendered_frames:previous_stats.rendered_frames+rendered.frames as u64,
         encoded_bytes:encoded.len(),segment_completed_at:0,
     };
@@ -472,6 +486,7 @@ pub async fn run(state: Arc<AppState>, mut active: watch::Receiver<bool>) {
             let _ = state.pipeline_active.send(false);
             state.hls_buffer.write().await.clear();
 
+            state.pipeline.lock().unwrap().reset();
             // Return freed decoder/encoder arenas to Linux instead of paying for idle RSS.
             release_idle_memory();
 

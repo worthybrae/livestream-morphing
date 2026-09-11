@@ -7,3 +7,7 @@ venv
 research/
 *.jpg
 *.ts
+
+**/target
+**/models
+.worktrees

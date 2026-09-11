@@ -52,6 +52,7 @@ class AdaptiveBrushwork:
         self.accepted_by_scale=[0,0,0]
         self.proposed_by_scale=[0,0,0]
         self.checks=[]
+        self.accept_filter=None
 
     def begin(self,graded_source,forward,backward):
         self.first=self.previous is None
@@ -141,23 +142,32 @@ class AdaptiveBrushwork:
                 stop=crossing&active;limit[stop]=max(.25,fraction-.13);active[stop]=False
             extent*=limit
         widths=np.maximum(widths,.7*self.scale)
-        accepted=[]
-        for i,(x,y) in enumerate(zip(xs,ys)):
-            self.proposed_by_scale[level]+=1
-            region,alpha=footprint(x,y,lengths[i],widths[i],angles[i],self.w,self.h)
-            present=working[region];target=reference[region];color=colors[i]
-            predicted=present*(1-alpha)+color*alpha
-            gain=float(np.sum((target-present)**2-(target-predicted)**2)/3)
-            # Charge for area AND each stroke. Texture-scale noise or a mark
-            # that mixes several incompatible shapes does not earn its cost.
-            cost=120*float(alpha.sum())+1200*self.scale*self.scale
-            if gain<=cost:
-                continue
-            p=np.array([self.next_id,x,y,lengths[i],widths[i],angles[i],u[i],*color,1. if self.first else .85,4+level],np.float32)
-            self.next_id+=1;accepted.append(p)
-            working[region]=predicted
-            if len(accepted)>=budget:
-                break
+        if self.accept_filter is not None:
+            candidates=np.ascontiguousarray(np.column_stack([xs,ys,lengths,widths,angles,colors]),dtype=np.float64)
+            indices=self.accept_filter(working,reference,candidates,budget,self.scale)
+            self.proposed_by_scale[level]+=int(indices[-1])+1 if len(indices)==budget else len(xs)
+            accepted=[]
+            for i in indices:
+                p=np.array([self.next_id,xs[i],ys[i],lengths[i],widths[i],angles[i],u[i],*colors[i],1. if self.first else .85,4+level],np.float32)
+                self.next_id+=1;accepted.append(p)
+        else:
+            accepted=[]
+            for i,(x,y) in enumerate(zip(xs,ys)):
+                self.proposed_by_scale[level]+=1
+                region,alpha=footprint(x,y,lengths[i],widths[i],angles[i],self.w,self.h)
+                present=working[region];target=reference[region];color=colors[i]
+                predicted=present*(1-alpha)+color*alpha
+                gain=float(np.sum((target-present)**2-(target-predicted)**2)/3)
+                # Charge for area AND each stroke. Texture-scale noise or a mark
+                # that mixes several incompatible shapes does not earn its cost.
+                cost=120*float(alpha.sum())+1200*self.scale*self.scale
+                if gain<=cost:
+                    continue
+                p=np.array([self.next_id,x,y,lengths[i],widths[i],angles[i],u[i],*color,1. if self.first else .85,4+level],np.float32)
+                self.next_id+=1;accepted.append(p)
+                working[region]=predicted
+                if len(accepted)>=budget:
+                    break
         if not accepted:
             return np.empty((0,12),np.float32)
         marks=np.array(accepted,np.float32)

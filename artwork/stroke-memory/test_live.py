@@ -1,0 +1,54 @@
+"""Production port checks: material parity, bounded identities, and native math."""
+import copy
+import unittest
+import cv2
+import numpy as np
+from live import Raster, LoadedPainting
+from render import grade, grade_reference
+from adaptive import AdaptiveBrushwork
+
+class LiveTests(unittest.TestCase):
+    def test_fused_palette_tracks_original_through_day_and_night(self):
+        raster=Raster(192,108)
+        try:
+            rgb=np.random.default_rng(28).integers(0,256,(108,192,3),dtype=np.uint8)
+            for hour in [0,4.5,6.5,12,18.5,21,23.999]:
+                result=raster.grade(rgb,hour)
+                for reference in [grade(rgb,hour),grade_reference(rgb,hour)]:
+                    self.assertLessEqual(int(np.abs(result.astype(int)-reference).max()),1)
+        finally:raster.close()
+
+    def test_native_acceptance_preserves_brush_effort_decisions(self):
+        w,h=320,180;raster=Raster(w,h)
+        rng=np.random.default_rng(51)
+        image=cv2.GaussianBlur(rng.integers(0,256,(h,w,3),dtype=np.uint8),(0,0),3)
+        image[45:115,120:160]=[230,60,80]
+        zero=np.zeros((90,160,2),np.float32)
+        a=AdaptiveBrushwork(w,h,(160,90));a.begin(image,zero,zero)
+        b=copy.deepcopy(a);b.accept_filter=raster.select
+        canvas=np.full((h,w,3),90,np.uint8)
+        try:
+            for level,radius in enumerate([12,6,2.5]):
+                aa=a.propose(canvas,radius*w/1920,level,100)
+                bb=b.propose(canvas,radius*w/1920,level,100)
+                np.testing.assert_array_equal(aa,bb)
+        finally:raster.close()
+
+    def test_long_running_id_compaction_keeps_every_painted_pixel(self):
+        p=LoadedPainting(320,180)
+        try:
+            rgb=cv2.GaussianBlur(np.random.default_rng(2).integers(0,256,(180,320,3),dtype=np.uint8),(0,0),3)
+            p.paint(rgb,15)
+            marks=np.concatenate([p.book.ground,p.book.strokes,p.adaptive.strokes])
+            before=p.raster.paint(marks).copy()
+            p.book.next_id=900_000
+            self.assertTrue(p.compact_ids())
+            marks=np.concatenate([p.book.ground,p.book.strokes,p.adaptive.strokes])
+            after=p.raster.paint(marks)
+            np.testing.assert_array_equal(before,after)
+            self.assertEqual(len(np.unique(marks[:,0])),len(marks))
+            self.assertLess(p.book.next_id,800_000)
+        finally:
+            p.pool.shutdown();p.raster.close()
+
+if __name__=='__main__':unittest.main()
