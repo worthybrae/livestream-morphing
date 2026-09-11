@@ -207,12 +207,22 @@ impl Painter {
         // Mask creation and resampling are independent for each brush. Preserve
         // deposition order, but prepare its immutable coverage in parallel.
         let material=self.material;
+        let next=std::sync::atomic::AtomicUsize::new(0);
         let made=std::thread::scope(|scope| {
             let mut jobs=Vec::new();
-            for chunk in missing.chunks(missing.len().div_ceil(4).max(1)) {
-                jobs.push(scope.spawn(move||chunk.iter().map(|p| {
-                    let mut stamp=material::stamp(p,material);stamp.prepare(p);(p[0] as u32,stamp)
-                }).collect::<Vec<_>>()));
+            // Input is ordered by coat: a count-based split gives one worker
+            // most of the large, expensive masks. Share individual new marks
+            // instead; deposition order is still defined by the input packet.
+            for _ in 0..missing.len().min(4) {
+                let next=&next;let missing=&missing;
+                jobs.push(scope.spawn(move|| {
+                    let mut made=Vec::new();
+                    while let Some(p)=missing.get(next.fetch_add(1,std::sync::atomic::Ordering::Relaxed)) {
+                        let mut stamp=material::stamp(p,material);stamp.prepare(p);
+                        made.push((p[0] as u32,stamp));
+                    }
+                    made
+                }));
             }
             jobs.into_iter().flat_map(|j|j.join().expect("brush mask preparation")).collect::<Vec<_>>()
         });
@@ -247,6 +257,26 @@ pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn parallel_texture_generation_preserves_large_and_small_stroke_order() {
+        let (w,h)=(129,97);
+        let mut painter=Painter::new(w,h,"loaded").unwrap();
+        let marks:Vec<[f32;12]>=(0..64).map(|i| {
+            [i as f32+1.,(i%13) as f32*10.+0.23,(i%9) as f32*11.+0.77,
+             if i<8 {37.} else {2.+(i%5) as f32},if i<8 {20.} else {1.+(i%3) as f32},
+             i as f32*0.21,(i%23) as f32/23.,(i*43%256) as f32,(i*73%256) as f32,
+             (i*31%256) as f32,0.8,0.]
+        }).collect();
+        let mut reference=vec![0;w*h*3];
+        for pixel in reference.chunks_exact_mut(3) {pixel.copy_from_slice(&[81,83,74]);}
+        for p in &marks {draw_reference(&mut reference,w,h,0,p,&material::stamp(p,material::Material::Loaded));}
+        assert_eq!(reference,painter.paint(&marks.concat(),false).unwrap());
+        // New texture jobs may complete in any order, but appends still layer
+        // over the previous canvas in exactly the order the artist supplied.
+        let mut accents=marks[..9].to_vec();
+        for p in &mut accents {p[0]+=100.;p[1]+=0.19;p[10]=0.45;}
+        for p in &accents {draw_reference(&mut reference,w,h,0,p,&material::stamp(p,material::Material::Loaded));}
+        assert_eq!(reference,painter.paint(&accents.concat(),true).unwrap());
+    }
     #[cfg(target_arch="x86_64")]
     #[test] fn avx2_matches_scalar_for_odd_rows_zero_alpha_and_saturated_pigment() {
         if !std::arch::is_x86_feature_detected!("avx2") {return;}

@@ -23,7 +23,7 @@ base marks born in total, 13,230 remaining at its end). Fine-detail capacity is
 unchanged; retired base marks free space for new deposits.
 
 `LOADED_PAINT_STRIDE` sets the fastest permitted paint cadence (2–12; default 3).
-Production starts at 5: up to 5.99 paint updates and 29.97 wave/output frames per
+Production starts at 3: up to 9.99 paint updates and 29.97 wave/output frames per
 second. Live processing may relax the stride up to 12 (2.5 paint updates/sec)
 when segment processing exceeds 90% of its playback duration. It recovers one
 step only after six segments below 75%, never exceeding the configured rate.
@@ -45,12 +45,22 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
   an uneven segment boundary, skipped-source recovery, a cadence change without
   missing output frames, bounded load adaptation and stalled/invalid startup.
 - The x86 renderer batches two RGBA pixels with AVX2, selected at runtime, with
-  the scalar path retained for other CPUs. Three native tests include odd row
+  the scalar path retained for other CPUs. Four native tests include odd row
   lengths, transparent coverage, pigment saturation and rounding equivalence.
   A paired 22,794-mark benchmark on the production CPU with Rust 1.86 reduced
   warm raster median from 91.03 to 63.18 ms (31%), with identical output pixels
   across eight subpixel poses. This measures brush rasterization, not total
   pipeline throughput; the cadence guard still measures complete live segments.
+- New texture generation shares individual strokes between four workers. A
+  count-based split concentrated large strokes on one worker because input is
+  ordered by coat. Pixel order is unchanged; a test compares complete mixed-size
+  paintings and subsequent appends against serial brush deposition.
+  A production-CPU benchmark replacing 5% of identities per frame reduced median
+  raster time from 85.48 to 47.05 ms for 22,794 recorded-study marks, and from
+  110.99 to 89.74 ms for a synthetic 45,000-mark stress case. Cold construction
+  fell from 1,066.98 to 376.66 ms in the recorded-study case. All output pixels
+  matched across seven poses per case. This measures rendering, not a guarantee
+  of a fixed live frame rate.
 - Production deployment `06708d79-9966-4f04-9234-c5c20dfec91b` (2026-09-11,
   commit `7c401a1`) sustained 5.994 paint updates/sec and 29.970 output fps at
   1920×1080 across 20 completed segments sampled over 122 seconds. Processing
