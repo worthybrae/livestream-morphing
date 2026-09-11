@@ -51,6 +51,13 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
   warm raster median from 91.03 to 63.18 ms (31%), with identical output pixels
   across eight subpixel poses. This measures brush rasterization, not total
   pipeline throughput; the cadence guard still measures complete live segments.
+- Production deployment `06708d79-9966-4f04-9234-c5c20dfec91b` (2026-09-11,
+  commit `7c401a1`) sustained 5.994 paint updates/sec and 29.970 output fps at
+  1920×1080 across 20 completed segments sampled over 122 seconds. Processing
+  averaged 3.434 s per 6.006 s segment (range 3.076–3.904 s); every status sample
+  was live and the buffer filled to 10. Browser playback, material, London clock
+  and raw/painted comparison were verified. These are observed results for that
+  scene and host, not a guaranteed fixed cadence; adaptation remains enabled.
 - Local arm64 container, 24.024 s / 1080p: initial integrated 15-update replay took
   50.99 s; native optimizations plus overlapped 10-update replay took 28.93 s.
   These are local replay timings, not production throughput or a billing estimate.
