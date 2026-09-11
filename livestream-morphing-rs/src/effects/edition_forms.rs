@@ -1020,6 +1020,17 @@ fn knife_pixels<const MODE: u8>(
         let pressure = (F::splat(0.65+seed*0.16) - u*0.13) * cap;
         (v.abs()-pressure).max(u.abs()-1.)
     } else { (v.abs() - (F::splat(0.9) - u * 0.2)).max(u.abs() + v.abs() * 0.18 - 1.) };
+    let distance = if MODE == 5 {
+        // Mix flat and filbert deposits. Stay inside the original footprint so
+        // the existing scanline clipping remains conservative.
+        let bend=(F::ONE-u*u).max(F::ZERO)*((seed-0.5)*0.14);
+        let across=v-bend;
+        let ends=((u.abs()-(0.58+seed*0.18))/(0.42-seed*0.18)).max(F::ZERO);
+        let cap=(F::ONE-ends*ends).max(F::ZERO).sqrt();
+        let pressure=F::splat(0.79+seed*0.07)-u*(0.05+seed*0.06);
+        let shaped=if seed<0.68 {across.abs()-pressure*cap} else {across.abs()-pressure};
+        distance.max(shaped)
+    } else { distance };
     // The conservative scanline guard also produces wholly empty batches.
     // Reject those before evaluating pigment or reading destination colors.
     if distance.cmp_lt(F::ZERO).none() {
@@ -1027,7 +1038,13 @@ fn knife_pixels<const MODE: u8>(
     }
     let cover = (-distance * width).max(F::ZERO).min(F::ONE) * 0.94;
     let scrape = knife_noise4(u * (if material >= 9 { 1.3 } else { 4. }) + seed * 19., v * (if material >= 9 { 19. } else { 13. }) + coat as f32 * 37.);
-    let cover = if MODE >= 16 { cover * opacity } else if MODE >= 13 {
+    let cover = if MODE == 5 {
+        let phase=v*(7.+seed*7.)+seed*19.;
+        let bristle=((phase-phase.floor())-0.5).abs()*2.;
+        let dry=(u+0.1).max(F::ZERO)*(F::ONE-bristle)*0.18;
+        let fringe=(scrape-0.45).max(F::ZERO)*0.04;
+        (-(distance+fringe)*width).max(F::ZERO).min(F::ONE)*(F::splat(0.96)-dry)
+    } else if MODE >= 16 { cover * opacity } else if MODE >= 13 {
         let t = (u+1.)*0.5;
         let phase = v*(12.+seed*9.) + seed*31.;
         let bristle = ((phase-phase.floor())-0.5).abs()*2.;
@@ -1057,6 +1074,11 @@ fn knife_pixels<const MODE: u8>(
         let groove = ((phase-phase.floor())-0.5).abs()*2.;
         let belly = (F::ONE-u*u).max(F::ZERO);
         F::splat(tint*0.65) + (groove-0.5)*belly*14. + ridge*0.6 + (scrape-0.5)*5.
+    } else if MODE == 5 {
+        // Fine continuous bristle ridges, with a quieter broad paint surface.
+        let phase=v*(7.+seed*7.)+seed*19.;
+        let groove=((phase-phase.floor())-0.5).abs()*2.;
+        F::splat(tint*0.65)+ridge*0.5+(groove-0.5)*(F::ONE-u*u).max(F::ZERO)*7.+(scrape-0.5)*5.
     } else if material < 2 {
         F::splat(tint) + ridge + (scrape - 0.5) * 9.
     } else {

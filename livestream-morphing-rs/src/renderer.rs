@@ -22,6 +22,7 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
     let step=step.max(1);
     // Effects with temporal state must stay serial. This whitelist is intentionally narrow.
     let config=pipeline.view();
+    let repaint=config.iter().any(|s|s.enabled && s.effect_id=="ink_editions" && s.params.get("edition")==Some(&53.) && s.params.get("repaint").copied().unwrap_or(0.)>=0.5);
     let independent=config.iter().filter(|s|s.enabled).all(|s|s.effect_id=="ink_editions" || (s.effect_id=="living_ink" && s.params.get("trail_strength").copied().unwrap_or(0.22)==0.0));
     let count=if independent {requested_workers.clamp(1,6)} else {1};
     std::thread::scope(|scope| {
@@ -71,6 +72,7 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
                 if workers.is_empty() {
                     let t=Instant::now(); pipeline.process_frame_timed(&mut frame,number,(1.0/out_fps) as f32);
                     times.push(t.elapsed().as_secs_f64()*1000.0);
+                    if repaint {pipeline.repaint.apply(&mut frame,number,(1.0/out_fps) as f32);}
                     #[cfg(test)]
                     painted_frames.push(frame.data.clone());
                     let t=Instant::now(); encoder.as_mut().unwrap().push(&frame)?;
@@ -81,8 +83,9 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
                     // Refill this worker before encoding its previous result. The
                     // ordered drain is unchanged, but painting can overlap encoding.
                     worker.input.send(Job {frame,number,dt:(1.0/out_fps) as f32})?;
-                    if let Some(done)=done {
+                    if let Some(mut done)=done {
                         times.push(done.milliseconds);
+                        if repaint {pipeline.repaint.apply(&mut done.frame,(offset+times.len() as u64-1) as u32,(1.0/out_fps) as f32);}
                         #[cfg(test)]
                         painted_frames.push(done.frame.data.clone());
                         let t=Instant::now(); encoder.as_mut().unwrap().push(&done.frame)?;
@@ -94,7 +97,8 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
             let decode_ms=(decode_start.elapsed().as_secs_f64()*1000.0-callback_ms).max(0.0);
             for index in submitted.saturating_sub(count)..submitted {
                 if workers.is_empty() {break;}
-                let done=workers[index%count].output.recv()?; times.push(done.milliseconds);
+                let mut done=workers[index%count].output.recv()?; times.push(done.milliseconds);
+                if repaint {pipeline.repaint.apply(&mut done.frame,(offset+times.len() as u64-1) as u32,(step as f64/info.fps) as f32);}
                 #[cfg(test)]
                         painted_frames.push(done.frame.data.clone());
                         let t=Instant::now(); encoder.as_mut().unwrap().push(&done.frame)?;
@@ -132,7 +136,7 @@ mod tests {
         }
         let input=codec::encode_segment(&frames,30,0).unwrap();
         for edition in [15., 17., 18., 19., 20., 21., 22., 23., 24., 25., 26., 27., 28., 29., 30., 31., 32., 33., 34., 35., 36., 37., 38., 39., 40., 41., 42., 43., 44., 45., 46., 47., 48., 49., 50., 51., 52., 53., 54., 55., 56., 57., 58., 59., 60., 61., 62., 63., 64., 65., 66., 67., 68., 69., 70., 80.] {
-            let configured=|| {let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();p.update_params(&id,&crate::registry::ParamValues::from([("edition".into(),edition)]));p};
+            let configured=|| {let mut p=Pipeline::new();let id=p.add_effect("ink_editions").unwrap();p.update_params(&id,&crate::registry::ParamValues::from([("edition".into(),edition),("repaint".into(),if edition==53. {1.} else {0.})]));p};
             let serial=render(&input,64,1,0,700,&mut configured(),1).unwrap();
             for workers in [3,5,6] {
                 let parallel=render(&input,64,1,0,700,&mut configured(),workers).unwrap();

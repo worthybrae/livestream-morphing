@@ -187,7 +187,8 @@ impl Effect for Editions {
                 super::living_ink::blur(&self.luma,&mut self.scratch,&mut self.glow,w,h,1);
             }
             self.forms.draw(frame, &self.smooth, &self.glow, edition, seconds as f32, [hour, get("cloud",0.3).clamp(0.,1.), get("rain",0.).clamp(0.,1.)]);
-            self.warp.apply_rgb_at_phase(frame, 0.012, 8., (seconds / 8.) as f32 * std::f32::consts::TAU);
+            if get("repaint",0.) >= 0.5 && edition == 53 { return; }
+            if edition == 53 { self.warp.apply_rgb_anchored(frame, 0.012, 8., (seconds / 8.) as f32 * std::f32::consts::TAU); } else { self.warp.apply_rgb_at_phase(frame, 0.012, 8., (seconds / 8.) as f32 * std::f32::consts::TAU); }
             return;
         }
         let mut ink_params: ParamValues =

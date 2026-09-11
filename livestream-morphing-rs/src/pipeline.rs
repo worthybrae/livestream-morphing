@@ -31,6 +31,7 @@ pub struct Pipeline {
     slots: Vec<PipelineSlot>,
     dimensions: Option<(u32, u32)>,
     pub(crate) source_end: Option<f64>,
+    pub(crate) repaint: crate::repaint::Repaint,
 }
 
 impl Pipeline {
@@ -40,6 +41,7 @@ impl Pipeline {
             slots: Vec::new(),
             dimensions: None,
             source_end: None,
+            repaint: Default::default(),
         }
     }
 
@@ -159,6 +161,7 @@ impl Pipeline {
 
     pub fn reset(&mut self) {
         self.source_end = None;
+        self.repaint = Default::default();
         if let Some((w,h)) = self.dimensions {
             for slot in &mut self.slots { slot.effect.init(w,h); }
         }
@@ -243,6 +246,9 @@ fn startup_pipeline(style: &str) -> Pipeline {
         p.update_params(&slot,&ParamValues::from([
             ("edition".into(),if style=="fine_knife_nyc" {live_paint_edition(std::env::var("LIVE_PAINT_EDITION").ok().as_deref())} else if style=="fine_knife_london" {53.} else {46.}),("detail".into(),1.),("pigment".into(),1.)
         ]));
+        if style=="fine_knife_london" && std::env::var("LIVE_REPAINT").as_deref()==Ok("true") {
+            p.update_params(&slot,&ParamValues::from([("repaint".into(),1.)]));
+        }
     } else {
         let slot=p.add_effect("living_ink").expect("living ink registered");
         let preset:ParamValues=serde_json::from_str(include_str!("living_ink_preset.json")).expect("valid built-in ink preset");

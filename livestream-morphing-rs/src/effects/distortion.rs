@@ -38,6 +38,13 @@ impl Distortion {
     }
     /// Identical signature coordinates and bilinear weights, with independent pigments.
     pub fn apply_rgb_at_phase(&mut self, frame: &mut RawFrame, amplitude: f32, frequency: f32, phase: f32) {
+        self.apply_rgb(frame, amplitude, frequency, phase, false);
+    }
+    /// Preserve the interior wave while smoothly anchoring the image boundary.
+    pub fn apply_rgb_anchored(&mut self, frame: &mut RawFrame, amplitude: f32, frequency: f32, phase: f32) {
+        self.apply_rgb(frame, amplitude, frequency, phase, true);
+    }
+    fn apply_rgb(&mut self, frame: &mut RawFrame, amplitude: f32, frequency: f32, phase: f32, anchored: bool) {
         if amplitude == 0.0 || frame.width == 0 || frame.height == 0 { return; }
         let w=frame.width as usize; let h=frame.height as usize;
         if self.scratch.as_ref().map(|s|(s.width,s.height)) != Some((frame.width,frame.height)) {
@@ -45,12 +52,12 @@ impl Distortion {
         }
         let dst=&mut self.scratch.as_mut().unwrap().data;
         let columns: Vec<_>=(0..w).map(|x| {
-            let sx=(x as f32+(phase+x as f32*frequency/w as f32).sin()*w as f32*amplitude).clamp(0.0,(w-1) as f32);
+            let sx=(x as f32+(phase+x as f32*frequency/w as f32).sin()*w as f32*amplitude*edge_weight(x,w,amplitude,anchored)).clamp(0.0,(w-1) as f32);
             let x0=sx as usize;
             (x0*3,(x0+1).min(w-1)*3,sx.fract())
         }).collect();
         for (y,row) in dst.chunks_exact_mut(w*3).enumerate() {
-            let sy=(y as f32+(phase+y as f32*frequency/h as f32).sin()*h as f32*amplitude).clamp(0.0,(h-1) as f32);
+            let sy=(y as f32+(phase+y as f32*frequency/h as f32).sin()*h as f32*amplitude*edge_weight(y,h,amplitude,anchored)).clamp(0.0,(h-1) as f32);
             let y0=sy as usize; let fy=sy.fract();
             let a=&frame.data[y0*w*3..][..w*3];
             let b=&frame.data[(y0+1).min(h-1)*w*3..][..w*3];
@@ -75,6 +82,13 @@ impl Distortion {
         }
         std::mem::swap(&mut frame.data,dst);
     }
+}
+
+fn edge_weight(at: usize, extent: usize, amplitude: f32, anchored: bool) -> f32 {
+    if !anchored { return 1.; }
+    let distance = at.min(extent - 1 - at) as f32;
+    let t = (distance / (extent as f32 * amplitude.abs() * 3.).max(1.)).min(1.);
+    t * t * (3. - 2. * t)
 }
 
 impl Effect for Distortion {
@@ -156,6 +170,18 @@ mod tests {
     use super::*;
     use crate::registry::default_params;
 
+    #[test]
+    fn anchored_wave_stays_inside_without_repeated_boundary_pixels() {
+        for extent in [2,31,1080,1920] {
+            for at in 0..extent {
+                let reach=extent as f32*0.012*edge_weight(at,extent,0.012,true);
+                assert!(at as f32-reach >= -0.0001);
+                assert!(at as f32+reach <= (extent-1) as f32+0.0001);
+            }
+            assert_eq!(edge_weight(0,extent,0.012,true),0.);
+        }
+        assert_eq!(edge_weight(960,1920,0.012,true),1.);
+    }
     #[test]
     fn packed_rgb_warp_preserves_every_scalar_pixel() {
         for (w,h) in [(31,19),(64,36),(320,180)] {

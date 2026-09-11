@@ -3,6 +3,7 @@ mod offline;
 mod studio;
 mod codec;
 mod renderer;
+mod repaint;
 mod effects;
 mod hls;
 mod pipeline;
