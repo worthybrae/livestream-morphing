@@ -8,23 +8,32 @@ struct Worker { child:Child,socket:UnixStream,width:u32,height:u32 }
 impl Drop for Worker {
     fn drop(&mut self) {let _=self.child.kill();let _=self.child.wait();}
 }
-pub struct LoadedPaint { worker:Option<Worker>,pub hour:f64,pub stride:usize,min_stride:usize,quiet_segments:u8,held:Option<RawFrame>,pub output_frames:u64 }
+pub struct LoadedPaint { worker:Option<Worker>,pub hour:f64,pub stride:usize,min_stride:usize,quiet_segments:u8,recent_costs:std::collections::VecDeque<(f64,f64)>,held:Option<RawFrame>,pub output_frames:u64 }
 impl LoadedPaint {
     pub fn new()->Self {
         let stride=std::env::var("LOADED_PAINT_STRIDE").ok().and_then(|v|v.parse().ok()).unwrap_or(3).clamp(2,12);
-        Self {worker:None,hour:15.,stride,min_stride:stride,quiet_segments:0,held:None,output_frames:0}
+        Self {worker:None,hour:15.,stride,min_stride:stride,quiet_segments:0,recent_costs:std::collections::VecDeque::new(),held:None,output_frames:0}
     }
-    pub fn reset(&mut self) {self.worker=None;self.held=None;self.output_frames=0;self.quiet_segments=0;}
+    pub fn reset(&mut self) {self.worker=None;self.held=None;self.output_frames=0;self.quiet_segments=0;self.recent_costs.clear();}
     pub fn adapt(&mut self,seconds:f64,duration:f64) {
         if !seconds.is_finite() || !duration.is_finite() || seconds<=0. || duration<=0. {return;}
         // Keep the texture/resolution and display clock fixed. Only the next
         // segment's paint sampling may relax when compute approaches playback.
-        // Slow recovery avoids changing cadence on every passing car.
-        if seconds>duration*0.90 {
+        // The rolling playback buffer absorbs isolated scheduling/traffic
+        // spikes. Measure sustained pressure across up to five segments, but
+        // still react immediately when a segment takes 25% too long.
+        self.recent_costs.push_back((seconds,duration));
+        if self.recent_costs.len()>5 {self.recent_costs.pop_front();}
+        let (cost,playback)=self.recent_costs.iter().fold((0.,0.),|(a,b),(c,d)|(a+c,b+d));
+        if seconds>duration*1.25 || (self.recent_costs.len()>=3 && cost>playback*0.90) {
             self.stride=(self.stride+1).min(12);self.quiet_segments=0;
+            self.recent_costs.clear();
         } else if seconds<duration*0.75 {
             self.quiet_segments+=1;
-            if self.quiet_segments>=6 {self.stride=self.stride.saturating_sub(1).max(self.min_stride);self.quiet_segments=0;}
+            if self.quiet_segments>=6 {
+                self.stride=self.stride.saturating_sub(1).max(self.min_stride);self.quiet_segments=0;
+                self.recent_costs.clear();
+            }
         } else {self.quiet_segments=0;}
     }
     fn connect(mut command:Command,width:u32,height:u32,timeout:Duration)->Result<Worker,Error> {
@@ -130,9 +139,28 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn isolated_processing_spike_does_not_lower_sustainable_paint_rate() {
+        let mut paint=LoadedPaint::new();paint.min_stride=3;paint.stride=3;
+        for seconds in [4.5,4.5,4.5,6.2,4.8,4.8,4.8,4.8,4.8] {
+            paint.adapt(seconds,6.);
+            assert_eq!(paint.stride,3);
+        }
+    }
+    #[test] fn sustained_pressure_and_severe_stalls_still_reduce_paint_rate() {
+        let mut paint=LoadedPaint::new();paint.min_stride=3;paint.stride=3;
+        paint.adapt(5.8,6.);paint.adapt(5.8,6.);
+        assert_eq!(paint.stride,3);
+        paint.adapt(5.8,6.);assert_eq!(paint.stride,4);
+        paint.adapt(8.,6.);assert_eq!(paint.stride,5);
+        for _ in 0..6 {paint.adapt(3.,6.);}
+        assert_eq!(paint.stride,4);
+        paint.reset();
+        assert_eq!(paint.stride,4);
+        paint.adapt(5.8,6.);assert_eq!(paint.stride,4);
+    }
     #[test] fn cadence_leaves_headroom_and_recovers_slowly_within_bounds() {
         let mut paint=LoadedPaint::new();paint.min_stride=8;paint.stride=8;
-        paint.adapt(6.,6.);assert_eq!(paint.stride,9);
+        paint.adapt(8.,6.);assert_eq!(paint.stride,9);
         for _ in 0..20 {paint.adapt(8.,6.);}
         assert_eq!(paint.stride,12);
         for _ in 0..5 {paint.adapt(3.,6.);}

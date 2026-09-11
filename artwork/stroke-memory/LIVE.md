@@ -17,7 +17,7 @@ startup does not repeatedly destroy and rebuild its brush cache.
 Local socket timeouts bound startup and frame
 responses; dropping the supervisor kills and reaps the worker. Brush identities
 are compacted before their float32 namespaces collide. Base and adaptive mark
-populations are bounded at 18,000 and 20,000. The live base limit prevents
+populations are bounded at 14,000 and 20,000. The live base limit prevents
 background marks accumulating far beyond the approved 24-second study. A replay
 of its 360 paint targets peaked at 13,230 base marks; all mark packets matched
 the previous 30,000 limit exactly. Fine-detail capacity is unchanged; retired
@@ -26,8 +26,12 @@ base marks free space for new deposits.
 `LOADED_PAINT_STRIDE` sets the fastest permitted paint cadence (2–12; default 3).
 Production starts at 3: up to 9.99 paint updates and 29.97 wave/output frames per
 second. Live processing may relax the stride up to 12 (2.5 paint updates/sec)
-when segment processing exceeds 90% of its playback duration. It recovers one
-step only after six segments below 75%, never exceeding the configured rate.
+when processing averages above 90% of playback duration across three to five
+recent segments. An individual segment exceeding 125% slows painting immediately.
+The rolling buffer absorbs isolated smaller spikes without a prolonged FPS drop.
+It recovers one step only after six segments below 75%, never exceeding the
+configured rate. Each cadence change clears the cost window so old measurements
+cannot trigger repeated changes at the new rate.
 The approved
 recorded study is 15 paint updates per second. No resolution, material or wave
 amplitude is reduced. Painting the next target overlaps wave/encoding of the
@@ -41,10 +45,14 @@ preceding canvas. Reported frame timings include this overlap, not CPU time.
 - Optimized 15-update source comparison at frame 90: mean RGB difference 0.086
   of 255; 99.0% of channel values unchanged. Small arithmetic differences can
   change a few near-threshold adaptive decisions.
-- 19 Python tests and 164 engine tests pass. Native raster tests cover overlapping
+- 19 Python tests and 166 engine tests pass. Native raster tests cover overlapping
   subpixel stamps, parallel boundaries and append equivalence. Engine tests cover
   an uneven segment boundary, skipped-source recovery, a cadence change without
   missing output frames, bounded load adaptation and stalled/invalid startup.
+  Cadence regressions cover isolated spikes, sustained pressure, severe stalls,
+  slow recovery and clearing the cost history while retaining the learned rate
+  through a reset. Tests run in the Debian builder with production FFmpeg;
+  the host's newer FFmpeg headers are incompatible with the pinned Rust wrapper.
 - The x86 renderer batches two RGBA pixels with AVX2, selected at runtime, with
   the scalar path retained for other CPUs. Five native tests include odd row
   lengths, transparent coverage, pigment saturation and rounding equivalence.
