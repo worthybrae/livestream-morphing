@@ -88,5 +88,59 @@
     "params": {
       "hour": 14
     }
+  },
+  {
+    "id": 75,
+    "slug": "selective-brushwork",
+    "name": "Selective brushwork",
+    "description": "Small accents follow real source features, allowing the broad paint surface to remain visible.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 76,
+    "slug": "settled-pigment",
+    "name": "Settled pigment",
+    "description": "Source-led accents and orientation-neutral bristles keep paint from flipping as edges move.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 77,
+    "slug": "loaded-pigment",
+    "name": "Loaded pigment",
+    "description": "Fuller deposits carry two nearby source pigments, with stronger light across the bristles.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 78,
+    "slug": "quiet-hand",
+    "name": "Quiet hand",
+    "description": "The calmer underpainting, with selective small forms and stable bristle lighting.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 79,
+    "slug": "quiet-loaded-paint",
+    "name": "Quiet loaded paint",
+    "description": "Stable source-led detail over fuller, softly lit pigment deposits.",
+    "params": {
+      "hour": 14
+    }
+  },
+  {
+    "id": 80,
+    "slug": "form-led-oil",
+    "name": "Form-led oil",
+    "description": "Large loaded brushes stop at each form in both directions; compact accents retain the people.",
+    "params": {
+      "hour": 14
+    }
   }
 ]

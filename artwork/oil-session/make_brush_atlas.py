@@ -52,3 +52,16 @@ for texture in textures:
 contact=np.concatenate([np.concatenate(previews[i:i+3],axis=1) for i in range(0,N,3)],axis=0)
 cv2.imwrite('/tmp/oil-brush-atlas.png',cv2.cvtColor(cv2.resize(contact,None,fx=3,fy=3,interpolation=cv2.INTER_NEAREST),cv2.COLOR_RGB2BGR))
 print('Wrote',sum(map(len,packed)),'atlas bytes including mip levels')
+
+# Orientation-neutral deposits keep their material when an unoriented edge
+# reverses its tangent. Coverage/load are even; surface derivatives are odd.
+neutral=[]
+for raw in packed:
+ tex=np.frombuffer(raw,dtype=np.uint8).reshape(-1,4)
+ # Recover this mip level's dimensions from its byte count.
+ level=next(k for k in range(5) if (W>>k)*(H>>k)*4==len(raw))
+ tex=tex.reshape(H>>level,W>>level,4);reverse=tex[::-1,::-1]
+ result=((tex.astype(np.uint16)+reverse.astype(np.uint16))//2).astype(np.uint8)
+ result[:,:,1:3]=(127+np.trunc((tex[:,:,1:3].astype(np.float32)-reverse[:,:,1:3].astype(np.float32))/2)).astype(np.uint8)
+ neutral.append(result.tobytes())
+(root/'livestream-morphing-rs/assets/oil_brushes_neutral.rgba').write_bytes(b''.join(neutral))

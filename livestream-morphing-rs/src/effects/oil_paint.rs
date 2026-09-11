@@ -10,7 +10,7 @@ struct Site { x: usize, y: usize, seed: f32, variety: f32 }
 #[derive(Default)]
 pub(super) struct OilPaint {
     size: (usize, usize),
-    sites: [Vec<Site>; 4],
+    sites: [Vec<Site>; 6],
     accents: Vec<Stroke>,
     frames: usize,
     source: Vec<u8>,
@@ -36,7 +36,7 @@ impl OilPaint {
         if self.size==(w,h) {return;}
         self.size=(w,h); self.source.resize(w*h*3,0); self.paint.resize(w*h,0); self.underpaint.resize(w.div_ceil(2)*h.div_ceil(2),0);
         let scale=w as f32/1920.;
-        for (coat,spacing) in [29.,13.,5.,8.].into_iter().enumerate() {
+        for (coat,spacing) in [29.,13.,5.,8.,52.,22.].into_iter().enumerate() {
             let step=(spacing*scale).max(2.) as usize;
             let sites=&mut self.sites[coat];sites.clear();
             for y in (0..h).step_by(step) { for x in (0..w).step_by(step) {
@@ -52,6 +52,8 @@ impl OilPaint {
         let (w,h)=(frame.width as usize,frame.height as usize);
         self.prepare(w,h);
         let scale=w as f32/1920.;
+        let passages=(7..=11).contains(&variant);
+        let form_scale=variant>=14;
         let night=knife_night_strength(environment[0]);
         let grade=[1.4-night*1.18,1.04-night*0.42,0.75-night*0.68];
         let tint=knife_day_tint(environment);let highlights=knife_highlight_table(night);
@@ -63,7 +65,7 @@ impl OilPaint {
         // A coarse pigment ground replaces photographic gaps between strokes.
         // Each tile loads color from its own center, preserving local color
         // rather than averaging across high-contrast boundaries.
-        let tile=((if variant>=7 {14.} else {6.})*scale).max(2.) as usize;
+        let tile=((if passages || form_scale {14.} else {6.})*scale).max(2.) as usize;
         for y in (0..h).step_by(tile) { for x in (0..w).step_by(tile) {
             let c=sample_color(&self.source,w,h,(x+tile/2).min(w-1),(y+tile/2).min(h-1),tile/3);
             for yy in y..(y+tile).min(h) {for xx in x..(x+tile).min(w) {
@@ -84,40 +86,46 @@ impl OilPaint {
             if coat==2 && variant>=6 {
                 self.accents.clear();
                 for &site in &self.sites[3] {
-                    plan_accents(&self.source,&self.paint,w,h,site,scale,variant,&mut self.accents);
+                    if variant>=9 {plan_form_accents(&self.source,&self.paint,w,h,site,scale,variant,&mut self.accents);}
+                    else {plan_accents(&self.source,&self.paint,w,h,site,scale,variant,&mut self.accents);}
                 }
                 for stroke in &self.accents {stroke.draw(&mut self.paint,w,h);}
                 if profile {eprintln!("OIL accents={} ms={:.2}",self.accents.len(),started.elapsed().as_secs_f64()*1000.);}
                 continue;
             }
-            let spacing=[29.,13.,5.,2.8][coat]*scale;
-            for &site in &self.sites[coat] {
+            let spacing=if form_scale {[52.,22.,5.][coat]*scale} else {[29.,13.,5.][coat]*scale};
+            let site_index=if form_scale && coat<2 {coat+4} else {coat};
+            for &site in &self.sites[site_index] {
                 let (x,y)=(site.x,site.y);
                 let radius=if coat<2 {(spacing*0.16).max(1.) as usize} else {0};
                 let color=sample_color(&self.source,w,h,x,y,radius);
                 let old=unpack(if layered && coat<2 {self.underpaint[(y/2)*lw+x/2]} else {self.paint[y*w+x]});
                 let err=difference(color,old);
-                let alpha=if variant>=7 && coat==0 {0.94} else if variant>=7 && coat==1 {
+                let alpha=if form_scale && coat==0 {0.88} else if passages && coat==0 {0.94} else if passages && coat==1 {
                     smooth((err-0.05)/0.13)
                 } else {smooth((err-[0.012,0.028,0.035][coat])/[0.07,0.10,0.13][coat])};
                 if alpha<0.025 {continue;}
                 let d=(spacing*0.30).max(1.) as usize;
-                let (dx,dy)=if variant>=7 {passage_gradient(luma,w,h,x,y,d)} else {gradient(luma,w,h,x,y,d)};
+                let (dx,dy)=if passages {passage_gradient(luma,w,h,x,y,d)} else {gradient(luma,w,h,x,y,d)};
                 let energy=(dx*dx+dy*dy).sqrt();
                 // A regularized tensor aligns confident edges but allows a
                 // restrained, stable hand direction in featureless passages.
                 let base=(site.seed-0.5)*1.9;
                 let (sn,cs)=base.sin_cos();
                 let a=-dy*cs+dx*sn;let b=dy*sn+dx*cs;
-                let angle=if variant>=7 {passage_direction(dx,dy,base)} else {base+0.95*(2.*a*b)/(a*a+b*b+0.004)};
+                let angle=if passages {passage_direction(dx,dy,base)} else {base+0.95*(2.*a*b)/(a*a+b*b+0.004)};
                 let (mut sn,mut cs)=angle.sin_cos();
                 let brush_scale=if coat==2 {0.76} else if coat==1 {0.87} else {1.};
                 let mut length=spacing*(1.1+site.variety*1.25)*brush_scale;
                 let mut width=spacing*(0.33+site.seed*0.30)*brush_scale;
                 if variant==1 {length*=1.45;width*=1.15;}
                 if variant==2 {length*=1.05;width*=1.35;}
-                if variant>=7 && coat==0 {length*=1.18;width*=1.14;}
+                if passages && coat==0 {length*=1.18;width*=1.14;}
                 if variant==8 && coat==1 {width*=1.22;}
+                if variant>=10 && passages {
+                    let confidence=passage_confidence(dx,dy,base);let round=(length*width).sqrt();
+                    length=round+(length-round)*confidence;width=round+(width-round)*confidence;
+                }
                 if coat>=2 {
                     // Compact islands (heads, lights, color accents) become
                     // short dabs. Confident line segments get a fine brush.
@@ -138,6 +146,15 @@ impl OilPaint {
                 }
                 // Measure how far this pigment can travel before crossing into
                 // another form. A narrow head cannot become a 30px streak.
+                let (cx,cy)=if form_scale {
+                    let neg=paint_extent(&self.source,w,h,x,y,-cs,-sn,length,color,scale);
+                    let pos=paint_extent(&self.source,w,h,x,y,cs,sn,length,color,scale);
+                    let left=paint_extent(&self.source,w,h,x,y,sn,-cs,width,color,scale);
+                    let right=paint_extent(&self.source,w,h,x,y,-sn,cs,width,color,scale);
+                    let shift=(pos-neg)*0.5;let cross=(right-left)*0.5;
+                    length=(neg+pos)*0.5;width=(left+right)*0.5;
+                    (x as f32+cs*shift-sn*cross,y as f32+sn*shift+cs*cross)
+                } else {
                 let mut negative=length;let mut positive=length;
                 for sign in [-1.,1.] {
                     let mut support=0.;
@@ -154,9 +171,21 @@ impl OilPaint {
                 }
                 let shift=(positive-negative)*0.5;
                 length=(positive+negative)*0.5;
-                let cx=x as f32+cs*shift;let cy=y as f32+sn*shift;
+                (x as f32+cs*shift,y as f32+sn*shift)
+                };
                 let bend=(site.variety-0.5)*0.30;
-                let stroke=Stroke {cx,cy,cs,sn,length:length.max(0.8),width:width.max(0.65),
+                let drag=if variant==11 || variant==13 || variant==14 {
+                    let mut loaded=color;
+                    for sign in [-1.,1.] {
+                        let px=(cx+cs*length*0.45*sign).clamp(0.,(w-1) as f32) as usize;
+                        let py=(cy+sn*length*0.45*sign).clamp(0.,(h-1) as f32) as usize;
+                        let neighbor=sample_color(&self.source,w,h,px,py,1);
+                        let mix=0.275*(1.-smooth((difference(color,neighbor)-0.035)/0.15));
+                        for k in 0..3 {loaded[k]+=(neighbor[k]-color[k])*mix;}
+                    }
+                    loaded
+                } else {color};
+                let stroke=Stroke {cx,cy,cs,sn,length:length.max(0.8),width:width.max(0.65),drag,
                     seed:site.seed,bend,opacity:alpha,color,variant,coat};
                 if layered && coat<2 {
                     let mut small=stroke;
@@ -200,7 +229,7 @@ impl PigmentGroup {
         let length=(major.sqrt()*1.5+0.75*scale).clamp(0.8,5.8*scale.max(0.2));
         let width=(minor.sqrt()*0.85+0.7*scale).clamp(0.65,2.8*scale.max(0.25));
         Some(Stroke {cx:site.x as f32+x,cy:site.y as f32+y,cs,sn,length,width,
-            seed:site.seed,bend:(site.variety-0.5)*0.12,opacity,color:self.color.map(|v|v*inv),variant:6,coat:2})
+            seed:site.seed,bend:(site.variety-0.5)*0.12,opacity,color:self.color.map(|v|v*inv),drag:self.color.map(|v|v*inv),variant:6,coat:2})
     }
 }
 fn plan_accents(source:&[u8],paint:&[u32],w:usize,h:usize,site:Site,scale:f32,variant:u32,out:&mut Vec<Stroke>) {
@@ -221,6 +250,28 @@ fn plan_accents(source:&[u8],paint:&[u32],w:usize,h:usize,site:Site,scale:f32,va
         if variant==8 {stroke.opacity*=0.84;}
         if stroke.opacity>=0.025 {out.push(stroke);}
     }}
+}
+
+fn plan_form_accents(source:&[u8],paint:&[u32],w:usize,h:usize,site:Site,scale:f32,variant:u32,out:&mut Vec<Stroke>) {
+    let d=(2.8*scale).max(1.) as isize;
+    let samples:[(usize,usize,[f32;3]);9]=std::array::from_fn(|i| {
+        let ox=(i%3) as isize-1;let oy=(i/3) as isize-1;
+        let x=(site.x as isize+ox*d).clamp(0,(w-1) as isize) as usize;
+        let y=(site.y as isize+oy*d).clamp(0,(h-1) as isize) as usize;
+        (x,y,pixel(source,w,x,y))
+    });
+    let mean: [f32;3]=std::array::from_fn(|k|samples.iter().map(|s|s.2[k]).sum::<f32>()/9.);
+    let mut groups=[PigmentGroup::default(),PigmentGroup::default()];
+    for (x,y,color) in samples {
+        // The source supplies the feature evidence. Texture in the painting
+        // alone cannot request a correction and erase the broad brushwork.
+        let feature=smooth((difference(color,mean)-0.015)/0.075);
+        if feature<0.01 {continue;}
+        let old=unpack(paint[y*w+x]);let error=difference(color,old)*feature;
+        let signed=(color[0]-mean[0])*0.3+(color[1]-mean[1])*0.5+(color[2]-mean[2])*0.2;
+        groups[usize::from(signed>=0.)].add(x as f32-site.x as f32,y as f32-site.y as f32,color,error);
+    }
+    for group in groups {if let Some(mut stroke)=group.stroke(site,scale) {stroke.variant=variant;out.push(stroke);}}
 }
 
 #[inline] fn pack(c:[f32;3])->u32 {(c[0] as u8 as u32)|((c[1] as u8 as u32)<<8)|((c[2] as u8 as u32)<<16)}
@@ -244,12 +295,32 @@ fn expand_underpainting(low:&[u32],paint:&mut[u32],w:usize,h:usize) {
     }
 }
 
+fn paint_extent(source:&[u8],w:usize,h:usize,x:usize,y:usize,dx:f32,dy:f32,limit:f32,color:[f32;3],scale:f32)->f32 {
+    let mut survival=1.;let mut extent=0.;let mut previous=0.;
+    let mut distance=(1.5*scale).max(0.8).min(limit);
+    for _ in 0..9 {
+        let px=(x as f32+dx*distance).clamp(0.,(w-1) as f32) as usize;
+        let py=(y as f32+dy*distance).clamp(0.,(h-1) as f32) as usize;
+        survival*=1.-smooth((difference(color,pixel(source,w,px,py))-0.045)/0.13);
+        extent+=(distance-previous)*survival;
+        if distance>=limit || survival<0.01 {break;}
+        previous=distance;distance=(distance*2.).min(limit);
+    }
+    extent.max(0.65).min(limit)
+}
+
 fn passage_direction(dx:f32,dy:f32,base:f32)->f32 {
     let (sin,cos)=(2.*base).sin_cos();
     // Blend unoriented tangent tensors, not signed gradient angles. Strong
     // vertical and horizontal edges can both reach their true direction.
     0.5*(-2.*dx*dy+sin*0.003).atan2(dy*dy-dx*dx+cos*0.003)
 }
+fn passage_confidence(dx:f32,dy:f32,base:f32)->f32 {
+    let (sin,cos)=(2.*base).sin_cos();
+    let x=dy*dy-dx*dx+cos*0.003;let y=-2.*dx*dy+sin*0.003;
+    smooth((x*x+y*y).sqrt()/(dx*dx+dy*dy+0.003))
+}
+
 fn passage_gradient(luma:&[f32],w:usize,h:usize,x:usize,y:usize,d:usize)->(f32,f32) {
     let r=(d/2).max(1);let mut sum=gradient(luma,w,h,x,y,d);
     for (xx,yy) in [(x.saturating_sub(r),y),((x+r).min(w-1),y),(x,y.saturating_sub(r)),(x,(y+r).min(h-1))] {
@@ -274,7 +345,7 @@ fn sample_color(src:&[u8],w:usize,h:usize,x:usize,y:usize,r:usize)->[f32;3] {
     sum.map(|v|v/total)
 }
 
-struct Stroke {cx:f32,cy:f32,cs:f32,sn:f32,length:f32,width:f32,seed:f32,bend:f32,opacity:f32,color:[f32;3],variant:u32,coat:usize}
+struct Stroke {cx:f32,cy:f32,cs:f32,sn:f32,length:f32,width:f32,seed:f32,bend:f32,opacity:f32,color:[f32;3],drag:[f32;3],variant:u32,coat:usize}
 impl Stroke {
     fn draw(&self,paint:&mut[u32],w:usize,h:usize) {
         let reach=self.width*(1.15+self.bend.abs());
@@ -314,26 +385,26 @@ impl Stroke {
         let u=(ox*self.cs+F::splat(oy*self.sn))*inverse[0];
         let v=(-ox*self.sn+F::splat(oy*self.cs))*inverse[1];
         let belly=(F::ONE-u*u).max(F::ZERO);
-        let v=v-belly*self.bend;
+        let v=if self.variant>=10 {v-u*belly*self.bend} else {v-belly*self.bend};
         if self.variant>=3 && self.coat<2 {
             self.atlas_pixels(pixels,u,v);
             return;
         }
         let tip=((u.abs()-0.65)*(1./0.35)).max(F::ZERO);
         let cap=(F::ONE-tip*tip).max(F::ZERO).sqrt();
-        let pressure=(F::splat(0.80)-u*0.12+belly*0.12)*cap;
+        let pressure=(F::splat(0.80)-(if self.variant>=10 {u.abs()} else {u})*0.12+belly*0.12)*cap;
         let edge=(v.abs()-pressure).max(u.abs()-1.);
         if edge.cmp_lt(F::splat(inverse[1])).none() {return;}
         // Filaments vary along the brush travel, not as screen-space noise.
-        let phase=v*(7.+self.seed*8.)+u*(0.22+self.seed*0.35)+self.seed*31.;
+        let phase=(if self.variant>=10 {v.abs()} else {v})*(7.+self.seed*8.)+(if self.variant>=10 {u.abs()} else {u})*(0.22+self.seed*0.35)+self.seed*31.;
         let groove=((phase-phase.floor())-0.5).abs()*2.;
-        let dry=(u+0.1).max(F::ZERO)*(F::ONE-groove)*0.22;
+        let dry=((if self.variant>=10 {u.abs()} else {u})+0.1).max(F::ZERO)*(F::ONE-groove)*0.22;
         let coverage=(F::splat(0.5)-edge*self.width).max(F::ZERO).min(F::ONE)*(F::splat(0.97)-dry)*self.opacity;
         let shoulder=(F::ONE-(v+pressure*0.60).abs()*7.).max(F::ZERO);
         let valley=(F::ONE-(v-pressure*0.76).abs()*8.).max(F::ZERO);
         let grain=(groove-0.5)*belly;
         let relief=if self.variant==2 {23.} else if self.variant>=6 {8.} else {16.};
-        let light=shoulder*relief-valley*(relief*0.72)+grain*4.+(self.seed-0.5)*5.;
+        let light=if self.variant>=10 {(F::ONE-v*v).max(F::ZERO)*3.+grain*2.+(self.seed-0.5)*3.} else {shoulder*relief-valley*(relief*0.72)+grain*4.+(self.seed-0.5)*5.};
         let mut packed=U::ZERO;
         let prior=U::new(std::array::from_fn(|n|pixels.get(n).copied().unwrap_or(0)));
         for k in 0..3 {
@@ -351,20 +422,27 @@ impl Stroke {
         if u.abs().max(v.abs()).cmp_lt(F::ONE).none() {return;}
         let level=if self.width>=24. {0} else if self.width>=12. {1} else if self.width>=6. {2} else if self.width>=3. {3} else {4};
         let brush=(self.seed*11.99) as usize;
-        let tex=sample_atlas(u,v,brush,level);
+        let tex=sample_atlas(u,v,brush,level,self.variant>=10);
         let inside=u.abs().max(v.abs()).cmp_lt(F::ONE);
-        let cover=inside.blend(tex[0]*(self.opacity*0.97/255.),F::ZERO);
+        let cover=if self.variant==11 || self.variant==13 || self.variant==14 {
+            let tip=((u.abs()-0.65)*(1./0.35)).max(F::ZERO);
+            let pressure=(F::splat(0.82)-u.abs()*0.10)*(F::ONE-tip*tip).max(F::ZERO).sqrt();
+            let body=(F::splat(0.5)+(pressure-v.abs())*self.width).max(F::ZERO).min(F::ONE);
+            inside.blend((tex[0]*(0.45/255.)+body*0.55)*(self.opacity*0.97),F::ZERO)
+        } else {inside.blend(tex[0]*(self.opacity*0.97/255.),F::ZERO)};
         let du=(tex[1]-127.)*(1./126.);let dv=(tex[2]-127.)*(1./126.);
         let gray=(self.color[0]*0.299+self.color[1]*0.587+self.color[2]*0.114)/255.;
-        let strength=(if self.variant==4 || self.variant>=7 {28.} else {19.})*(0.3+gray*0.7);
+        let strength=(if self.variant==11 || self.variant==13 || self.variant==14 {62.} else if self.variant==4 || (7..=11).contains(&self.variant) {28.} else {19.})*(0.3+gray*0.7);
         let light=(du*(self.cs*0.5+self.sn*0.7)+dv*(-self.sn*0.5+self.cs*0.7))*strength;
-        let load=F::ONE+(tex[3]*(1./255.)-0.35)*0.055;
+        let load=F::ONE+(tex[3]*(1./255.)-0.35)*(if self.variant==11 || self.variant==13 || self.variant==14 {0.13} else {0.055});
+        let pigment_mix=F::splat(0.18)+(F::ONE-u*u).max(F::ZERO)*0.64;
         let mut packed=U::ZERO;
         let prior=U::new(std::array::from_fn(|n|pixels.get(n).copied().unwrap_or(0)));
         for k in 0..3 {
             let bits=(prior>>(k as u32*8))&U::splat(255);
             let old=I::new(bits.to_array().map(|v|v as i32)).round_float();
-            let color=(old+(load*self.color[k]+light-old)*cover).max(F::ZERO).min(F::splat(255.));
+            let pigment=if self.variant==11 || self.variant==13 || self.variant==14 {F::splat(self.color[k])+pigment_mix*(self.drag[k]-self.color[k])} else {F::splat(self.color[k])};
+            let color=(old+(load*pigment+light-old)*cover).max(F::ZERO).min(F::splat(255.));
             packed=packed|(U::new(color.fast_trunc_int().to_array().map(|v|v as u32))<<(k as u32*8));
         }
         pixels.copy_from_slice(&packed.to_array()[..pixels.len()]);
@@ -375,7 +453,9 @@ impl Stroke {
 // Twelve pressure/fiber deposits, each with five filtered mip levels. This
 // compact immutable atlas is shared by every worker and adds no frame history.
 const BRUSH_ATLAS:&[u8;523776]=include_bytes!("../../assets/oil_brushes.rgba");
-fn sample_atlas(u:F,v:F,brush:usize,level:usize)->[F;4] {
+const NEUTRAL_BRUSH_ATLAS:&[u8;523776]=include_bytes!("../../assets/oil_brushes_neutral.rgba");
+fn sample_atlas(u:F,v:F,brush:usize,level:usize,neutral:bool)->[F;4] {
+    let atlas=if neutral {NEUTRAL_BRUSH_ATLAS} else {BRUSH_ATLAS};
     let width=128usize>>level;let height=64usize>>level;
     let offset=brush*43648+[0,32768,40960,43008,43520][level];
     let x=((u+1.)*((width-1) as f32*0.5)).max(F::ZERO).min(F::splat((width-1) as f32));
@@ -391,7 +471,7 @@ fn sample_atlas(u:F,v:F,brush:usize,level:usize)->[F;4] {
     // Load each complete texel once, then unpack its four material channels in
     // registers. The scalar byte sampler remains in the pixel-exact test oracle.
     let words: [U;4]=std::array::from_fn(|corner|U::new(indices.map(|p| {
-        u32::from_le_bytes(BRUSH_ATLAS[p[corner]..p[corner]+4].try_into().unwrap())
+        u32::from_le_bytes(atlas[p[corner]..p[corner]+4].try_into().unwrap())
     })));
     std::array::from_fn(|channel| {
         let values: [F;4]=words.map(|word| {
@@ -407,6 +487,37 @@ fn sample_atlas(u:F,v:F,brush:usize,level:usize)->[F;4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn broad_brush_stops_at_a_narrow_subject_in_both_axes() {
+        let mut source=RawFrame::filled(128,96,145,145,145);
+        for y in 38..59 {for x in 62..67 {source.data[(y*128+x)*3..(y*128+x)*3+3].copy_from_slice(&[30,35,40]);}}
+        let c=[30.,35.,40.];
+        let width=paint_extent(&source.data,128,96,64,48,1.,0.,25.,c,1.);
+        let length=paint_extent(&source.data,128,96,64,48,0.,1.,60.,c,1.);
+        assert!(width<=3. && length<=12. && length>width*2.,"{width} {length}");
+        let open=paint_extent(&source.data,128,96,15,15,1.,0.,30.,[145.,145.,145.],1.);
+        assert_eq!(open,30.);
+    }
+    #[test] fn neutral_paint_is_invariant_to_tangent_reversal() {
+        for coat in [0,2] {for angle in [-1.55_f32,-0.7,0.,0.9,1.55] {
+            let (sn,cs)=angle.sin_cos();let mut stroke=Stroke{cx:40.3,cy:30.7,cs,sn,length:20.,width:5.,seed:0.37,bend:0.13,opacity:0.9,color:[130.,75.,45.],drag:[130.,75.,45.],variant:10,coat};
+            let mut a=vec![pack([70.,90.,110.]);80*60];let mut b=a.clone();
+            stroke.draw(&mut a,80,60);stroke.cs=-cs;stroke.sn=-sn;stroke.draw(&mut b,80,60);
+            let max=a.iter().zip(b).flat_map(|(&a,b)|unpack(a).into_iter().zip(unpack(b)).map(|(x,y)|(x-y).abs())).fold(0_f32,f32::max);
+            assert!(max<=1.,"coat={coat} angle={angle} max={max}");
+        }}
+        assert!(passage_confidence(0.003_f32.sqrt(),0.,0.)<0.001);
+    }
+    #[test] fn paint_texture_alone_does_not_create_finishing_marks() {
+        let source=RawFrame::filled(32,32,120,120,120);
+        let paint:Vec<_>=(0..1024).map(|i|if i%2==0 {pack([75.,75.,75.])} else {pack([155.,155.,155.])}).collect();
+        let mut strokes=Vec::new();
+        plan_form_accents(&source.data,&paint,32,32,Site{x:16,y:16,seed:0.4,variety:0.6},1.,9,&mut strokes);
+        assert!(strokes.is_empty());
+        let mut source=source;
+        for y in 12..21 {source.data[(y*32+16)*3..(y*32+16)*3+3].copy_from_slice(&[20,25,30]);}
+        plan_form_accents(&source.data,&paint,32,32,Site{x:16,y:16,seed:0.4,variety:0.6},1.,9,&mut strokes);
+        assert!(!strokes.is_empty());assert!(strokes.iter().any(|s|s.color[0]<40.));
+    }
     #[test] fn passage_orientation_follows_both_edge_axes_without_polarity_flips() {
         let vertical=passage_direction(0.5,0.,0.2);
         let horizontal=passage_direction(0.,0.5,0.2);
@@ -456,7 +567,7 @@ mod tests {
         for angle in [-1.55_f32,-0.8,-0.05,0.,0.3,0.9,1.55] {
             for (length,width) in [(7.,1.),(23.,4.),(58.,17.)] {
                 let (sn,cs)=angle.sin_cos();
-                let stroke=Stroke {cx:43.3,cy:33.7,cs,sn,length,width,seed:0.73,bend:0.14,opacity:0.8,color:[160.,70.,110.],variant:0,coat:0};
+                let stroke=Stroke {cx:43.3,cy:33.7,cs,sn,length,width,seed:0.73,bend:0.14,opacity:0.8,color:[160.,70.,110.],drag:[160.,70.,110.],variant:0,coat:0};
                 let mut clipped=vec![pack([50.,60.,70.]);96*72];let mut brute=clipped.clone();
                 stroke.draw(&mut clipped,96,72);
                 let reach=width*(1.15+stroke.bend.abs());
@@ -480,7 +591,7 @@ mod tests {
         for (w,h) in [(1,1),(2,3),(64,36)] {
             let mut f=RawFrame::filled(w,h,90,100,110);let luma=vec![0.4;(w*h) as usize];
             let mut painter=OilPaint::default();
-            for variant in 0..=8 {painter.draw(&mut f,&luma,[14.,0.3,0.],variant);assert_eq!(f.data.len(),(w*h*3) as usize);}
+            for variant in 0..=14 {painter.draw(&mut f,&luma,[14.,0.3,0.],variant);assert_eq!(f.data.len(),(w*h*3) as usize);}
         }
     }
     #[test] fn small_figures_remain_separate_from_quiet_ground() {
@@ -492,7 +603,7 @@ mod tests {
             }}
         }
         let luma:Vec<_>=source.data.chunks_exact(3).map(|p|(p[0] as f32*0.299+p[1] as f32*0.587+p[2] as f32*0.114)/255.).collect();
-        for variant in 0..=8 {
+        for variant in 0..=14 {
             let mut f=source.clone();OilPaint::default().draw(&mut f,&luma,[14.,0.3,0.],variant);
             let gray=|x:usize,y:usize| {let p=pixel(&f.data,w as usize,x,y);(p[0]+p[1]+p[2])/3.};
             let ground=(110..160).flat_map(|y|(350..400).map(move|x|(x,y))).map(|(x,y)|gray(x,y)).sum::<f32>()/2500.;

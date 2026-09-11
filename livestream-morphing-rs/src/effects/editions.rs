@@ -119,7 +119,7 @@ impl Effect for Editions {
     }
     fn params(&self) -> Vec<ParamDef> {
         vec![
-            ParamDef::new("edition", "Edition", 0., 74., 0., 1.),
+            ParamDef::new("edition", "Edition", 0., 80., 0., 1.),
             ParamDef::new("hour", "Local hour", 0., 24., 14., 0.25),
             ParamDef::new("cloud", "Cloud cover", 0., 1., 0.3, 0.05),
             ParamDef::new("rain", "Wet atmosphere", 0., 1., 0., 0.05),
@@ -153,7 +153,7 @@ impl Effect for Editions {
                 .filter(|x| x.is_finite())
                 .unwrap_or(default)
         };
-        let edition = get("edition", 0.).round().clamp(0., 74.) as u32;
+        let edition = get("edition", 0.).round().clamp(0., 80.) as u32;
         let detail = get("detail", 1.).clamp(0.5, 2.);
         let pigment = get("pigment", 1.).clamp(0.5, 1.5);
         for (i, p) in frame.data.chunks_exact(3).enumerate() {
@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn every_material_is_distinct_deterministic_and_keeps_moving() {
         let mut results = std::collections::HashSet::new();
-        for edition in 0..=74 {
+        for edition in 0..=80 {
             let params = ParamValues::from([("edition".into(), edition as f32), ("hour".into(), 0.)]);
             let mut a = image();
             let mut b = image();

@@ -29,3 +29,11 @@ The pigment buffer now uses packed RGB words, with exact-image comparison agains
 A one-worker, 30-frame comparison on the production host, while the existing stream was running, measured median effects times of 146.4 ms (65), 166.7 ms (66), 175.1 ms (71), and 137.1 ms (72). These are relative diagnostics, not real-time throughput. Edition 72 was promoted with six render workers; initial full production segments took 3.9–4.0 seconds for six seconds of 1080p30 source.
 
 Later candidates 73/74 make the coarse coat more opaque and blend unoriented gradient tensors so both horizontal and vertical architecture can guide the brush. A sparse spatial average stabilizes these directions without adding a full-frame coarse blur. These candidates must still be judged against the live 72 baseline before promotion.
+
+## Motion and form boundaries
+
+The opaque passage studies had more motion-compensated change than the initial grouped-brush version, so they were not promoted. The diagnostic is imperfect: it favors photographic reconstruction and is not a direct score for paint quality.
+
+The later studies separate source feature evidence from painting error, preventing the fine layer from correcting away the artist's own brush texture. Orientation-neutral bristle deposits are centrosymmetric in coverage and antisymmetric in surface derivatives; a regression test verifies that reversing a tangent changes at most one RGB level. Ambiguous direction tensors shorten the brush toward a compact dab.
+
+Edition 80 explores 52px/22px placement grids and a full-resolution finishing grid. A bounded geometric progression measures color support along both axes of each brush. It stops on the first boundary rather than skipping across a narrow subject and resuming in another similarly colored region. A dedicated test preserves a narrow vertical subject while allowing the full brush length on open ground. Nearby source pigments can mix within the loaded bristles; night grading and the signature warp remain unchanged.

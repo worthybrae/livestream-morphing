@@ -234,7 +234,7 @@ pub struct AppState {
 // A deployment setting keeps the selected artwork across restarts, while an
 // unset value retains the original line drawing for other environments.
 fn live_paint_edition(value: Option<&str>) -> f32 {
-    value.and_then(|v|v.parse::<u32>().ok()).filter(|v|(65..=74).contains(v)).unwrap_or(65) as f32
+    value.and_then(|v|v.parse::<u32>().ok()).filter(|v|(65..=80).contains(v)).unwrap_or(65) as f32
 }
 fn startup_pipeline(style: &str) -> Pipeline {
     let mut p=Pipeline::new();
@@ -376,7 +376,7 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
         // Snapshot city time once per segment; worker pipelines share this grade.
         let local = chrono::Utc::now().with_timezone(&chrono_tz::America::New_York);
         use chrono::Timelike;
-        for slot in pipeline.slots.iter_mut().filter(|s| s.effect_id == "ink_editions" && s.params.get("edition").map(|v|(65.0..=74.0).contains(v)).unwrap_or(false)) {
+        for slot in pipeline.slots.iter_mut().filter(|s| s.effect_id == "ink_editions" && s.params.get("edition").map(|v|(65.0..=80.0).contains(v)).unwrap_or(false)) {
             slot.params.insert("hour".into(), local.hour() as f32 + local.minute() as f32/60. + local.second() as f32/3600.);
         }
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
@@ -615,8 +615,8 @@ mod tests {
     #[test]
     fn live_paint_selection_is_bounded_and_defaults_to_known_release() {
         assert_eq!(live_paint_edition(None),65.);
-        for value in ["", "0", "64", "75", "NaN", "66.5"] {assert_eq!(live_paint_edition(Some(value)),65.);}
-        for value in 65..=74 {assert_eq!(live_paint_edition(Some(&value.to_string())),value as f32);}
+        for value in ["", "0", "64", "81", "NaN", "66.5"] {assert_eq!(live_paint_edition(Some(value)),65.);}
+        for value in 65..=80 {assert_eq!(live_paint_edition(Some(&value.to_string())),value as f32);}
     }
     #[test]
     fn new_york_startup_selects_refined_paint() {
