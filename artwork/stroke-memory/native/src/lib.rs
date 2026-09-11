@@ -211,6 +211,18 @@ pub unsafe extern "C" fn paint_grade(src:*const u8,dst:*mut u8,count:usize,night
     let input=std::slice::from_raw_parts(src,count*3);
     let output=std::slice::from_raw_parts_mut(dst,count*3);
     let color=std::slice::from_raw_parts(tint,3);
+    // The full-resolution target is independent per pixel. Split only large
+    // targets so the small analysis image doesn't pay thread startup overhead.
+    if count>=1_000_000 {
+        let size=count.div_ceil(2)*3;
+        std::thread::scope(|scope| {
+            for (source,dest) in input.chunks(size).zip(output.chunks_mut(size)) {
+                scope.spawn(move||grade_pixels(source,dest,night,color));
+            }
+        });
+    } else {grade_pixels(input,output,night,color);}
+}
+fn grade_pixels(input:&[u8],output:&mut [u8],night:f64,color:&[f64]) {
     let saturation=(1.4-night*0.98) as f32;
     let brightness=(1.04-night*0.42) as f32;
     let strength=0.75-night*0.68;

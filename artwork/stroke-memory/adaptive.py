@@ -53,17 +53,22 @@ class AdaptiveBrushwork:
         self.proposed_by_scale=[0,0,0]
         self.checks=[]
         self.accept_filter=None
+        self.buffers={}
+        self.references={}
+        self.valid_references=set()
 
     def begin(self,graded_source,forward,backward):
         self.first=self.previous is None
-        self.references={}
-        self.source=cv2.GaussianBlur(graded_source.astype(np.float32),(0,0),max(.35,.65*self.scale))
-        gray=cv2.cvtColor(graded_source,cv2.COLOR_RGB2GRAY)
+        self.valid_references.clear()
+        pixels=self.buffer('source_input',graded_source.shape)
+        np.copyto(pixels,graded_source,casting='unsafe')
+        self.source=cv2.GaussianBlur(pixels,(0,0),max(.35,.65*self.scale),dst=self.buffer('source',pixels.shape))
+        gray=cv2.cvtColor(graded_source,cv2.COLOR_RGB2GRAY,dst=self.buffer('gray',(self.h,self.w),np.uint8))
         current=cv2.resize(gray,(self.fw,self.fh),interpolation=cv2.INTER_AREA)
         # Existing marks only need motion and pigment. Build the orientation
         # field lazily on the less frequent updates that propose new strokes.
         self.edge_gray=gray
-        self.dx=self.dy=None
+        self.has_orientation=False
         if len(self.strokes):
             points=self.strokes[:,1:3]*self.factor
             moved,trusted=transport(points,forward,backward,self.previous,current)
@@ -90,9 +95,17 @@ class AdaptiveBrushwork:
         self.previous=current
         return self.strokes
 
+    def buffer(self,name,shape,dtype=np.float32):
+        if name not in self.buffers:
+            self.buffers[name]=np.empty(shape,dtype)
+        return self.buffers[name]
+
     def reference(self,radius):
-        if radius not in self.references:
-            self.references[radius]=cv2.GaussianBlur(self.source,(0,0),max(.45,radius*.20))
+        if radius not in self.valid_references:
+            if radius not in self.references:
+                self.references[radius]=np.empty_like(self.source)
+            cv2.GaussianBlur(self.source,(0,0),max(.45,radius*.20),dst=self.references[radius])
+            self.valid_references.add(radius)
         return self.references[radius]
 
     def error(self,canvas,radius):
@@ -106,9 +119,13 @@ class AdaptiveBrushwork:
             self.capacity_hits+=1
             return np.empty((0,12),np.float32)
         reference=self.reference(radius)
-        working=cv2.GaussianBlur(canvas.astype(np.float32),(0,0),max(.4,.6*self.scale))
-        channels=cv2.split(cv2.absdiff(reference,working))
-        error=cv2.max(cv2.max(channels[0],channels[1]),channels[2])
+        pixels=self.buffer('canvas_input',canvas.shape)
+        np.copyto(pixels,canvas,casting='unsafe')
+        working=cv2.GaussianBlur(pixels,(0,0),max(.4,.6*self.scale),dst=self.buffer('working',canvas.shape))
+        difference=cv2.absdiff(reference,working,dst=self.buffer('difference',canvas.shape))
+        channels=[cv2.extractChannel(difference,c,dst=self.buffer(f'channel_{c}',(self.h,self.w))) for c in range(3)]
+        error=cv2.max(channels[0],channels[1],dst=self.buffer('error',(self.h,self.w)))
+        cv2.max(error,channels[2],dst=error)
         grid=max(3,round(radius*2))
         gh,gw=(self.h+grid-1)//grid,(self.w+grid-1)//grid
         padded=cv2.copyMakeBorder(error,0,gh*grid-self.h,0,gw*grid-self.w,cv2.BORDER_CONSTANT,value=0)
@@ -124,10 +141,14 @@ class AdaptiveBrushwork:
         offsets=maxima[cy,cx]
         xs=cx*grid+offsets%grid;ys=cy*grid+offsets//grid
         colors=reference[ys,xs]
-        if self.dx is None:
-            field=cv2.GaussianBlur(self.edge_gray.astype(np.float32),(0,0),max(.5,1.4*self.scale))
-            self.dx=cv2.Sobel(field,cv2.CV_32F,1,0,ksize=3)*.125
-            self.dy=cv2.Sobel(field,cv2.CV_32F,0,1,ksize=3)*.125
+        if not self.has_orientation:
+            gray=self.buffer('edge_input',(self.h,self.w))
+            np.copyto(gray,self.edge_gray,casting='unsafe')
+            field=cv2.GaussianBlur(gray,(0,0),max(.5,1.4*self.scale),dst=self.buffer('edge_field',gray.shape))
+            self.dx=cv2.Sobel(field,cv2.CV_32F,1,0,ksize=3,dst=self.buffer('dx',gray.shape))
+            self.dy=cv2.Sobel(field,cv2.CV_32F,0,1,ksize=3,dst=self.buffer('dy',gray.shape))
+            self.dx*=.125;self.dy*=.125
+            self.has_orientation=True
         gx,gy=self.dx[ys,xs],self.dy[ys,xs]
         angles=np.arctan2(gy,gx)+np.pi/2
         # Stable spatial seeds vary shape without regenerating existing marks.
