@@ -14,7 +14,7 @@ impl Repaint {
         let start=std::time::Instant::now();self.paint_mode(frame,dt,calm);self.paint_ms+=start.elapsed().as_secs_f64()*1000.;
     }
     pub fn move_canvas(&mut self,frame:&mut RawFrame,number:u32,dt:f32) {
-        let start=std::time::Instant::now();self.warp.apply_rgb_anchored(frame,0.012,8.,(number as f64*dt as f64/8.) as f32*std::f32::consts::TAU);self.warp_ms+=start.elapsed().as_secs_f64()*1000.;
+        let start=std::time::Instant::now();self.warp.apply_rgb_anchored(frame,0.006,8.,(number as f64*dt as f64/8.) as f32*std::f32::consts::TAU);self.warp_ms+=start.elapsed().as_secs_f64()*1000.;
     }
     pub fn take_timings(&mut self)->(f64,f64) {(std::mem::take(&mut self.paint_ms),std::mem::take(&mut self.warp_ms))}
     #[cfg(test)]
@@ -144,6 +144,17 @@ fn brush_coverage(coverage:&mut [u8],w:usize,h:usize,cx:f32,cy:f32,length:f32,wi
 }
 #[cfg(test)] mod tests {
  use super::*;
+ #[test] fn loaded_paint_wave_uses_subtle_six_per_thousand_displacement() {
+  let mut source=RawFrame::new(128,72);
+  for (i,pixel) in source.data.iter_mut().enumerate() {
+   *pixel=((i*73+i/13)%256) as u8;
+  }
+  let mut actual=source.clone();
+  Repaint::default().move_canvas(&mut actual,90,1./30.);
+  let mut expected=source;
+  Distortion::default().apply_rgb_anchored(&mut expected,0.006,8.,(90./30./8.)*std::f32::consts::TAU);
+  assert_eq!(actual.data,expected.data);
+ }
  #[test] fn loaded_paint_keeps_fine_contrast_without_admitting_a_flash() {
   let base=RawFrame::filled(192,108,70,90,110);let dt=1./15.;
   let mut slow=Repaint::default();let mut loaded=Repaint::default();loaded.set_load(1.);
