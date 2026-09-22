@@ -421,6 +421,10 @@ mod tests {
             keys.windows(2).all(|pair| pair[1] - pair[0] <= 60),
             "keyframes: {keys:?}"
         );
+        assert!(
+            keys.last().is_some_and(|last| 179 - *last <= 60),
+            "keyframes: {keys:?}"
+        );
     }
 
     #[test]
