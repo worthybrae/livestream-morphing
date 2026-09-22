@@ -29,6 +29,17 @@ def summarize(samples):
     }
 
 
+def summarize_telemetry(rows):
+    timing = ('transport_ms', 'planner_ms', 'dirty_ms', 'worker_cpu_ms',
+              'full_raster_ms')
+    return {
+        'planner_updates': sum(bool(row['planner']) for row in rows),
+        'mutated_pixels': sum(row['mutated_pixels'] for row in rows),
+        'worker_rss_bytes': max((row['worker_rss_bytes'] for row in rows), default=0),
+        'mean_ms': {name: float(np.mean([row[name] for row in rows])) for name in timing},
+    }
+
+
 def run_order(frame):
     return (1, 0) if frame % 2 == 0 else (0, 1)
 
@@ -93,6 +104,7 @@ def main():
     wall = [[], []]
     cpu = [[], []]
     stages = [[], []]
+    telemetry = [[], []]
     try:
         factories = (baseline_worker(args.baseline, args.baseline_dir), LoadedPainting)
         for index, factory in enumerate(factories):
@@ -114,11 +126,14 @@ def main():
             for index in run_order(frame):
                 started_wall = time.perf_counter()
                 started_cpu = time.process_time()
-                outputs[index] = painted_pixels(workers[index].paint(rgb, args.hour)).copy()
+                result = workers[index].paint(rgb, args.hour)
+                outputs[index] = painted_pixels(result).copy()
                 if frame >= args.warmup:
                     wall[index].append((time.perf_counter() - started_wall) * 1000.0)
                     cpu[index].append((time.process_time() - started_cpu) * 1000.0)
                     stages[index].append(dict(workers[index].cost))
+                    if isinstance(result, tuple):
+                        telemetry[index].append(vars(result[1]))
             np.testing.assert_array_equal(outputs[0], outputs[1], err_msg=f"paint frame {frame}")
             np.testing.assert_array_equal(workers[0].book.ground, workers[1].book.ground,
                                           err_msg=f"ground marks {frame}")
@@ -145,6 +160,7 @@ def main():
             "wall_ms": [summarize(values) for values in wall],
             "cpu_ms": [summarize(values) for values in cpu],
             "stage_ms": stage_summary,
+            "telemetry": [summarize_telemetry(rows) for rows in telemetry] if telemetry[0] else None,
         }), flush=True)
     finally:
         capture.release()
