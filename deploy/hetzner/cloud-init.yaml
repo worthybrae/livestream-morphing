@@ -1,0 +1,54 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - ufw
+  - unattended-upgrades
+
+ssh_pwauth: false
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-abbey-road-stream.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
+  - path: /etc/systemd/journald.conf.d/abbey-road-stream.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Journal]
+      Storage=persistent
+      SystemMaxUse=250M
+      RuntimeMaxUse=100M
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root:root
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  - path: /etc/apt/apt.conf.d/52unattended-upgrades-local
+    owner: root:root
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+
+runcmd:
+  - install -d -m 0755 /opt/abbey-road-stream
+  - install -d -m 0700 /etc/abbey-road-stream
+  - systemctl enable --now docker
+  - systemctl enable --now ssh
+  - systemctl restart systemd-journald
+  - systemctl enable --now unattended-upgrades
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow OpenSSH
+  - ufw --force enable
+  - test -f /swapfile || fallocate -l 1G /swapfile
+  - chmod 0600 /swapfile
+  - mkswap /swapfile
+  - swapon --show=NAME | grep -qx /swapfile || swapon /swapfile
+  - grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab

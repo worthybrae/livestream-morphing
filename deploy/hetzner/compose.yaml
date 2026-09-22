@@ -1,0 +1,42 @@
+services:
+  painter:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.railway
+    env_file: /etc/abbey-road-stream/painter.env
+    ports: ["127.0.0.1:18080:8080"]
+    expose: ["8080"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/opt/paint/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  relay:
+    build: ./relay
+    environment:
+      HLS_URL: http://painter:8080/api/stream
+      TWITCH_INGEST_URL: rtmps://live.twitch.tv/app
+    # Compose mounts this secret at /run/secrets/twitch_stream_key.
+    secrets: [twitch_stream_key]
+    depends_on:
+      painter: { condition: service_healthy }
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+
+  qualify:
+    build: ./relay
+    profiles: ["qualify"]
+    environment: { HLS_URL: "http://painter:8080/api/stream" }
+    depends_on:
+      painter: { condition: service_healthy }
+    entrypoint: ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-i", "http://painter:8080/api/stream", "-t", "3600", "-f", "null", "-"]
+
+secrets:
+  twitch_stream_key:
+    file: /etc/abbey-road-stream/twitch_stream_key
