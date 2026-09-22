@@ -11,11 +11,43 @@ import unittest
 from unittest import mock
 import cv2
 import numpy as np
-from live import PaintFrameStats, PaintTelemetry, Raster, LoadedPainting, current_rss_bytes
+from live import (PaintFrameStats, PaintTelemetry, PaintWorker, PreparedFrame,
+                  Raster, LoadedPainting, current_rss_bytes)
 from render import Painting, grade, grade_reference
 from adaptive import AdaptiveBrushwork
 
 class LiveTests(unittest.TestCase):
+    def test_paint_worker_preparation_is_ordered_bounded_and_joined(self):
+        class FakePainting:
+            def __init__(self):
+                self.prepared = self.committed = self.maximum_ahead = 0
+            def prepare(self, rgb):
+                self.prepared += 1
+                self.maximum_ahead = max(self.maximum_ahead, self.prepared-self.committed)
+                return PreparedFrame(rgb, rgb[...,0], None, None, 0.)
+            def paint_prepared(self, frame, hour):
+                self.committed += 1
+                return int(frame.rgb[0,0,0]), hour
+        painting = FakePainting(); worker = PaintWorker(painting)
+        def produce():
+            for number in range(6):
+                worker.submit(np.full((1,1,3), number, np.uint8), float(number))
+            worker.finish()
+        producer = __import__('threading').Thread(target=produce)
+        producer.start()
+        responses = []
+        while True:
+            response = worker.commit_next()
+            if response is None:
+                break
+            responses.append(response)
+        producer.join(timeout=2); worker.close()
+
+        self.assertEqual(responses, [(n, float(n)) for n in range(6)])
+        self.assertLessEqual(painting.maximum_ahead, 1)
+        self.assertFalse(producer.is_alive())
+        self.assertFalse(worker.preparer.is_alive())
+
     def test_incremental_mode_paints_every_frame_and_plans_at_bounded_keyframes(self):
         def trusted_translation(points, forward, backward, previous=None, current=None):
             return points + np.array([1., 0.], np.float32), np.ones(len(points), bool)

@@ -7,10 +7,12 @@ import ctypes
 import json
 import os
 import pathlib
+import queue
 import socket
 import struct
 import sys
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -36,6 +38,84 @@ class PaintTelemetry:
             self.mutated_pixels, self.transport_ms, self.planner_ms,
             self.dirty_ms, self.worker_cpu_ms, self.full_raster_ms,
             self.worker_rss_bytes)
+
+
+@dataclass(frozen=True)
+class PreparedFrame:
+    rgb: np.ndarray
+    gray: np.ndarray
+    forward: np.ndarray
+    backward: np.ndarray
+    prepare_ms: float
+
+
+class PaintWorker:
+    _stop = object()
+    def __init__(self, painting):
+        self.painting = painting
+        self.to_prepare = queue.Queue(maxsize=1)
+        self.to_commit = queue.Queue(maxsize=1)
+        self.slot = threading.Semaphore(1)
+        self.closed = threading.Event()
+        self.preparer = threading.Thread(target=self._prepare, name='paint-prepare')
+        self.preparer.start()
+
+    def submit(self, rgb, hour):
+        while not self.closed.is_set():
+            try:
+                self.to_prepare.put((rgb, hour), timeout=.1)
+                return
+            except queue.Full:
+                pass
+        raise RuntimeError('Paint worker closed')
+
+    def finish(self):
+        while not self.closed.is_set():
+            try:
+                self.to_prepare.put(self._stop, timeout=.1)
+                return
+            except queue.Full:
+                pass
+
+    def _prepare(self):
+        while True:
+            item = self.to_prepare.get()
+            if item is self._stop:
+                self.to_commit.put(self._stop)
+                return
+            rgb, hour = item
+            self.slot.acquire()
+            try:
+                prepared = self.painting.prepare(rgb)
+                self.to_commit.put((prepared, hour))
+            except BaseException as error:
+                self.to_commit.put(error)
+                return
+
+    def commit_next(self):
+        item = self.to_commit.get()
+        if item is self._stop:
+            return None
+        if isinstance(item, BaseException):
+            self.slot.release()
+            raise item
+        prepared, hour = item
+        try:
+            return self.painting.paint_prepared(prepared, hour)
+        finally:
+            self.slot.release()
+
+    def close(self):
+        self.closed.set()
+        try:
+            self.to_prepare.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            self.slot.release()
+        except ValueError:
+            pass
+        self.preparer.join(timeout=5)
 
 
 def current_rss_bytes():
@@ -159,12 +239,10 @@ class LoadedPainting:
         self.raster.clear()
         return True
 
-    def paint(self, rgb, hour):
-        if rgb.shape != (self.h, self.w, 3) or not np.isfinite(hour):
+    def prepare(self, rgb):
+        if rgb.shape != (self.h, self.w, 3):
             raise ValueError('Invalid live paint input')
         started = time.perf_counter()
-        cpu_started = time.process_time()
-        self.compact_ids()
         small = cv2.resize(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), (self.fw, self.fh), interpolation=cv2.INTER_AREA)
         if self.previous is None:
             forward = backward = np.zeros((self.fh, self.fw, 2), np.float32)
@@ -172,7 +250,20 @@ class LoadedPainting:
             forward = self.dis.calc(self.previous, small, None)
             backward = self.dis.calc(small, self.previous, None)
         self.previous = small
-        t = time.perf_counter(); self.cost['flow'] = t-started
+        return PreparedFrame(rgb, small, forward, backward,
+            (time.perf_counter()-started)*1000.)
+
+    def paint(self, rgb, hour):
+        return self.paint_prepared(self.prepare(rgb), hour)
+
+    def paint_prepared(self, prepared, hour):
+        if not np.isfinite(hour):
+            raise ValueError('Invalid live paint input')
+        cpu_started = time.process_time()
+        self.compact_ids()
+        rgb, forward, backward = prepared.rgb, prepared.forward, prepared.backward
+        self.cost['flow'] = prepared.prepare_ms/1000.
+        t = time.perf_counter()
         aw = min(self.w, 960)
         analysis = cv2.resize(rgb, (aw, round(self.h*aw/self.w)), interpolation=cv2.INTER_AREA)
         planner = not self.incremental or self.updates%self.planner_stride == 0
@@ -253,14 +344,30 @@ def main():
     with socket.socket(fileno=0) as sock:
         sock.sendall(b'PAINT2' if incremental else b'PAINT1')
         totals={};count=0
+        worker = PaintWorker(painting) if incremental else None
+        reader = None
+        if incremental:
+            def read_frames():
+                try:
+                    while True:
+                        hour, = struct.unpack('<d', read_exact(sock, 8))
+                        rgb = np.frombuffer(read_exact(sock, w*h*3), np.uint8).reshape(h, w, 3)
+                        worker.submit(rgb, hour)
+                except EOFError:
+                    worker.finish()
+            reader = threading.Thread(target=read_frames, name='paint-reader')
+            reader.start()
         try:
             while True:
-                hour, = struct.unpack('<d', read_exact(sock, 8))
-                rgb = np.frombuffer(read_exact(sock, w*h*3), np.uint8).reshape(h, w, 3)
                 if incremental:
-                    paint, telemetry = painting.paint(rgb, hour)
+                    result = worker.commit_next()
+                    if result is None:
+                        break
+                    paint, telemetry = result
                     sock.sendall(telemetry.pack())
                 else:
+                    hour, = struct.unpack('<d', read_exact(sock, 8))
+                    rgb = np.frombuffer(read_exact(sock, w*h*3), np.uint8).reshape(h, w, 3)
                     paint = painting.paint(rgb, hour)
                 sock.sendall(memoryview(paint).cast('B'))
                 count+=1
@@ -274,6 +381,13 @@ def main():
         except EOFError:
             pass
         finally:
+            if incremental:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                worker.close()
+                reader.join(timeout=5)
             painting.raster.close()
 
 

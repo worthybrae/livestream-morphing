@@ -170,10 +170,19 @@ fn emit(held:&RawFrame,count:usize,first:u64,fps:f64,repaint:&mut crate::repaint
     }
     Ok(())
 }
+fn absorb(update:PaintTelemetry,planner_updates:&mut u64,telemetry:&mut PaintTelemetry) {
+    if update.planner {*planner_updates+=1;}
+    telemetry.mutated_pixels+=update.mutated_pixels;
+    telemetry.transport_ms+=update.transport_ms;telemetry.planner_ms+=update.planner_ms;
+    telemetry.dirty_ms+=update.dirty_ms;telemetry.worker_cpu_ms+=update.worker_cpu_ms;
+    telemetry.full_raster_ms+=update.full_raster_ms;
+    telemetry.worker_rss_bytes=telemetry.worker_rss_bytes.max(update.worker_rss_bytes);
+}
 
 pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut Pipeline,limit:usize)->Result<Rendered,Error> {
     let mut encoder=None;let mut times=Vec::new();let mut encode_ms=0.;let mut callback_ms=0.;let mut post_ms=0.;
     let mut pending=0usize;let mut emitted=0u64;
+    let mut outstanding:Option<Instant>=None;
     let mut paint_updates=0u64;let mut planner_updates=0u64;let mut telemetry=PaintTelemetry::default();
     let mut dimensions=(0,0);let started=Instant::now();
     #[cfg(test)] let mut painted_frames=Vec::new();
@@ -193,28 +202,44 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
         }
         let paint=pipeline.loaded.as_mut().ok_or("Loaded paint missing")?;
         if paint.held.as_ref().map(|f|(f.width,f.height))!=Some(dimensions) || paint.paint_due() {
-            let t=Instant::now();paint.request(&convert()?)?;
-            // The worker paints the next target while Rust waves/encodes the
-            // preceding held canvas. Neither side owns an unbounded frame queue.
-            if pending>0 {
-                emit(paint.held.as_ref().unwrap(),pending,offset+emitted,out_fps,&mut pipeline.repaint,encoder.as_mut().unwrap(),&mut encode_ms,&mut post_ms,
-                    #[cfg(test)] &mut painted_frames)?;
-                emitted+=pending as u64;pending=0;
+            let request_started=Instant::now();paint.request(&convert()?)?;
+            let paint2=paint.worker.as_ref().map(|worker|worker.protocol)==Some(Protocol::Paint2);
+            if paint2 {
+                // Queue exactly one successor before consuming the prior result.
+                // The Python reader may prepare it while ordered commit finishes.
+                if let Some(previous_started)=outstanding.take() {
+                    let (frame,update)=paint.receive()?;paint.held=Some(frame);paint_updates+=1;
+                    absorb(update,&mut planner_updates,&mut telemetry);
+                    times.push(previous_started.elapsed().as_secs_f64()*1000.);
+                    if pending>0 {
+                        emit(paint.held.as_ref().unwrap(),pending,offset+emitted,out_fps,&mut pipeline.repaint,encoder.as_mut().unwrap(),&mut encode_ms,&mut post_ms,
+                            #[cfg(test)] &mut painted_frames)?;
+                        emitted+=pending as u64;pending=0;
+                    }
+                }
+                outstanding=Some(request_started);
+            } else {
+                if pending>0 {
+                    emit(paint.held.as_ref().unwrap(),pending,offset+emitted,out_fps,&mut pipeline.repaint,encoder.as_mut().unwrap(),&mut encode_ms,&mut post_ms,
+                        #[cfg(test)] &mut painted_frames)?;
+                    emitted+=pending as u64;pending=0;
+                }
+                let (frame,update)=paint.receive()?;paint.held=Some(frame);paint_updates+=1;
+                absorb(update,&mut planner_updates,&mut telemetry);
+                times.push(request_started.elapsed().as_secs_f64()*1000.);
             }
-            let (frame,update)=paint.receive()?;paint.held=Some(frame);paint_updates+=1;
-            if update.planner {planner_updates+=1;}
-            telemetry.mutated_pixels+=update.mutated_pixels;
-            telemetry.transport_ms+=update.transport_ms;telemetry.planner_ms+=update.planner_ms;
-            telemetry.dirty_ms+=update.dirty_ms;telemetry.worker_cpu_ms+=update.worker_cpu_ms;
-            telemetry.full_raster_ms+=update.full_raster_ms;
-            telemetry.worker_rss_bytes=telemetry.worker_rss_bytes.max(update.worker_rss_bytes);
-            times.push(t.elapsed().as_secs_f64()*1000.);
         }
         paint.output_frames+=1;pending+=1;
         callback_ms+=t.elapsed().as_secs_f64()*1000.;Ok(())
     })?;
     let decode_ms=(started.elapsed().as_secs_f64()*1000.-callback_ms).max(0.);
     let fps=info.fps/step as f64;
+    if let Some(request_started)=outstanding.take() {
+        let paint=pipeline.loaded.as_mut().ok_or("Loaded paint missing")?;
+        let (frame,update)=paint.receive()?;paint.held=Some(frame);paint_updates+=1;
+        absorb(update,&mut planner_updates,&mut telemetry);
+        times.push(request_started.elapsed().as_secs_f64()*1000.);
+    }
     if pending>0 {
         emit(pipeline.loaded.as_ref().unwrap().held.as_ref().unwrap(),pending,offset+emitted,fps,&mut pipeline.repaint,encoder.as_mut().ok_or("No encoder")?,&mut encode_ms,&mut post_ms,
             #[cfg(test)] &mut painted_frames)?;
@@ -420,6 +445,40 @@ while True:
         let worker=LoadedPaint::connect(command,64,36,Duration::from_secs(2)).unwrap();
         let mut paint=LoadedPaint::new();paint.incremental_requested=true;paint.schedule=Schedule::Incremental;
         paint.stride=1.;paint.min_stride=1.;paint.worker=Some(worker);paint
+    }
+    fn fake_one_ahead()->LoadedPaint {
+        let mut command=Command::new("python3");
+        command.arg("-c").arg(r#"
+import select,socket,struct
+s=socket.socket(fileno=0);s.sendall(b'PAINT2')
+size=8+64*36*3
+def request():
+    left=size
+    while left:
+        chunk=s.recv(left)
+        if not chunk: raise SystemExit(0)
+        left-=len(chunk)
+request()
+for n in range(5):
+    ahead=False
+    if n<4:
+        ahead=bool(select.select([s],[],[],0.2)[0])
+        if ahead: request()
+    s.sendall(struct.pack('<4sB3xQ5f4xQ',b'PNT2',n%3==0,int(ahead),0.,0.,0.,0.,0.,4096))
+    s.sendall(bytes([n])*64*36*3)
+    if n==4: break
+    if not ahead: request()
+"#);
+        let worker=LoadedPaint::connect(command,64,36,Duration::from_secs(2)).unwrap();
+        let mut paint=LoadedPaint::new();paint.incremental_requested=true;paint.schedule=Schedule::Incremental;
+        paint.stride=1.;paint.min_stride=1.;paint.worker=Some(worker);paint
+    }
+    #[test] fn paint2_submits_the_next_request_before_consuming_the_prior_response() {
+        codec::init();let mut p=Pipeline::new();p.loaded=Some(fake_one_ahead());
+        let input=codec::encode_segment(&vec![RawFrame::filled(64,36,100,100,100);5],30,0).unwrap();
+        let rendered=render(&input,64,1,0,0,&mut p,720).unwrap();
+        assert_eq!(rendered.paint_updates,5);assert_eq!(rendered.mutated_pixels,4);
+        assert_eq!(rendered.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),vec![0,1,2,3,4]);
     }
     #[test] fn incremental_scheduler_returns_one_distinct_canvas_per_source_frame() {
         codec::init();let mut p=Pipeline::new();p.loaded=Some(fake_incremental());
