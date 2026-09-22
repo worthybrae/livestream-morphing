@@ -263,7 +263,7 @@ command line or committed to the repository.
    starting the relay or contacting Twitch:
 
    ```bash
-   qualify_id=$(sudo docker compose -f deploy/hetzner/compose.yaml --profile qualify ps -q qualify)
+   qualify_id=$(sudo docker compose -f deploy/hetzner/compose.yaml --profile qualify ps --all -q qualify)
    test -n "$qualify_id"
    test "$(sudo docker wait "$qualify_id")" = "0"
    ```

@@ -100,6 +100,7 @@ class QualificationTests(unittest.TestCase):
     def test_runbook_hides_secret_entry_and_verifies_qualification_exit(self):
         readme = (ROOT.parent.parent / "README.md").read_text()
         self.assertIn("stty -echo", readme)
+        self.assertIn("ps --all -q qualify", readme)
         self.assertIn("docker wait", readme)
 
     def test_cli_writes_parseable_evidence_on_http_failure(self):
