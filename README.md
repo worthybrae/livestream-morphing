@@ -202,6 +202,85 @@ failed before serving traffic. Confirm the build log names `Dockerfile.railway`.
 Railway currently accepts `railway.json` but warns that Config as Code support
 ends on 2026-12-01; migrate the configuration before that date.
 
+### Hetzner painter and relay qualification runbook
+
+This is an operator-only migration gate. It does not change the current Railway
+production deployment. Run the commands from `/opt/abbey-road-stream` on the
+host after copying this repository there. The stream key is never passed on the
+command line or committed to the repository.
+
+1. Create the root-only file secret. This command reads the key from standard
+   input, so paste it after it starts and press `Ctrl-D`:
+
+   ```bash
+   sudo install -d -m 0700 /etc/abbey-road-stream
+   sudo install -m 600 /dev/stdin /etc/abbey-road-stream/twitch_stream_key
+   ```
+
+2. Start only the painter and wait for its private status endpoint:
+
+   ```bash
+   cd /opt/abbey-road-stream
+   sudo docker compose -f deploy/hetzner/compose.yaml up -d --build painter
+   curl --fail http://127.0.0.1:18080/api/live/status
+   ```
+
+3. Copy the paired Railway baseline to
+   `/opt/abbey-road-stream/railway-baseline.json`. It must be one JSON document
+   with a non-empty `deployment_id` and at least ten chronological unique
+   samples of the form `{"timestamp":"RFC3339","status":{...}}`. Start the
+   internal HLS decoder for the one-hour qualification period:
+
+   ```bash
+   sudo docker compose -f deploy/hetzner/compose.yaml --profile qualify up -d qualify
+   ```
+
+4. In a second terminal, collect the private painter evidence and make the
+   deterministic go/no-go decision. The command exits `0` only when every gate
+   passes; its output is one final JSON report, while the sample file is
+   incrementally written NDJSON and remains auditable if interrupted:
+
+   ```bash
+   python3 deploy/hetzner/qualify.py \
+     --url http://127.0.0.1:18080/api/live/status \
+     --seconds 3600 \
+     --interval 6 \
+     --baseline /opt/abbey-road-stream/railway-baseline.json \
+     --output /opt/abbey-road-stream/qualification-samples.ndjson
+   ```
+
+5. Only after both qualification commands succeed, start the relay. Inspect
+   the painter and relay logs while it is running:
+
+   ```bash
+   sudo docker compose -f deploy/hetzner/compose.yaml up -d --build relay
+   sudo docker compose -f deploy/hetzner/compose.yaml logs --tail=200 -f painter relay
+   ```
+
+6. Reboot recovery is automatic through the `unless-stopped` restart policy;
+   after a planned reboot, verify the services and their recent logs:
+
+   ```bash
+   sudo reboot
+   sudo docker compose -f /opt/abbey-road-stream/deploy/hetzner/compose.yaml ps
+   sudo docker compose -f /opt/abbey-road-stream/deploy/hetzner/compose.yaml logs --tail=200 painter relay
+   ```
+
+7. Rotate a Twitch key by replacing the file through standard input and
+   recreating only the relay. Do not place the key in a shell variable, command
+   argument, Compose environment, or git commit:
+
+   ```bash
+   sudo install -m 600 /dev/stdin /etc/abbey-road-stream/twitch_stream_key
+   sudo docker compose -f /opt/abbey-road-stream/deploy/hetzner/compose.yaml up -d --force-recreate relay
+   ```
+
+8. To stop the host stack immediately, remove the running services:
+
+   ```bash
+   sudo docker compose -f /opt/abbey-road-stream/deploy/hetzner/compose.yaml down
+   ```
+
 ### Rollback
 
 Remove `VITE_LIVE_STREAM_URL` from the existing `personal` Railway service and
