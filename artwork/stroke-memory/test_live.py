@@ -94,6 +94,37 @@ class LiveTests(unittest.TestCase):
                 _, telemetry = painting.paint_prepared(prepared, 15.)
         self.assertFalse(telemetry.planner)
 
+    def test_flow_transport_moves_canvas_without_replaying_dirty_tiles(self):
+        def trusted_translation(points, forward, backward, previous=None, current=None):
+            return points + np.array([1., 0.], np.float32), np.ones(len(points), bool)
+        environment = {'LOADED_PAINT_MODE':'incremental',
+                       'LOADED_TRANSPORT_MODE':'flow',
+                       'LOADED_PLANNER_STRIDE':'30'}
+        with mock.patch.dict(os.environ, environment), \
+             mock.patch('render.transport', side_effect=trusted_translation), \
+             mock.patch('adaptive.transport', side_effect=trusted_translation):
+            painting = LoadedPainting(64, 36)
+            frame = np.full((36, 64, 3), [90, 120, 150], np.uint8)
+            painting.paint(frame, 15.)
+            source = np.broadcast_to(np.arange(64, dtype=np.uint8)[None, :, None],
+                                     (36, 64, 3)).copy()
+            painting.canvas = source
+            backward = np.zeros((painting.fh, painting.fw, 2), np.float32)
+            backward[..., 0] = painting.fw/painting.w
+            prepared = PreparedFrame(frame, np.zeros((painting.fh, painting.fw), np.uint8),
+                                     -backward, backward, 0.,
+                                     np.zeros((painting.fh, painting.fw), np.uint8))
+            with mock.patch.object(painting.raster, 'paint_incremental',
+                                   side_effect=AssertionError('dirty replay')):
+                moved, telemetry = painting.paint_prepared(prepared, 15.)
+
+        self.assertFalse(telemetry.planner)
+        self.assertEqual(telemetry.mutated_pixels, 64*36)
+        self.assertEqual(telemetry.full_raster_ms, 0.)
+        self.assertEqual(painting.planner_stride, 30)
+        np.testing.assert_array_equal(moved[:, :-1], source[:, 1:])
+        np.testing.assert_array_equal(moved[:, -1], source[:, -1])
+
     def test_incremental_raster_clears_and_retries_full_once_after_native_failure(self):
         class FakeNative:
             def __init__(self):

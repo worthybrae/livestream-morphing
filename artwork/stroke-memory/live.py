@@ -241,7 +241,36 @@ class LoadedPainting:
         self.cost = {}
         self.pool = ThreadPoolExecutor(max_workers=1)
         self.incremental = os.environ.get('LOADED_PAINT_MODE') == 'incremental'
-        self.planner_stride = max(2, min(6, int(os.environ.get('LOADED_PLANNER_STRIDE', '3'))))
+        self.flow_transport = (self.incremental and
+            os.environ.get('LOADED_TRANSPORT_MODE') == 'flow')
+        self.planner_stride = max(2, min(60, int(os.environ.get('LOADED_PLANNER_STRIDE', '3'))))
+        self.canvas = None
+        self.motion_canvas = None
+        self.motion_flow = None
+        self.map_x = None
+        self.map_y = None
+
+    def warp_canvas(self, backward):
+        """Move the last reconciled painting with current-to-previous flow."""
+        if self.canvas is None:
+            raise RuntimeError('Flow transport requires a reconciled canvas')
+        if self.motion_flow is None:
+            self.motion_flow = np.empty((self.h, self.w, 2), np.float32)
+            self.motion_canvas = np.empty_like(self.canvas)
+            self.map_x, self.map_y = np.meshgrid(
+                np.arange(self.w, dtype=np.float32),
+                np.arange(self.h, dtype=np.float32))
+        cv2.resize(backward, (self.w, self.h), dst=self.motion_flow,
+                   interpolation=cv2.INTER_LINEAR)
+        self.motion_flow[..., 0] *= self.w/self.fw
+        self.motion_flow[..., 1] *= self.h/self.fh
+        self.motion_flow[..., 0] += self.map_x
+        self.motion_flow[..., 1] += self.map_y
+        cv2.remap(self.canvas, self.motion_flow[..., 0], self.motion_flow[..., 1],
+                  cv2.INTER_LINEAR, dst=self.motion_canvas,
+                  borderMode=cv2.BORDER_REPLICATE)
+        self.canvas, self.motion_canvas = self.motion_canvas, self.canvas
+        return self.canvas
 
     def compact_ids(self):
         # float32 ids must stay exact AND the three populations must not collide
@@ -286,8 +315,18 @@ class LoadedPainting:
             transport_started = time.perf_counter()
             self.book.transport_only(forward, backward, prepared.previous_gray, prepared.gray)
             self.adaptive.transport_only(forward, backward, prepared.previous_gray, prepared.gray)
-            marks = np.concatenate([self.book.ground, self.book.strokes, self.adaptive.strokes])
             transport_ms = (time.perf_counter()-transport_started)*1000.
+            if self.flow_transport:
+                native_started = time.perf_counter()
+                paint = self.warp_canvas(backward)
+                warp_ms = (time.perf_counter()-native_started)*1000.
+                self.cost.update(base=0., adaptive_update=0., raster=warp_ms/1000.,
+                                 refine=0.)
+                self.updates += 1
+                return paint, PaintTelemetry(False, self.w*self.h,
+                    self.cost['flow']*1000.+transport_ms, 0., warp_ms,
+                    (time.process_time()-cpu_started)*1000., 0., current_rss_bytes())
+            marks = np.concatenate([self.book.ground, self.book.strokes, self.adaptive.strokes])
             native_started = time.perf_counter()
             self.raster.set_incremental_workers(1)
             paint, mutated, full_ms = self.raster.paint_incremental(marks)
@@ -325,6 +364,8 @@ class LoadedPainting:
             self.raster.set_incremental_workers(2)
             paint, mutated, incremental_full_ms = self.raster.paint_incremental(marks)
             full_raster_ms += incremental_full_ms
+            if self.flow_transport:
+                self.canvas = paint.copy()
             planner_ms = (self.cost['base']+self.cost['adaptive_update']+
                 self.cost['refine'])*1000.-(full_raster_ms-incremental_full_ms)
             self.updates += 1
