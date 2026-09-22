@@ -187,3 +187,37 @@ wall time fell from the prior 96.049 ms mean / 38.017 ms median to 87.432 ms /
 22.714 ms; process CPU fell from 198.592 ms to 182.464 ms per update. The mean
 remains above the 33.24 ms gate, so this is retained as a measured intermediate
 improvement rather than a throughput claim.
+
+The second retained pass parallelizes phase preparation and dirty-tile row
+replay, but uses one row worker on ordinary transport frames and two only on
+planner frames. It also routes the planner's RGB maximum-error field and tile
+blending through exact runtime-selected NEON/AVX2 kernels, and skips the
+analysis resize on transport-only frames. On the same 1920×1080 recording, a
+300-frame alternating run with 60 warmup frames compared this candidate with
+commit `c1d4be1` and verified 240 measured frames with zero RGB or brush-state
+difference. Mean wall time fell from 77.713 to 66.878 ms (13.9%) and p95 from
+214.790 to 179.938 ms (16.2%). Mean process CPU fell from 164.912 to 162.416 ms
+per update (1.5%); peak paired-process RSS fell from 2,952,511,488 to
+2,946,875,392 bytes. Candidate telemetry reported 80 planner updates,
+15,039,384 mutated pixels, 8.178 ms mean transport, 21.509 ms planner,
+24.615 ms dirty-tile work, and 6.774 ms full-raster work.
+
+This exact-output candidate still misses the local 33.24 ms wall and 114 ms CPU
+gates, so it is not a 30-FPS production candidate and must not replace the
+current Railway deployment. Rejected measured variants included two and four
+workers on every frame (more CPU), 32- and 48-pixel tiles, dense full-frame
+fallback, cached tile memberships, cached acceptance coverage, a persistent
+Rayon pool, parallel optical flow, and lowering refinement cadence. The cadence
+change was specifically rejected after it changed 1.74% of RGB elements on
+frame 3. These results make the remaining limit explicit: exact planner and
+dirty-canvas semantics need an architectural redesign, not hand-written
+assembly in an isolated blend loop.
+
+Reproduce the retained gate inside the production ARM64 container:
+
+```sh
+LOADED_PAINT_MODE=incremental LOADED_PLANNER_STRIDE=3 \
+python bench_paint_pair.py abbey.ts --baseline-dir BASELINE_SOURCE \
+  --baseline-native BASELINE_SO --candidate-native CANDIDATE_SO \
+  --frames 300 --warmup 60
+```

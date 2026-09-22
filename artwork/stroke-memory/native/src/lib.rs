@@ -142,16 +142,21 @@ fn draw(canvas:&mut [u8],w:usize,h:usize,top:usize,p:&[f32],stamp:&Stamp) {
         let at=(row+(cx+start as i32) as usize)*4;
         let dest=&mut canvas[at..at+(end-start)*4];
         let coverage=&stamp.prepared[sy*stamp.w+start..sy*stamp.w+end];
-        #[cfg(target_arch="x86_64")]
-        if end-start>=8 && std::arch::is_x86_feature_detected!("avx2") {
-            // Runtime dispatch keeps the same image runnable on older hosts.
-            unsafe {blend_avx2(dest,coverage,color);}
-            continue;
-        }
-        blend_scalar(dest,coverage,color);
+        blend(dest,coverage,color);
     }
 }
-fn blend_scalar(dest:&mut [u8],coverage:&[[i16;2]],color:[i32;4]) {
+pub(crate) fn blend(dest:&mut [u8],coverage:&[[i16;2]],color:[i32;4]) {
+    #[cfg(target_arch="x86_64")]
+    if coverage.len()>=8 && std::arch::is_x86_feature_detected!("avx2") {
+        unsafe {blend_avx2(dest,coverage,color);}return;
+    }
+    #[cfg(target_arch="aarch64")]
+    if coverage.len()>=2 && std::arch::is_aarch64_feature_detected!("neon") {
+        unsafe {blend_neon(dest,coverage,color);}return;
+    }
+    blend_scalar(dest,coverage,color);
+}
+pub(crate) fn blend_scalar(dest:&mut [u8],coverage:&[[i16;2]],color:[i32;4]) {
         for (pixel,&[a,b]) in dest.chunks_exact_mut(4).zip(coverage) {
             let alpha=a as i32;let shade=b as i32;
             if alpha==0 {continue;}
@@ -160,6 +165,30 @@ fn blend_scalar(dest:&mut [u8],coverage:&[[i16;2]],color:[i32;4]) {
                 pixel[k]=((sum+1+(sum>>8))>>8) as u8;
             }
         }
+}
+#[cfg(target_arch="aarch64")]
+#[target_feature(enable="neon")]
+unsafe fn blend_neon(dest:&mut [u8],coverage:&[[i16;2]],color:[i32;4]) {
+    use std::arch::aarch64::*;
+    let pigment=vld1q_s32(color.as_ptr());let zero=vdupq_n_s32(0);let maximum=vdupq_n_s32(65025);
+    let one=vdupq_n_s32(1);let pairs=coverage.len()/2;
+    for n in 0..pairs {
+        let [a,b]=coverage[n*2];let [c,d]=coverage[n*2+1];
+        let b=if a==0 {0}else{b} as i32;let d=if c==0 {0}else{d} as i32;
+        let ptr=dest.as_mut_ptr().add(n*8);let old=vmovl_u8(vld1_u8(ptr));
+        let old0=vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(old)));
+        let old1=vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(old)));
+        let apply=|old,a:i32,shade:i32| {
+            let base=vmulq_n_s32(old,255-a);
+            let sum=vminq_s32(maximum,vmaxq_s32(zero,vaddq_s32(base,
+                vaddq_s32(vmulq_n_s32(pigment,a),vdupq_n_s32(shade+127)))));
+            vshrq_n_s32::<8>(vaddq_s32(vaddq_s32(sum,one),vshrq_n_s32::<8>(sum)))
+        };
+        let packed=vqmovn_u16(vcombine_u16(vqmovun_s32(apply(old0,a as i32,b)),
+            vqmovun_s32(apply(old1,c as i32,d))));
+        vst1_u8(ptr,packed);
+    }
+    blend_scalar(&mut dest[pairs*8..],&coverage[pairs*2..],color);
 }
 #[cfg(target_arch="x86_64")]
 #[target_feature(enable="avx2")]
@@ -292,7 +321,54 @@ pub unsafe extern "C" fn paint_frame_incremental(p:*mut Painter,marks:*const f32
 #[no_mangle]
 pub unsafe extern "C" fn paint_clear(p:*mut Painter) {if !p.is_null() {(*p).cache.clear();(*p).incremental.clear();}}
 #[no_mangle]
+pub unsafe extern "C" fn paint_set_incremental_workers(p:*mut Painter,workers:usize) {
+    if !p.is_null() {(*p).incremental.set_workers(workers);}
+}
+#[no_mangle]
 pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::from_raw(p));}}
+
+fn rgb_max_error_scalar(source:&[f32],canvas:&[f32],output:&mut [f32]) {
+    for ((source,canvas),out) in source.chunks_exact(3).zip(canvas.chunks_exact(3)).zip(output) {
+        *out=(source[0]-canvas[0]).abs().max((source[1]-canvas[1]).abs()).max((source[2]-canvas[2]).abs());
+    }
+}
+#[cfg(target_arch="aarch64")]
+#[target_feature(enable="neon")]
+unsafe fn rgb_max_error_neon(source:&[f32],canvas:&[f32],output:&mut [f32]) {
+    use std::arch::aarch64::*;
+    let groups=output.len()/4;
+    for group in 0..groups {
+        let offset=group*12;
+        let a=vld3q_f32(source.as_ptr().add(offset));let b=vld3q_f32(canvas.as_ptr().add(offset));
+        let maximum=vmaxq_f32(vabdq_f32(a.0,b.0),vmaxq_f32(vabdq_f32(a.1,b.1),vabdq_f32(a.2,b.2)));
+        vst1q_f32(output.as_mut_ptr().add(group*4),maximum);
+    }
+    rgb_max_error_scalar(&source[groups*12..],&canvas[groups*12..],&mut output[groups*4..]);
+}
+#[cfg(target_arch="x86_64")]
+#[target_feature(enable="avx2")]
+unsafe fn rgb_max_error_avx2(source:&[f32],canvas:&[f32],output:&mut [f32]) {
+    use std::arch::x86_64::*;
+    let indices=[_mm_setr_epi32(0,3,6,9),_mm_setr_epi32(1,4,7,10),_mm_setr_epi32(2,5,8,11)];
+    let sign=_mm_set1_ps(-0.0);let groups=output.len()/4;
+    for group in 0..groups {
+        let offset=group*12;let a=source.as_ptr().add(offset);let b=canvas.as_ptr().add(offset);
+        let difference=|index|_mm_andnot_ps(sign,_mm_sub_ps(_mm_i32gather_ps(a,indices[index],4),_mm_i32gather_ps(b,indices[index],4)));
+        _mm_storeu_ps(output.as_mut_ptr().add(group*4),_mm_max_ps(difference(0),_mm_max_ps(difference(1),difference(2))));
+    }
+    rgb_max_error_scalar(&source[groups*12..],&canvas[groups*12..],&mut output[groups*4..]);
+}
+#[no_mangle]
+pub unsafe extern "C" fn paint_rgb_max_error(source:*const f32,canvas:*const f32,output:*mut f32,count:usize) {
+    if source.is_null() || canvas.is_null() || output.is_null() || count>16_777_216 {return;}
+    let source=std::slice::from_raw_parts(source,count*3);let canvas=std::slice::from_raw_parts(canvas,count*3);
+    let output=std::slice::from_raw_parts_mut(output,count);
+    #[cfg(target_arch="aarch64")]
+    if std::arch::is_aarch64_feature_detected!("neon") {rgb_max_error_neon(source,canvas,output);return;}
+    #[cfg(target_arch="x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {rgb_max_error_avx2(source,canvas,output);return;}
+    rgb_max_error_scalar(source,canvas,output);
+}
 
 #[cfg(test)] mod tests {
     use super::*;
@@ -307,6 +383,13 @@ pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::
         let duplicate=[mark,mark].concat();
         assert!(unsafe {paint_frame_incremental(&mut painter,duplicate.as_ptr(),2,&mut stats)}.is_null());
         assert!(unsafe {paint_frame_incremental(&mut painter,mark.as_ptr(),1,std::ptr::null_mut())}.is_null());
+    }
+    #[test] fn incremental_worker_selection_is_bounded() {
+        let mut painter=Painter::new(79,61,"loaded").unwrap();
+        unsafe {paint_set_incremental_workers(&mut painter,0)};
+        assert_eq!(painter.incremental.worker_count_for_test(),1);
+        unsafe {paint_set_incremental_workers(&mut painter,99)};
+        assert_eq!(painter.incremental.worker_count_for_test(),8);
     }
     #[cfg(target_arch="x86_64")]
     #[test] fn vector_color_grade_preserves_day_night_and_rgb_tails() {
@@ -363,6 +446,21 @@ pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::
                 assert_eq!(expected,actual,"count={count}, phase={phase}");
             }
         }
+    }
+    #[cfg(target_arch="aarch64")]
+    #[test] fn neon_matches_scalar_for_odd_rows_zero_alpha_and_saturated_pigment() {
+        for count in 0..35 {for phase in 0..256 {
+            let mut expected:Vec<u8>=(0..count*4).map(|i|((i*73+phase*11)%256) as u8).collect();
+            let mut actual=expected.clone();
+            let coverage:Vec<[i16;2]>=(0..count).map(|i| {
+                let alpha=((i*61+phase)%256) as i16;
+                [alpha,if alpha==0 {17} else {alpha*((i%81) as i16-40)}]
+            }).collect();
+            let color=[phase as i32,255,0,255];
+            blend_scalar(&mut expected,&coverage,color);
+            unsafe {blend_neon(&mut actual,&coverage,color);}
+            assert_eq!(expected,actual,"count={count}, phase={phase}");
+        }}
     }
     #[test] fn sparse_blending_matches_scalar_paint_for_loaded_shadows_and_opacity() {
         for material in [material::Material::Loaded,material::Material::Scumble,material::Material::Swept] {

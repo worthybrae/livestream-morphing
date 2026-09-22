@@ -1,5 +1,5 @@
 //! Persistent exact canvas with conservative 64x64 dirty-tile replay.
-use super::{blend_scalar, material, HashMap, HashSet, Stamp};
+use super::{blend, material, HashMap, HashSet, Stamp};
 use std::time::Instant;
 
 pub const TILE: usize = 64;
@@ -24,7 +24,7 @@ pub struct TileGrid {
 }
 pub struct TilePainter {
     grid:TileGrid,canvas:Vec<u8>,rgb:Vec<u8>,cache:HashMap<u32,Stamp>,
-    material:material::Material,
+    material:material::Material,workers:usize,last_prepare_workers:usize,
 }
 
 impl TileGrid {
@@ -33,10 +33,6 @@ impl TileGrid {
         Self {width,height,columns,previous:HashMap::default(),order:Vec::new(),
             members:(0..columns*rows).map(|_|Vec::new()).collect(),dirty:vec![false;columns*rows],
             initialized:false,force_full:false}
-    }
-    fn tile_rect(&self,index:usize)->Rect {
-        let x0=index%self.columns*TILE;let y0=index/self.columns*TILE;
-        Rect {x0,y0,x1:(x0+TILE).min(self.width),y1:(y0+TILE).min(self.height)}
     }
     fn mark(&mut self,rect:Rect) {
         if rect.x0>=rect.x1 || rect.y0>=rect.y1 {return;}
@@ -64,7 +60,7 @@ fn bounds(width:usize,height:usize,p:&[f32],stamp:&Stamp)->Rect {
         x1:(x+stamp.w as i32).max(0).min(width as i32) as usize,
         y1:(y+stamp.h as i32).max(0).min(height as i32) as usize}
 }
-fn draw_region(canvas:&mut [u8],canvas_width:usize,rect:Rect,p:&[f32],stamp:&Stamp) {
+fn draw_region(canvas:&mut [u8],canvas_width:usize,canvas_top:usize,rect:Rect,p:&[f32],stamp:&Stamp) {
     let cx=p[1].floor() as i32+stamp.ox;let cy=p[2].floor() as i32+stamp.oy;
     let y0=(rect.y0 as i32-cy).max(1) as usize;
     let y1=(rect.y1 as i32-cy).clamp(0,stamp.h as i32) as usize;
@@ -76,19 +72,43 @@ fn draw_region(canvas:&mut [u8],canvas_width:usize,rect:Rect,p:&[f32],stamp:&Sta
     for sy in y0..y1 {
         let start=x0.max(stamp.spans[sy].0);let end=x1.min(stamp.spans[sy].1);
         if start>=end {continue;}
-        let at=((cy+sy as i32) as usize*canvas_width+(cx+start as i32) as usize)*4;
-        blend_scalar(&mut canvas[at..at+(end-start)*4],
+        let at=(((cy+sy as i32) as usize-canvas_top)*canvas_width+(cx+start as i32) as usize)*4;
+        blend(&mut canvas[at..at+(end-start)*4],
             &stamp.prepared[sy*stamp.w+start..sy*stamp.w+end],color);
     }
+}
+fn redraw_band(canvas:&mut [u8],rgb:&mut [u8],top:usize,width:usize,height:usize,columns:usize,
+    dirty:&[bool],members:&[Vec<u32>],previous:&HashMap<u32,MarkState>,cache:&HashMap<u32,Stamp>)->u64 {
+    let first_row=top/TILE;let band_height=canvas.len()/(width*4);let last=(top+band_height).min(height);
+    let mut mutated=0u64;
+    for tile_row in first_row..last.div_ceil(TILE) {for x_tile in 0..columns {
+        let index=tile_row*columns+x_tile;if !dirty[index] {continue;}
+        let rect=Rect {x0:x_tile*TILE,y0:tile_row*TILE,x1:((x_tile+1)*TILE).min(width),
+            y1:((tile_row+1)*TILE).min(height)};
+        for y in rect.y0..rect.y1 {for x in rect.x0..rect.x1 {
+            let at=((y-top)*width+x)*4;canvas[at..at+4].copy_from_slice(&[81,83,74,255]);
+        }}
+        for &id in &members[index] {
+            let state=&previous[&id];draw_region(canvas,width,top,rect,&state.values,&cache[&id]);
+        }
+        for y in rect.y0..rect.y1 {for x in rect.x0..rect.x1 {
+            let src=((y-top)*width+x)*4;let dst=((y-top)*width+x)*3;
+            if rgb[dst..dst+3]!=canvas[src..src+3] {mutated+=1;}
+            rgb[dst..dst+3].copy_from_slice(&canvas[src..src+3]);
+        }}
+    }}
+    mutated
 }
 
 impl TilePainter {
     pub fn new(width:usize,height:usize,style:&str)->Option<Self> {
         if width==0 || height==0 || width>8192 || height>8192 || width*height>16_777_216 {return None;}
         Some(Self {grid:TileGrid::new(width,height),canvas:vec![0;width*height*4],
-            rgb:vec![0;width*height*3],cache:HashMap::default(),material:material::Material::parse(style)?})
+            rgb:vec![0;width*height*3],cache:HashMap::default(),material:material::Material::parse(style)?,
+            workers:1,last_prepare_workers:1})
     }
     pub fn clear(&mut self) {self.grid.clear();self.cache.clear();}
+    pub fn set_workers(&mut self,workers:usize) {self.workers=workers.clamp(1,8);}
     pub fn force_full_invalidation(&mut self) {self.grid.force_full=true;}
     pub fn paint(&mut self,values:&[f32])->Option<TileResult<'_>> {
         if values.len()%12!=0 || values.len()>100_000*12 {return None;}
@@ -102,13 +122,19 @@ impl TilePainter {
             let mut value=[0.;12];value.copy_from_slice(p);
             let rebuild=self.grid.previous.get(&id).map(|old|geometry_changed(&old.values,&value)).unwrap_or(true);
             if rebuild {
-                let mut stamp=material::stamp(p,self.material);stamp.prepare(p);self.cache.insert(id,stamp);
-            } else {let stamp=self.cache.get_mut(&id)?;stamp.prepare(p);}
+                let mut stamp=material::stamp(p,self.material);stamp.set_phase(p);self.cache.insert(id,stamp);
+            } else {let stamp=self.cache.get_mut(&id)?;stamp.set_phase(p);}
             let next=bounds(self.grid.width,self.grid.height,p,self.cache.get(&id)?);
             if let Some(old)=self.grid.previous.get(&id) {
                 if packet_changed(&old.values,&value) {let old_bounds=old.bounds;self.grid.mark(old_bounds);self.grid.mark(next);}
             } else {self.grid.mark(next);}
         }
+        let mut changed:Vec<_>=self.cache.values_mut().filter(|stamp|stamp.key!=Some(stamp.pending)).collect();
+        self.last_prepare_workers=self.workers.min(changed.len()).max(1);
+        let per_worker=changed.len().div_ceil(self.last_prepare_workers).max(1);
+        std::thread::scope(|scope| {for chunk in changed.chunks_mut(per_worker) {
+            scope.spawn(move||for stamp in chunk {stamp.prepare_phase();});
+        }});
         let removed:Vec<_>=self.grid.previous.iter().filter(|(id,_)|!ids.contains(id))
             .map(|(id,state)|(*id,state.bounds)).collect();
         for (id,old) in removed {self.grid.mark(old);self.cache.remove(&id);}
@@ -137,28 +163,27 @@ impl TilePainter {
             current.insert(id,MarkState {values:value,bounds:area});
         }
         self.grid.previous=current;self.grid.order=order;self.grid.initialized=true;self.grid.force_full=false;
-        let dirty_indices:Vec<_>=self.grid.dirty.iter().enumerate().filter_map(|(i,v)|v.then_some(i)).collect();
-        let mut mutated=0u64;
-        for index in dirty_indices {
-            let rect=self.grid.tile_rect(index);
-            for y in rect.y0..rect.y1 {for x in rect.x0..rect.x1 {
-                self.canvas[(y*self.grid.width+x)*4..(y*self.grid.width+x+1)*4].copy_from_slice(&[81,83,74,255]);
-            }}
-            for &id in &self.grid.members[index] {
-                let state=&self.grid.previous[&id];draw_region(&mut self.canvas,self.grid.width,rect,&state.values,&self.cache[&id]);
+        let tile_rows=self.grid.height.div_ceil(TILE);let workers=self.workers.clamp(1,tile_rows.max(1));
+        let rows_per_worker=tile_rows.div_ceil(workers);let pixels_per_worker=rows_per_worker*TILE;
+        let mutated=std::thread::scope(|scope| {
+            let mut jobs=Vec::new();
+            for (band,(canvas,rgb)) in self.canvas.chunks_mut(pixels_per_worker*self.grid.width*4)
+                .zip(self.rgb.chunks_mut(pixels_per_worker*self.grid.width*3)).enumerate() {
+                let top=band*pixels_per_worker;let grid=&self.grid;let cache=&self.cache;
+                jobs.push(scope.spawn(move||redraw_band(canvas,rgb,top,grid.width,grid.height,
+                    grid.columns,&grid.dirty,&grid.members,&grid.previous,cache)));
             }
-            for y in rect.y0..rect.y1 {for x in rect.x0..rect.x1 {
-                let src=(y*self.grid.width+x)*4;let dst=(y*self.grid.width+x)*3;
-                if self.rgb[dst..dst+3]!=self.canvas[src..src+3] {mutated+=1;}
-                self.rgb[dst..dst+3].copy_from_slice(&self.canvas[src..src+3]);
-            }}
-        }
+            jobs.into_iter().map(|job|job.join().expect("dirty tile row worker")).sum()
+        });
         let elapsed=started.elapsed().as_micros().min(u64::MAX as u128) as u64;
         Some(TileResult {rgb:&self.rgb,mutated_pixels:mutated,
             dirty_micros:if full_fallback {0}else{elapsed},
             full_raster_micros:if full_fallback {elapsed}else{0},full_fallback})
     }
     #[cfg(test)] fn member_slots(&self)->usize {self.grid.members.iter().map(Vec::len).sum()}
+    #[cfg(test)] fn set_workers_for_test(&mut self,workers:usize) {self.workers=workers;}
+    #[cfg(test)] fn last_prepare_workers_for_test(&self)->usize {self.last_prepare_workers}
+    #[cfg(test)] pub fn worker_count_for_test(&self)->usize {self.workers}
 }
 
 #[cfg(test)] mod tests {
@@ -192,6 +217,22 @@ impl TilePainter {
         for frame in 0..1000 {
             let marks:Vec<_>=(0..24).map(|id|mark(id as f32+1.,(id*5) as f32+(frame%3) as f32*0.2,(id*7%97) as f32)).collect();
             tiles.paint(&marks.concat()).unwrap();assert!(tiles.member_slots()<=24*4);
+        }
+    }
+    #[test] fn parallel_dirty_tile_rows_match_serial_for_odd_tails_and_clipping() {
+        let mut serial=TilePainter::new(193,109,"loaded").unwrap();serial.set_workers_for_test(1);
+        let mut parallel=TilePainter::new(193,109,"loaded").unwrap();parallel.set_workers_for_test(8);
+        for frame in 0..9 {
+            let marks:Vec<_>=(0..73).map(|id| {
+                let mut p=mark(id as f32+1.,(id*17%211) as f32-9.+frame as f32*0.37,
+                    (id*23%127) as f32-7.-frame as f32*0.21);
+                p[7]=(id*43%300) as f32;p[8]=(id*79%300) as f32;p
+            }).collect();
+            let values=marks.concat();
+            let a=serial.paint(&values).unwrap().rgb.to_vec();
+            let b=parallel.paint(&values).unwrap().rgb.to_vec();
+            assert_eq!(a,b,"frame {frame}");
+            assert!(parallel.last_prepare_workers_for_test()>1);
         }
     }
 }

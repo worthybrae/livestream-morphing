@@ -53,6 +53,7 @@ class AdaptiveBrushwork:
         self.proposed_by_scale=[0,0,0]
         self.checks=[]
         self.accept_filter=None
+        self.error_filter=None
         self.buffers={}
         self.references={}
         self.valid_references=set()
@@ -134,10 +135,14 @@ class AdaptiveBrushwork:
         pixels=self.buffer('canvas_input',canvas.shape)
         np.copyto(pixels,canvas,casting='unsafe')
         working=cv2.GaussianBlur(pixels,(0,0),max(.4,.6*self.scale),dst=self.buffer('working',canvas.shape))
-        difference=cv2.absdiff(reference,working,dst=self.buffer('difference',canvas.shape))
-        channels=[cv2.extractChannel(difference,c,dst=self.buffer(f'channel_{c}',(self.h,self.w))) for c in range(3)]
-        error=cv2.max(channels[0],channels[1],dst=self.buffer('error',(self.h,self.w)))
-        cv2.max(error,channels[2],dst=error)
+        error=self.buffer('error',(self.h,self.w))
+        if self.error_filter is not None:
+            self.error_filter(reference,working,error)
+        else:
+            difference=cv2.absdiff(reference,working,dst=self.buffer('difference',canvas.shape))
+            channels=[cv2.extractChannel(difference,c,dst=self.buffer(f'channel_{c}',(self.h,self.w))) for c in range(3)]
+            cv2.max(channels[0],channels[1],dst=error)
+            cv2.max(error,channels[2],dst=error)
         grid=max(3,round(radius*2))
         gh,gw=(self.h+grid-1)//grid,(self.w+grid-1)//grid
         padded=cv2.copyMakeBorder(error,0,gh*grid-self.h,0,gw*grid-self.w,cv2.BORDER_CONSTANT,value=0)

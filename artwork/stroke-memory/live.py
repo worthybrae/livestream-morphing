@@ -145,10 +145,14 @@ class Raster:
         self.lib.paint_frame_incremental.restype = ctypes.POINTER(ctypes.c_uint8)
         self.lib.paint_clear.argtypes = self.lib.paint_free.argtypes = [ctypes.c_void_p]
         self.lib.paint_clear.restype = self.lib.paint_free.restype = None
+        self.lib.paint_set_incremental_workers.argtypes = [ctypes.c_void_p,ctypes.c_size_t]
+        self.lib.paint_set_incremental_workers.restype = None
         self.lib.paint_grade.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_double, ctypes.POINTER(ctypes.c_double)]
         self.lib.paint_grade.restype = None
         self.lib.paint_select.argtypes = [ctypes.POINTER(ctypes.c_float),ctypes.POINTER(ctypes.c_float),ctypes.c_size_t,ctypes.c_size_t,ctypes.POINTER(ctypes.c_double),ctypes.c_size_t,ctypes.c_size_t,ctypes.c_double,ctypes.POINTER(ctypes.c_uint32)]
         self.lib.paint_select.restype = ctypes.c_size_t
+        self.lib.paint_rgb_max_error.argtypes = [ctypes.POINTER(ctypes.c_float),ctypes.POINTER(ctypes.c_float),ctypes.POINTER(ctypes.c_float),ctypes.c_size_t]
+        self.lib.paint_rgb_max_error.restype = None
         self.handle = self.lib.paint_new(width, height, True)
         if not self.handle:
             raise ValueError('Unsupported canvas dimensions')
@@ -187,6 +191,9 @@ class Raster:
         pixels = np.ctypeslib.as_array(ptr, shape=(self.h*self.w*3,)).reshape(self.h, self.w, 3)
         return pixels, mutated, full_ms
 
+    def set_incremental_workers(self, workers):
+        self.lib.paint_set_incremental_workers(self.handle, workers)
+
     def grade(self, source, hour):
         source = np.ascontiguousarray(source, dtype=np.uint8)
         result = np.empty_like(source)
@@ -201,6 +208,13 @@ class Raster:
         out=np.empty(min(budget,len(candidates)),np.uint32)
         n=self.lib.paint_select(work.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),target.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),work.shape[1],work.shape[0],candidates.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),len(candidates),budget,scale,out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32)))
         return out[:n]
+
+    def rgb_max_error(self, source, canvas, output):
+        source=np.ascontiguousarray(source,dtype=np.float32)
+        canvas=np.ascontiguousarray(canvas,dtype=np.float32)
+        if source.shape!=canvas.shape or source.shape[:2]!=output.shape or source.shape[2:]!=(3,):
+            raise ValueError('Invalid RGB error buffers')
+        self.lib.paint_rgb_max_error(source.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),canvas.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),output.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),output.size)
 
     def clear(self):
         self.lib.paint_clear(self.handle)
@@ -221,6 +235,7 @@ class LoadedPainting:
         self.adaptive = AdaptiveBrushwork(width, height, (self.fw, self.fh))
         self.raster = Raster(width, height)
         self.adaptive.accept_filter = self.raster.select
+        self.adaptive.error_filter = self.raster.rgb_max_error
         self.previous = None
         self.updates = 0
         self.cost = {}
@@ -266,8 +281,6 @@ class LoadedPainting:
         rgb, forward, backward = prepared.rgb, prepared.forward, prepared.backward
         self.cost['flow'] = prepared.prepare_ms/1000.
         t = time.perf_counter()
-        aw = min(self.w, 960)
-        analysis = cv2.resize(rgb, (aw, round(self.h*aw/self.w)), interpolation=cv2.INTER_AREA)
         planner = not self.incremental or self.updates%self.planner_stride == 0
         if not planner:
             transport_started = time.perf_counter()
@@ -276,6 +289,7 @@ class LoadedPainting:
             marks = np.concatenate([self.book.ground, self.book.strokes, self.adaptive.strokes])
             transport_ms = (time.perf_counter()-transport_started)*1000.
             native_started = time.perf_counter()
+            self.raster.set_incremental_workers(1)
             paint, mutated, full_ms = self.raster.paint_incremental(marks)
             self.cost.update(base=0., adaptive_update=0., raster=time.perf_counter()-native_started,
                              refine=0.)
@@ -283,6 +297,8 @@ class LoadedPainting:
             return paint, PaintTelemetry(False, mutated,
                 self.cost['flow']*1000.+transport_ms, 0., self.raster.incremental_dirty_ms,
                 (time.process_time()-cpu_started)*1000., full_ms, current_rss_bytes())
+        aw = min(self.w, 960)
+        analysis = cv2.resize(rgb, (aw, round(self.h*aw/self.w)), interpolation=cv2.INTER_AREA)
         def update_adaptive():
             return self.adaptive.begin(self.raster.grade(rgb, hour%24), forward, backward,
                 (prepared.previous_gray, prepared.gray))
@@ -306,6 +322,7 @@ class LoadedPainting:
         self.cost['refine'] = time.perf_counter()-t2
         if self.incremental:
             marks = np.concatenate([marks, self.adaptive.strokes])
+            self.raster.set_incremental_workers(2)
             paint, mutated, incremental_full_ms = self.raster.paint_incremental(marks)
             full_raster_ms += incremental_full_ms
             planner_ms = (self.cost['base']+self.cost['adaptive_update']+

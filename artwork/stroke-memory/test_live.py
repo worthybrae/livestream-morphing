@@ -86,9 +86,12 @@ class LiveTests(unittest.TestCase):
             painting = LoadedPainting(160, 90)
             frame = np.full((90, 160, 3), [90, 120, 150], np.uint8)
             painting.paint(frame, 15.)
+            prepared = painting.prepare(frame)
             with mock.patch.object(painting.raster, 'grade',
-                                   side_effect=AssertionError('redundant grade')):
-                _, telemetry = painting.paint(frame, 15.)
+                                   side_effect=AssertionError('redundant grade')), \
+                 mock.patch('live.cv2.resize',
+                            side_effect=AssertionError('redundant analysis resize')):
+                _, telemetry = painting.paint_prepared(prepared, 15.)
         self.assertFalse(telemetry.planner)
 
     def test_incremental_raster_clears_and_retries_full_once_after_native_failure(self):
@@ -193,6 +196,18 @@ class LiveTests(unittest.TestCase):
                 aa=a.propose(canvas,radius*w/1920,level,100)
                 bb=b.propose(canvas,radius*w/1920,level,100)
                 np.testing.assert_array_equal(aa,bb)
+        finally:raster.close()
+
+    def test_native_rgb_max_error_matches_opencv_for_odd_tail(self):
+        raster=Raster(37,19)
+        try:
+            rng=np.random.default_rng(81)
+            source=rng.random((19,37,3),dtype=np.float32)*255
+            canvas=rng.random((19,37,3),dtype=np.float32)*255
+            expected=np.max(cv2.absdiff(source,canvas),axis=2)
+            actual=np.empty((19,37),np.float32)
+            raster.rgb_max_error(source,canvas,actual)
+            np.testing.assert_array_equal(actual,expected)
         finally:raster.close()
 
     def test_long_running_id_compaction_keeps_every_painted_pixel(self):
