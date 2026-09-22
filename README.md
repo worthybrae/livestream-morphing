@@ -209,12 +209,22 @@ production deployment. Run the commands from `/opt/abbey-road-stream` on the
 host after copying this repository there. The stream key is never passed on the
 command line or committed to the repository.
 
-1. Create the root-only file secret. This command reads the key from standard
-   input, so paste it after it starts and press `Ctrl-D`:
+1. Create the root-only file secret with terminal echo disabled. It does not put
+   the key in an argument, shell variable, log, history entry, or Git. Paste the
+   key after the prompt and press `Ctrl-D`:
 
    ```bash
    sudo install -d -m 0700 /etc/abbey-road-stream
-   sudo install -m 600 /dev/stdin /etc/abbey-road-stream/twitch_stream_key
+   sudo -v
+   (
+     trap 'stty echo' EXIT HUP INT TERM
+     printf 'Paste Twitch stream key, then press Ctrl-D: ' >/dev/tty
+     stty -echo </dev/tty
+     sudo install -m 600 /dev/stdin /etc/abbey-road-stream/twitch_stream_key
+     stty echo </dev/tty
+     trap - EXIT HUP INT TERM
+     printf '\n' >/dev/tty
+   )
    ```
 
 2. Start only the painter and wait for its private status endpoint:
@@ -249,7 +259,16 @@ command line or committed to the repository.
      --output /opt/abbey-road-stream/qualification-samples.ndjson
    ```
 
-5. Only after both qualification commands succeed, start the relay. Inspect
+5. Wait for the internal HLS decoder and require its successful exit before
+   starting the relay or contacting Twitch:
+
+   ```bash
+   qualify_id=$(sudo docker compose -f deploy/hetzner/compose.yaml --profile qualify ps -q qualify)
+   test -n "$qualify_id"
+   test "$(sudo docker wait "$qualify_id")" = "0"
+   ```
+
+6. Only after both qualification commands succeed, start the relay. Inspect
    the painter and relay logs while it is running:
 
    ```bash
@@ -257,7 +276,7 @@ command line or committed to the repository.
    sudo docker compose -f deploy/hetzner/compose.yaml logs --tail=200 -f painter relay
    ```
 
-6. Reboot recovery is automatic through the `unless-stopped` restart policy;
+7. Reboot recovery is automatic through the `unless-stopped` restart policy;
    after a planned reboot, verify the services and their recent logs:
 
    ```bash
@@ -266,16 +285,26 @@ command line or committed to the repository.
    sudo docker compose -f /opt/abbey-road-stream/deploy/hetzner/compose.yaml logs --tail=200 painter relay
    ```
 
-7. Rotate a Twitch key by replacing the file through standard input and
-   recreating only the relay. Do not place the key in a shell variable, command
-   argument, Compose environment, or git commit:
+8. Rotate a Twitch key through a non-echoing temporary file, preserving the
+   existing key until all new input is received. Recreate only the relay:
 
    ```bash
-   sudo install -m 600 /dev/stdin /etc/abbey-road-stream/twitch_stream_key
+   sudo -v
+   sudo install -m 600 /dev/null /etc/abbey-road-stream/twitch_stream_key.next
+   (
+     trap 'stty echo' EXIT HUP INT TERM
+     printf 'Paste replacement Twitch stream key, then press Ctrl-D: ' >/dev/tty
+     stty -echo </dev/tty
+     sudo tee /etc/abbey-road-stream/twitch_stream_key.next >/dev/null
+     stty echo </dev/tty
+     trap - EXIT HUP INT TERM
+     printf '\n' >/dev/tty
+   )
+   sudo mv /etc/abbey-road-stream/twitch_stream_key.next /etc/abbey-road-stream/twitch_stream_key
    sudo docker compose -f /opt/abbey-road-stream/deploy/hetzner/compose.yaml up -d --force-recreate relay
    ```
 
-8. To stop the host stack immediately, remove the running services:
+9. To stop the host stack immediately, remove the running services:
 
    ```bash
    sudo docker compose -f /opt/abbey-road-stream/deploy/hetzner/compose.yaml down

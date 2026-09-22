@@ -17,6 +17,8 @@ DEFAULT_URL = "http://127.0.0.1:18080/api/live/status"
 DEFAULT_SECONDS = 3600.0
 DEFAULT_INTERVAL = 6.0
 DEFAULT_OUTPUT = Path("qualification-samples.ndjson")
+MINIMUM_UNIQUE_SEGMENTS = 10
+WARMUP_POLLS = 1
 
 
 class BaselineError(ValueError):
@@ -89,6 +91,7 @@ def evaluate(samples: list[dict], minimum_paint_fps: float) -> dict:
         report["failed_gates"] = ["invalid_sample"]
         return report
 
+    polls: list[tuple[dict, dict[str, float]]] = []
     segments: list[tuple[dict, dict[str, float]]] = []
     last_rendered_frame: int | None = None
     seen_frames: set[int] = set()
@@ -99,12 +102,13 @@ def evaluate(samples: list[dict], minimum_paint_fps: float) -> dict:
             failed.add("invalid_sample")
             continue
         frame = int(values["rendered_frames"])
-        if frame in seen_frames:
-            continue
         if last_rendered_frame is not None and frame < last_rendered_frame:
             failed.add("render_restart")
-        seen_frames.add(frame)
         last_rendered_frame = frame
+        polls.append((status, values))
+        if frame in seen_frames:
+            continue
+        seen_frames.add(frame)
         segments.append((status, values))
 
     if not segments:
@@ -116,21 +120,29 @@ def evaluate(samples: list[dict], minimum_paint_fps: float) -> dict:
         report["minimum_buffer"] = min(values["buffer_count"] for _, values in segments)
         report["first_rendered_frame"] = int(segments[0][1]["rendered_frames"])
         report["last_rendered_frame"] = int(segments[-1][1]["rendered_frames"])
+        if len(segments) < MINIMUM_UNIQUE_SEGMENTS:
+            failed.add("minimum_progress")
 
-        for index, (status, values) in enumerate(segments):
-            if index and status["state"] != "live":
+        for index, (status, values) in enumerate(polls):
+            if index >= WARMUP_POLLS and status["state"] != "live":
                 failed.add("live_state")
             if values["width"] != 1920 or values["height"] != 1080:
                 failed.add("full_hd")
-            if values["total_ms"] > values["duration_seconds"] * 1000:
-                failed.add("segment_deadline")
             if values["paint_fps"] < minimum_paint_fps:
                 failed.add("paint_fps")
 
-        buffers = [values["buffer_count"] for _, values in segments]
+        for _, values in segments:
+            if values["total_ms"] > values["duration_seconds"] * 1000:
+                failed.add("segment_deadline")
+
+        buffers = [values["buffer_count"] for _, values in polls]
         for start in range(len(buffers) - 5):
             window = buffers[start:start + 6]
-            if all(current < previous for previous, current in zip(window, window[1:])):
+            mean_index = 2.5
+            mean_buffer = sum(window) / len(window)
+            slope = sum((index - mean_index) * (value - mean_buffer) for index, value in enumerate(window)) / 17.5
+            declining_steps = sum(current < previous for previous, current in zip(window, window[1:]))
+            if slope < 0 and window[-1] < window[0] and declining_steps >= 3:
                 failed.add("buffer_trend")
                 break
 
@@ -165,6 +177,7 @@ def load_baseline(path: Path) -> float:
 
     previous_timestamp: datetime | None = None
     previous_frame: int | None = None
+    seen_frames: set[int] = set()
     paint_fps: list[float] = []
     for item in samples:
         if not isinstance(item, dict) or set(item) != {"timestamp", "status"}:
@@ -177,13 +190,16 @@ def load_baseline(path: Path) -> float:
         except ValueError as exc:
             raise BaselineError(f"baseline status is invalid: {exc}") from exc
         frame = int(values["rendered_frames"])
-        if previous_frame is not None and frame <= previous_frame:
+        if previous_frame is not None and frame < previous_frame:
             raise BaselineError("baseline rendered_frames must increase")
         previous_timestamp = timestamp
         previous_frame = frame
+        if frame in seen_frames:
+            continue
+        seen_frames.add(frame)
         paint_fps.append(values["paint_fps"])
 
-    if len(paint_fps) < 10:
+    if len(paint_fps) < MINIMUM_UNIQUE_SEGMENTS:
         raise BaselineError("baseline requires at least 10 unique valid segments")
     return min(paint_fps)
 
