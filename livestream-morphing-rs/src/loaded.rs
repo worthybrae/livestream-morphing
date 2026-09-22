@@ -33,15 +33,17 @@ impl Drop for Worker {
     fn drop(&mut self) {let _=self.child.kill();let _=self.child.wait();}
 }
 pub struct LoadedPaint { worker:Option<Worker>,pub hour:f64,pub stride:f64,min_stride:f64,
-    incremental_requested:bool,schedule:Schedule,quiet_segments:u8,
+    incremental_requested:bool,motion_requested:bool,schedule:Schedule,quiet_segments:u8,
     recent_costs:std::collections::VecDeque<(f64,f64)>,held:Option<RawFrame>,pub output_frames:u64 }
 impl LoadedPaint {
     pub fn new()->Self {
         let incremental_requested=std::env::var("LOADED_PAINT_MODE").as_deref()==Ok("incremental");
+        let motion_requested=incremental_requested &&
+            std::env::var("LOADED_TRANSPORT_MODE").as_deref()==Ok("flow");
         let configured=std::env::var("LOADED_PAINT_STRIDE").ok().and_then(|v|v.parse::<f64>().ok()).filter(|v|v.is_finite()).unwrap_or(3.).clamp(2.,12.);
         let (stride,min_stride,schedule)=if incremental_requested {(1.,1.,Schedule::Incremental)}
             else {(configured,configured,Schedule::LegacyAdaptive)};
-        Self {worker:None,hour:15.,stride,min_stride,incremental_requested,schedule,
+        Self {worker:None,hour:15.,stride,min_stride,incremental_requested,motion_requested,schedule,
             quiet_segments:0,recent_costs:std::collections::VecDeque::new(),held:None,output_frames:0}
     }
     pub fn reset(&mut self) {self.worker=None;self.held=None;self.output_frames=0;self.quiet_segments=0;self.recent_costs.clear();}
@@ -51,13 +53,18 @@ impl LoadedPaint {
         self.adapt_legacy(seconds,duration);
     }
     fn adapt_incremental(&mut self,seconds:f64,duration:f64) {
-        let severe=seconds>duration*1.25;
+        // Motion transport has a full ten-segment playback buffer and measured
+        // steady-state headroom. Do not discard 30 FPS because one periodic
+        // reconciliation crosses the legacy three-window threshold.
+        let (windows,pressure,severe_pressure)=if self.motion_requested {(10,0.98,1.5)}
+            else {(3,0.95,1.25)};
+        let severe=seconds>duration*severe_pressure;
         match self.schedule {
             Schedule::Incremental=>{
                 self.recent_costs.push_back((seconds,duration));
-                if self.recent_costs.len()>3 {self.recent_costs.pop_front();}
+                if self.recent_costs.len()>windows {self.recent_costs.pop_front();}
                 let (cost,playback)=self.recent_costs.iter().fold((0.,0.),|(a,b),(c,d)|(a+c,b+d));
-                if severe || (self.recent_costs.len()==3 && cost>playback*0.95) {
+                if severe || (self.recent_costs.len()==windows && cost>playback*pressure) {
                     self.schedule=Schedule::LegacyAdaptive;self.stride=2.5;
                     self.quiet_segments=0;self.recent_costs.clear();
                 }
@@ -508,6 +515,18 @@ for n in range(5):
         assert_eq!(paint.schedule,Schedule::Incremental);assert_eq!(paint.stride,1.);
         paint.adapt(8.,6.);assert_eq!(paint.schedule,Schedule::LegacyAdaptive);
         paint.reset();assert_eq!(paint.schedule,Schedule::LegacyAdaptive);
+    }
+    #[test] fn motion_transport_uses_buffer_for_spikes_but_rejects_sustained_overload() {
+        let mut paint=LoadedPaint::new();paint.incremental_requested=true;paint.motion_requested=true;
+        paint.schedule=Schedule::Incremental;paint.stride=1.;paint.min_stride=1.;
+        for seconds in [6.2,5.7,5.8,5.6,5.5,5.7,5.8,5.6,5.7,5.8] {
+            paint.adapt(seconds,6.);assert_eq!(paint.schedule,Schedule::Incremental);
+        }
+        paint.recent_costs.clear();
+        for _ in 0..9 {paint.adapt(5.95,6.);assert_eq!(paint.schedule,Schedule::Incremental);}
+        paint.adapt(5.95,6.);assert_eq!(paint.schedule,Schedule::LegacyAdaptive);
+        paint.schedule=Schedule::Incremental;paint.recent_costs.clear();
+        paint.adapt(9.1,6.);assert_eq!(paint.schedule,Schedule::LegacyAdaptive);
     }
     #[test] fn paint2_segment_aggregates_transactions_planners_timings_and_rss() {
         codec::init();let mut p=Pipeline::new();p.loaded=Some(fake2());
