@@ -228,14 +228,6 @@ planner/raster pass periodically reconciles that canvas; production uses
 frame still receives a distinct painted canvas and the legacy/exact paths are
 unchanged when the mode is absent.
 
-The final Railway canary (`ab987302-ddff-4c6d-a0d3-bdac74be432b`) held
-1920x1080 painting at 29.970 FPS for 30/30 consecutive segments across three
-complete safety windows. Segment processing measured 4.948 s mean, 5.366 s
-p95, and 6.178 s maximum (startup) against 6.006 s of media; the HLS buffer
-filled to 10 and stayed full. Mean worker CPU was 7.471 CPU-seconds per segment.
-The motion path uses a ten-segment, 98%-of-playback sustained-pressure window
-and still falls back immediately when one segment exceeds 1.5x playback time.
-
 Reproduce the retained gate inside the production ARM64 container:
 
 ```sh
