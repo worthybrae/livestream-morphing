@@ -26,19 +26,63 @@ impl PaintTelemetry {
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 enum Protocol { Paint1,Paint2 }
+#[derive(Clone,Copy,Debug,PartialEq)]
+enum Schedule { Incremental,LegacyAdaptive,Recovering }
 struct Worker { child:Child,socket:UnixStream,width:u32,height:u32,protocol:Protocol }
 impl Drop for Worker {
     fn drop(&mut self) {let _=self.child.kill();let _=self.child.wait();}
 }
-pub struct LoadedPaint { worker:Option<Worker>,pub hour:f64,pub stride:f64,min_stride:f64,quiet_segments:u8,recent_costs:std::collections::VecDeque<(f64,f64)>,held:Option<RawFrame>,pub output_frames:u64 }
+pub struct LoadedPaint { worker:Option<Worker>,pub hour:f64,pub stride:f64,min_stride:f64,
+    incremental_requested:bool,schedule:Schedule,quiet_segments:u8,
+    recent_costs:std::collections::VecDeque<(f64,f64)>,held:Option<RawFrame>,pub output_frames:u64 }
 impl LoadedPaint {
     pub fn new()->Self {
-        let stride=std::env::var("LOADED_PAINT_STRIDE").ok().and_then(|v|v.parse::<f64>().ok()).filter(|v|v.is_finite()).unwrap_or(3.).clamp(2.,12.);
-        Self {worker:None,hour:15.,stride,min_stride:stride,quiet_segments:0,recent_costs:std::collections::VecDeque::new(),held:None,output_frames:0}
+        let incremental_requested=std::env::var("LOADED_PAINT_MODE").as_deref()==Ok("incremental");
+        let configured=std::env::var("LOADED_PAINT_STRIDE").ok().and_then(|v|v.parse::<f64>().ok()).filter(|v|v.is_finite()).unwrap_or(3.).clamp(2.,12.);
+        let (stride,min_stride,schedule)=if incremental_requested {(1.,1.,Schedule::Incremental)}
+            else {(configured,configured,Schedule::LegacyAdaptive)};
+        Self {worker:None,hour:15.,stride,min_stride,incremental_requested,schedule,
+            quiet_segments:0,recent_costs:std::collections::VecDeque::new(),held:None,output_frames:0}
     }
     pub fn reset(&mut self) {self.worker=None;self.held=None;self.output_frames=0;self.quiet_segments=0;self.recent_costs.clear();}
     pub fn adapt(&mut self,seconds:f64,duration:f64) {
         if !seconds.is_finite() || !duration.is_finite() || seconds<=0. || duration<=0. {return;}
+        if self.incremental_requested {self.adapt_incremental(seconds,duration);return;}
+        self.adapt_legacy(seconds,duration);
+    }
+    fn adapt_incremental(&mut self,seconds:f64,duration:f64) {
+        let severe=seconds>duration*1.25;
+        match self.schedule {
+            Schedule::Incremental=>{
+                self.recent_costs.push_back((seconds,duration));
+                if self.recent_costs.len()>3 {self.recent_costs.pop_front();}
+                let (cost,playback)=self.recent_costs.iter().fold((0.,0.),|(a,b),(c,d)|(a+c,b+d));
+                if severe || (self.recent_costs.len()==3 && cost>playback*0.95) {
+                    self.schedule=Schedule::LegacyAdaptive;self.stride=2.5;
+                    self.quiet_segments=0;self.recent_costs.clear();
+                }
+            },
+            Schedule::LegacyAdaptive=>{
+                if severe {self.quiet_segments=0;return;}
+                if seconds<duration*0.75 {self.quiet_segments+=1;} else {self.quiet_segments=0;}
+                if self.quiet_segments>=6 {
+                    self.schedule=Schedule::Recovering;self.stride=2.;self.quiet_segments=0;
+                }
+            },
+            Schedule::Recovering=>{
+                if severe || seconds>duration*0.95 {
+                    self.schedule=Schedule::LegacyAdaptive;self.stride=2.5;self.quiet_segments=0;
+                } else {
+                    if seconds<duration*0.75 {self.quiet_segments+=1;} else {self.quiet_segments=0;}
+                    if self.quiet_segments>=6 {
+                        self.schedule=Schedule::Incremental;self.stride=1.;self.quiet_segments=0;
+                        self.recent_costs.clear();
+                    }
+                }
+            },
+        }
+    }
+    fn adapt_legacy(&mut self,seconds:f64,duration:f64) {
         // Keep the texture/resolution and display clock fixed. Only the next
         // segment's paint sampling may relax when compute approaches playback.
         // The rolling playback buffer absorbs isolated scheduling/traffic
@@ -65,6 +109,7 @@ impl LoadedPaint {
         } else {self.quiet_segments=0;}
     }
     fn paint_due(&self)->bool {
+        if self.schedule==Schedule::Incremental {return true;}
         // Fractional intervals provide 12 FPS between the 10/15 FPS settings.
         // Use the continuous output clock, including across segment boundaries;
         // held frames still receive a fresh wave and encoding at source cadence.
@@ -356,6 +401,54 @@ while True:
 "#);
         let worker=LoadedPaint::connect(command,64,36,Duration::from_secs(2)).unwrap();
         let mut paint=LoadedPaint::new();paint.stride=1.;paint.min_stride=1.;paint.worker=Some(worker);paint
+    }
+    fn fake_incremental()->LoadedPaint {
+        let mut command=Command::new("python3");
+        command.arg("-c").arg(r#"
+import socket,struct
+s=socket.socket(fileno=0);s.sendall(b'PAINT2');n=0
+while True:
+    left=8+64*36*3
+    while left:
+        chunk=s.recv(left)
+        if not chunk: raise SystemExit(0)
+        left-=len(chunk)
+    n+=1
+    s.sendall(struct.pack('<4sB3xQ5f4xQ',b'PNT2',n%3==1,n,0.,0.,0.,0.,0.,4096))
+    s.sendall(bytes([n%256])*64*36*3)
+"#);
+        let worker=LoadedPaint::connect(command,64,36,Duration::from_secs(2)).unwrap();
+        let mut paint=LoadedPaint::new();paint.incremental_requested=true;paint.schedule=Schedule::Incremental;
+        paint.stride=1.;paint.min_stride=1.;paint.worker=Some(worker);paint
+    }
+    #[test] fn incremental_scheduler_returns_one_distinct_canvas_per_source_frame() {
+        codec::init();let mut p=Pipeline::new();p.loaded=Some(fake_incremental());
+        let input=codec::encode_segment(&vec![RawFrame::filled(64,36,100,100,100);180],30,0).unwrap();
+        let rendered=render(&input,64,1,0,0,&mut p,720).unwrap();
+        assert_eq!(rendered.paint_updates,180);assert_eq!(rendered.planner_updates,60);
+        assert_eq!(rendered.paint_fps,30.);
+        assert_eq!(rendered.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),(1..=180).collect::<Vec<_>>());
+    }
+    #[test] fn incremental_transactions_continue_across_uneven_segment_boundaries() {
+        codec::init();let mut p=Pipeline::new();p.loaded=Some(fake_incremental());
+        let five=codec::encode_segment(&vec![RawFrame::filled(64,36,100,100,100);5],30,0).unwrap();
+        let a=render(&five,64,1,0,0,&mut p,720).unwrap();
+        let four=codec::encode_segment(&vec![RawFrame::filled(64,36,100,100,100);4],30,15000).unwrap();
+        p.source_end=codec::decode_sized(&four,64).unwrap().first_seconds;
+        let b=render(&four,64,1,15000,5,&mut p,720).unwrap();
+        assert_eq!([a.painted_frames,b.painted_frames].concat().iter().map(|f|f[100]).collect::<Vec<_>>(),(1..=9).collect::<Vec<_>>());
+    }
+    #[test] fn incremental_overload_falls_back_and_recovers_in_two_quiet_windows() {
+        let mut paint=LoadedPaint::new();paint.incremental_requested=true;paint.schedule=Schedule::Incremental;
+        paint.stride=1.;paint.min_stride=1.;
+        for _ in 0..2 {paint.adapt(5.8,6.);assert_eq!(paint.schedule,Schedule::Incremental);}
+        paint.adapt(5.8,6.);assert_eq!(paint.schedule,Schedule::LegacyAdaptive);assert_eq!(paint.stride,2.5);
+        for _ in 0..6 {paint.adapt(4.4,6.);}
+        assert_eq!(paint.schedule,Schedule::Recovering);
+        for _ in 0..6 {paint.adapt(4.4,6.);}
+        assert_eq!(paint.schedule,Schedule::Incremental);assert_eq!(paint.stride,1.);
+        paint.adapt(8.,6.);assert_eq!(paint.schedule,Schedule::LegacyAdaptive);
+        paint.reset();assert_eq!(paint.schedule,Schedule::LegacyAdaptive);
     }
     #[test] fn paint2_segment_aggregates_transactions_planners_timings_and_rss() {
         codec::init();let mut p=Pipeline::new();p.loaded=Some(fake2());
