@@ -198,6 +198,16 @@ pub struct ProcessingStats {
     pub height: u32,
     pub source_fps: f64,
     pub paint_fps: f64,
+    pub paint_updates: u64,
+    pub planner_updates: u64,
+    pub planner_fps: f64,
+    pub mutated_pixel_ratio: f64,
+    pub transport_ms: u64,
+    pub planner_ms: u64,
+    pub dirty_ms: u64,
+    pub worker_cpu_ms: u64,
+    pub full_raster_ms: u64,
+    pub worker_rss_bytes: u64,
     pub post_ms: u64,
     pub repaint_ms: u64,
     pub warp_ms: u64,
@@ -423,13 +433,23 @@ fn render_segment(bytes: &[u8], state: &AppState, pts: i64) -> Result<(Vec<u8>, 
         rendered
     };
     let duration=rendered.frames as f64/rendered.fps;
+    let pixel_updates=rendered.paint_updates
+        .saturating_mul(rendered.width as u64)
+        .saturating_mul(rendered.height as u64);
     let mut times=rendered.times;
     let effects_ms=times.iter().sum::<f64>().round() as u64;
     times.sort_by(f64::total_cmp);
     let encoded=rendered.bytes;
     let stats=ProcessingStats {
         effects_ms,total_ms:start.elapsed().as_millis() as u64,frames:rendered.frames as u64,
-        width:rendered.width,height:rendered.height,source_fps:rendered.fps,paint_fps:rendered.paint_fps,post_ms:rendered.post_ms.round() as u64,repaint_ms:rendered.repaint_ms.round() as u64,warp_ms:rendered.warp_ms.round() as u64,
+        width:rendered.width,height:rendered.height,source_fps:rendered.fps,paint_fps:rendered.paint_fps,
+        paint_updates:rendered.paint_updates,planner_updates:rendered.planner_updates,
+        planner_fps:rendered.planner_updates as f64/duration.max(f64::EPSILON),
+        mutated_pixel_ratio:rendered.mutated_pixels as f64/pixel_updates.max(1) as f64,
+        transport_ms:rendered.transport_ms.round() as u64,planner_ms:rendered.planner_ms.round() as u64,
+        dirty_ms:rendered.dirty_ms.round() as u64,worker_cpu_ms:rendered.worker_cpu_ms.round() as u64,
+        full_raster_ms:rendered.full_raster_ms.round() as u64,worker_rss_bytes:rendered.worker_rss_bytes,
+        post_ms:rendered.post_ms.round() as u64,repaint_ms:rendered.repaint_ms.round() as u64,warp_ms:rendered.warp_ms.round() as u64,
         frame_p50_ms:times.get(times.len()/2).copied().unwrap_or(0.),frame_p95_ms:times.get(times.len()*95/100).copied().unwrap_or(0.),
         duration_seconds:duration,rendered_frames:previous_stats.rendered_frames+rendered.frames as u64,
         encoded_bytes:encoded.len(),segment_completed_at:0,

@@ -38,7 +38,10 @@ pub fn render(args: &[String]) -> Result<serde_json::Value, Box<dyn std::error::
     std::fs::write(&args[1],&encoded)?;
     let peak_rss_kib=std::fs::read_to_string("/proc/self/status").ok().and_then(|s| s.lines().find(|l|l.starts_with("VmHWM:")).and_then(|l|l.split_whitespace().nth(1)).and_then(|v|v.parse::<u64>().ok()));
     Ok(serde_json::json!({"width":dimensions.0,"height":dimensions.1,
-        "source_fps":output_fps*step as f64,"paint_fps":rendered.paint_fps,"painted_targets":timings.len(),"output_fps":output_fps,"frames":rendered.frames,"decode_ms":decode_ms,"effects_ms":effects_ms,
+        "source_fps":output_fps*step as f64,"paint_fps":rendered.paint_fps,"paint_updates":rendered.paint_updates,"planner_updates":rendered.planner_updates,
+        "mutated_pixels":rendered.mutated_pixels,"transport_ms":rendered.transport_ms,"planner_ms":rendered.planner_ms,"dirty_ms":rendered.dirty_ms,
+        "worker_cpu_ms":rendered.worker_cpu_ms,"full_raster_ms":rendered.full_raster_ms,"worker_rss_bytes":rendered.worker_rss_bytes,
+        "painted_targets":timings.len(),"output_fps":output_fps,"frames":rendered.frames,"decode_ms":decode_ms,"effects_ms":effects_ms,
         "frame_p50_ms":timings.get(timings.len()/2).copied().unwrap_or(0.),"frame_p95_ms":timings.get(timings.len()*95/100).copied().unwrap_or(0.),
         "encode_ms":encode_ms,"post_ms":rendered.post_ms,"repaint_ms":rendered.repaint_ms,"warp_ms":rendered.warp_ms,"total_ms":total_ms,"processing_fps":rendered.frames as f64*1000.0/total_ms,
         "duration_seconds":rendered.frames as f64/output_fps,"bytes":encoded.len(),"peak_rss_kib":peak_rss_kib}))

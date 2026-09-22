@@ -7,6 +7,9 @@ pub struct Rendered {
     pub painted_frames: Vec<Vec<u8>>,
     pub bytes:Vec<u8>, pub fps:f64, pub paint_fps:f64, pub frames:usize, pub width:u32, pub height:u32,
     pub first_seconds:Option<f64>, pub times:Vec<f64>, pub decode_ms:f64, pub encode_ms:f64, pub post_ms:f64, pub repaint_ms:f64, pub warp_ms:f64,
+    pub paint_updates:u64,pub planner_updates:u64,pub mutated_pixels:u64,
+    pub transport_ms:f64,pub planner_ms:f64,pub dirty_ms:f64,pub worker_cpu_ms:f64,
+    pub full_raster_ms:f64,pub worker_rss_bytes:u64,
 }
 struct Job { frame:RawFrame, number:u32, dt:f32 }
 struct Done { frame:RawFrame, milliseconds:f64 }
@@ -141,7 +144,9 @@ pub fn render_bounded(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeli
             if !workers.is_empty() {pipeline.clear_enabled_history();}
             pipeline.source_end=info.first_seconds.map(|first|first+info.frames as f64/fps);
             let (repaint_ms,warp_ms)=pipeline.repaint.take_timings();
-            Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:fps/paint_stride as f64,frames:info.frames,width:dimensions.0,height:dimensions.1,first_seconds:info.first_seconds,times,decode_ms,encode_ms,post_ms,repaint_ms,warp_ms})
+            Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:fps/paint_stride as f64,frames:info.frames,width:dimensions.0,height:dimensions.1,first_seconds:info.first_seconds,times,decode_ms,encode_ms,post_ms,repaint_ms,warp_ms,
+                paint_updates:info.frames.div_ceil(paint_stride) as u64,planner_updates:0,mutated_pixels:0,
+                transport_ms:0.,planner_ms:0.,dirty_ms:0.,worker_cpu_ms:0.,full_raster_ms:0.,worker_rss_bytes:0})
         })();
         drop(workers);
         result

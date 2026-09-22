@@ -4,7 +4,29 @@ use std::{io::{Read,Write}, os::fd::OwnedFd, os::unix::net::UnixStream,
 use crate::{codec,effects::RawFrame,pipeline::Pipeline,renderer::Rendered};
 type Error=Box<dyn std::error::Error+Send+Sync>;
 
-struct Worker { child:Child,socket:UnixStream,width:u32,height:u32 }
+#[derive(Clone,Copy,Default,Debug)]
+struct PaintTelemetry {
+    planner:bool,mutated_pixels:u64,transport_ms:f64,planner_ms:f64,
+    dirty_ms:f64,worker_cpu_ms:f64,full_raster_ms:f64,worker_rss_bytes:u64,
+}
+impl PaintTelemetry {
+    fn decode(packet:[u8;48])->Result<Self,Error> {
+        if &packet[..4]!=b"PNT2" || packet[4]>1 {return Err("Invalid paint telemetry header".into());}
+        let u64_at=|at:usize|u64::from_le_bytes(packet[at..at+8].try_into().unwrap());
+        let f32_at=|at:usize|f32::from_le_bytes(packet[at..at+4].try_into().unwrap()) as f64;
+        let values=[f32_at(16),f32_at(20),f32_at(24),f32_at(28),f32_at(32)];
+        if values.iter().any(|value|!value.is_finite() || *value<0.) {
+            return Err("Invalid paint telemetry timing".into());
+        }
+        Ok(Self {planner:packet[4]!=0,mutated_pixels:u64_at(8),transport_ms:values[0],
+            planner_ms:values[1],dirty_ms:values[2],worker_cpu_ms:values[3],
+            full_raster_ms:values[4],worker_rss_bytes:u64_at(40)})
+    }
+}
+
+#[derive(Clone,Copy,Debug,PartialEq)]
+enum Protocol { Paint1,Paint2 }
+struct Worker { child:Child,socket:UnixStream,width:u32,height:u32,protocol:Protocol }
 impl Drop for Worker {
     fn drop(&mut self) {let _=self.child.kill();let _=self.child.wait();}
 }
@@ -54,9 +76,10 @@ impl LoadedPaint {
         socket.set_read_timeout(Some(timeout))?;socket.set_write_timeout(Some(timeout))?;
         let fd:OwnedFd=peer.into();
         let child=command.stdin(Stdio::from(fd)).stdout(Stdio::null()).stderr(Stdio::inherit()).spawn()?;
-        let mut worker=Worker {child,socket:socket.try_clone()?,width,height};
         let mut ready=[0u8;6];socket.read_exact(&mut ready)?;
-        if &ready!=b"PAINT1" {return Err("Paint worker handshake failed".into());}
+        let protocol=match &ready {b"PAINT1"=>Protocol::Paint1,b"PAINT2"=>Protocol::Paint2,
+            _=>return Err("Paint worker handshake failed".into())};
+        let worker=Worker {child,socket:socket.try_clone()?,width,height,protocol};
         worker.socket.set_read_timeout(Some(Duration::from_secs(12)))?;
         worker.socket.set_write_timeout(Some(Duration::from_secs(12)))?;
         Ok(worker)
@@ -78,11 +101,15 @@ impl LoadedPaint {
         worker.socket.write_all(&frame.data)?;
         Ok(())
     }
-    fn receive(&mut self)->Result<RawFrame,Error> {
+    fn receive(&mut self)->Result<(RawFrame,PaintTelemetry),Error> {
         let worker=self.worker.as_mut().ok_or("No paint worker")?;
+        let telemetry=if worker.protocol==Protocol::Paint2 {
+            let mut packet=[0u8;48];worker.socket.read_exact(&mut packet)?;
+            PaintTelemetry::decode(packet)?
+        } else {PaintTelemetry::default()};
         let mut painted=RawFrame::new(worker.width,worker.height);
         worker.socket.read_exact(&mut painted.data)?;
-        Ok(painted)
+        Ok((painted,telemetry))
     }
 
 }
@@ -102,6 +129,7 @@ fn emit(held:&RawFrame,count:usize,first:u64,fps:f64,repaint:&mut crate::repaint
 pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut Pipeline,limit:usize)->Result<Rendered,Error> {
     let mut encoder=None;let mut times=Vec::new();let mut encode_ms=0.;let mut callback_ms=0.;let mut post_ms=0.;
     let mut pending=0usize;let mut emitted=0u64;
+    let mut paint_updates=0u64;let mut planner_updates=0u64;let mut telemetry=PaintTelemetry::default();
     let mut dimensions=(0,0);let started=Instant::now();
     #[cfg(test)] let mut painted_frames=Vec::new();
     let result=(|| -> Result<Rendered,Error> {
@@ -128,7 +156,14 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
                     #[cfg(test)] &mut painted_frames)?;
                 emitted+=pending as u64;pending=0;
             }
-            paint.held=Some(paint.receive()?);times.push(t.elapsed().as_secs_f64()*1000.);
+            let (frame,update)=paint.receive()?;paint.held=Some(frame);paint_updates+=1;
+            if update.planner {planner_updates+=1;}
+            telemetry.mutated_pixels+=update.mutated_pixels;
+            telemetry.transport_ms+=update.transport_ms;telemetry.planner_ms+=update.planner_ms;
+            telemetry.dirty_ms+=update.dirty_ms;telemetry.worker_cpu_ms+=update.worker_cpu_ms;
+            telemetry.full_raster_ms+=update.full_raster_ms;
+            telemetry.worker_rss_bytes=telemetry.worker_rss_bytes.max(update.worker_rss_bytes);
+            times.push(t.elapsed().as_secs_f64()*1000.);
         }
         paint.output_frames+=1;pending+=1;
         callback_ms+=t.elapsed().as_secs_f64()*1000.;Ok(())
@@ -143,8 +178,11 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
     encode_ms+=t.elapsed().as_secs_f64()*1000.;
     pipeline.source_end=info.first_seconds.map(|first|first+info.frames as f64/fps);
     let (_,warp_ms)=pipeline.repaint.take_timings();
-    Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:fps/pipeline.loaded.as_ref().unwrap().stride,frames:info.frames,width:dimensions.0,height:dimensions.1,
-        first_seconds:info.first_seconds,times,decode_ms,encode_ms,post_ms,repaint_ms:0.,warp_ms})
+    Ok(Rendered {#[cfg(test)] painted_frames,bytes,fps,paint_fps:paint_updates as f64*fps/info.frames.max(1) as f64,frames:info.frames,width:dimensions.0,height:dimensions.1,
+        first_seconds:info.first_seconds,times,decode_ms,encode_ms,post_ms,repaint_ms:0.,warp_ms,
+        paint_updates,planner_updates,mutated_pixels:telemetry.mutated_pixels,
+        transport_ms:telemetry.transport_ms,planner_ms:telemetry.planner_ms,dirty_ms:telemetry.dirty_ms,
+        worker_cpu_ms:telemetry.worker_cpu_ms,full_raster_ms:telemetry.full_raster_ms,worker_rss_bytes:telemetry.worker_rss_bytes})
     })();
     if result.is_err() {pipeline.reset();}
     result
@@ -152,6 +190,56 @@ pub fn render(input:&[u8],width:u32,step:usize,pts:i64,offset:u64,pipeline:&mut 
 
 #[cfg(test)] mod tests {
     use super::*;
+    fn paint2_packet()->[u8;48] {
+        let mut packet=[0u8;48];
+        packet[..4].copy_from_slice(b"PNT2");
+        packet[4]=1;
+        packet[8..16].copy_from_slice(&1234u64.to_le_bytes());
+        for (offset,value) in [(16,1.5f32),(20,2.5),(24,3.5),(28,4.5),(32,5.5)] {
+            packet[offset..offset+4].copy_from_slice(&value.to_le_bytes());
+        }
+        packet[40..48].copy_from_slice(&4096u64.to_le_bytes());
+        packet
+    }
+    #[test] fn paint2_decodes_python_telemetry_packet() {
+        let telemetry=PaintTelemetry::decode(paint2_packet()).unwrap();
+        assert!(telemetry.planner);
+        assert_eq!(telemetry.mutated_pixels,1234);
+        assert_eq!(telemetry.transport_ms,1.5);
+        assert_eq!(telemetry.planner_ms,2.5);
+        assert_eq!(telemetry.dirty_ms,3.5);
+        assert_eq!(telemetry.worker_cpu_ms,4.5);
+        assert_eq!(telemetry.full_raster_ms,5.5);
+        assert_eq!(telemetry.worker_rss_bytes,4096);
+    }
+    #[test] fn paint2_rejects_wrong_magic_and_non_finite_timings() {
+        let mut wrong=paint2_packet();wrong[..4].copy_from_slice(b"NOPE");
+        assert!(PaintTelemetry::decode(wrong).is_err());
+        let mut invalid=paint2_packet();invalid[16..20].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(PaintTelemetry::decode(invalid).is_err());
+    }
+    #[test] fn paint2_worker_returns_telemetry_before_pixels() {
+        let mut command=Command::new("python3");
+        command.arg("-c").arg(r#"
+import socket,struct
+s=socket.socket(fileno=0)
+s.sendall(b'PAINT2')
+left=8+64*36*3
+while left:
+    chunk=s.recv(left)
+    if not chunk: raise SystemExit(1)
+    left-=len(chunk)
+s.sendall(struct.pack('<4sB3xQ5f4xQ',b'PNT2',1,1234,1.5,2.5,3.5,4.5,5.5,4096))
+s.sendall(bytes([77])*64*36*3)
+"#);
+        let worker=LoadedPaint::connect(command,64,36,Duration::from_secs(2)).unwrap();
+        let mut paint=LoadedPaint::new();paint.worker=Some(worker);
+        paint.request(&RawFrame::filled(64,36,1,2,3)).unwrap();
+        let (frame,telemetry)=paint.receive().unwrap();
+        assert_eq!(frame.data[100],77);
+        assert!(telemetry.planner);
+        assert_eq!(telemetry.mutated_pixels,1234);
+    }
     #[test] fn faster_paint_uses_sustainable_headroom_without_ignoring_overload() {
         let mut paint=LoadedPaint::new();paint.min_stride=2.5;paint.stride=2.5;
         for seconds in [5.2,5.4,5.5,5.6,5.5,5.4,5.6,5.5] {
@@ -249,11 +337,45 @@ while True:
         let worker=LoadedPaint::connect(command,64,36,Duration::from_secs(2)).unwrap();
         let mut paint=LoadedPaint::new();paint.stride=3.;paint.min_stride=3.;paint.worker=Some(worker);paint
     }
+    fn fake2()->LoadedPaint {
+        let mut command=Command::new("python3");
+        command.arg("-c").arg(r#"
+import socket,struct
+s=socket.socket(fileno=0)
+s.sendall(b'PAINT2')
+n=0
+while True:
+    left=8+64*36*3
+    while left:
+        chunk=s.recv(left)
+        if not chunk: raise SystemExit(0)
+        left-=len(chunk)
+    n+=1
+    s.sendall(struct.pack('<4sB3xQ5f4xQ',b'PNT2',n%3==1,n,1.,2.,3.,4.,5.,4096+n))
+    s.sendall(bytes([n*30])*64*36*3)
+"#);
+        let worker=LoadedPaint::connect(command,64,36,Duration::from_secs(2)).unwrap();
+        let mut paint=LoadedPaint::new();paint.stride=1.;paint.min_stride=1.;paint.worker=Some(worker);paint
+    }
+    #[test] fn paint2_segment_aggregates_transactions_planners_timings_and_rss() {
+        codec::init();let mut p=Pipeline::new();p.loaded=Some(fake2());
+        let input=codec::encode_segment(&vec![RawFrame::filled(64,36,100,100,100);5],30,0).unwrap();
+        let rendered=render(&input,64,1,0,0,&mut p,720).unwrap();
+        assert_eq!(rendered.paint_updates,5);
+        assert_eq!(rendered.planner_updates,2);
+        assert_eq!(rendered.mutated_pixels,15);
+        assert_eq!(rendered.transport_ms,5.);
+        assert_eq!(rendered.planner_ms,10.);
+        assert_eq!(rendered.dirty_ms,15.);
+        assert_eq!(rendered.worker_cpu_ms,20.);
+        assert_eq!(rendered.full_raster_ms,25.);
+        assert_eq!(rendered.worker_rss_bytes,4101);
+    }
     #[test] fn held_canvas_and_worker_survive_an_uneven_segment_boundary() {
         codec::init();let mut p=Pipeline::new();p.loaded=Some(fake());
         let input=codec::encode_segment(&vec![RawFrame::filled(64,36,100,100,100);5],30,0).unwrap();
         let a=render(&input,64,1,0,0,&mut p,720).unwrap();
-        assert_eq!(a.frames,5);assert_eq!(a.paint_fps,10.);
+        assert_eq!(a.frames,5);assert_eq!(a.paint_fps,12.);
         assert_eq!(a.painted_frames.iter().map(|f|f[100]).collect::<Vec<_>>(),vec![30,30,30,60,60]);
         // The fixture has its own input timestamp origin. Set contiguous end
         // explicitly to exercise the held-canvas continuation rather than gap reset.

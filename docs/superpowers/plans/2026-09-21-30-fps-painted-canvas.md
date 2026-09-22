@@ -119,7 +119,7 @@ git commit -m "test: add paired loaded-paint benchmark"
 **Interfaces:**
 - Produces Python `PaintTelemetry.pack() -> bytes` with the fixed 48-byte `PNT2` response header.
 - Produces Rust `PaintTelemetry::decode([u8; 48]) -> Result<PaintTelemetry, Error>`.
-- Extends `Rendered` and `ProcessingStats` with `painted_frames`, `planner_frames`, `mutated_pixels`, `planner_ms`, `transport_ms`, `dirty_ms`, `worker_cpu_ms`, and `worker_rss_bytes`.
+- Extends `Rendered` and `ProcessingStats` with `paint_updates`, `planner_updates`, `mutated_pixels`, `planner_ms`, `transport_ms`, `dirty_ms`, `worker_cpu_ms`, and `worker_rss_bytes`. (`painted_frames` remains the existing test-only RGB fixture buffer.)
 
 - [ ] **Step 1: Write failing Python protocol tests**
 
@@ -197,10 +197,10 @@ read the telemetry header before RGB for `PAINT2`. Sum counters across the
 segment, take maximum RSS, and derive:
 
 ```rust
-paint_fps = painted_frames as f64 / duration_seconds;
-planner_fps = planner_frames as f64 / duration_seconds;
+paint_fps = paint_updates as f64 / duration_seconds;
+planner_fps = planner_updates as f64 / duration_seconds;
 mutated_pixel_ratio = mutated_pixels as f64
-    / (painted_frames * width as u64 * height as u64).max(1) as f64;
+    / (paint_updates * width as u64 * height as u64).max(1) as f64;
 ```
 
 - [ ] **Step 7: Expose non-waking public metrics**

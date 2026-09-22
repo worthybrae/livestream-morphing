@@ -238,6 +238,20 @@ mod tests {
     #[tokio::test]
     async fn public_status_returns_live_status_json() {
         let (state, _rx) = AppState::new();
+        let expected_stats = crate::pipeline::ProcessingStats {
+            paint_updates: 180,
+            planner_updates: 30,
+            planner_fps: 5.0,
+            mutated_pixel_ratio: 0.125,
+            transport_ms: 11,
+            planner_ms: 22,
+            dirty_ms: 33,
+            worker_cpu_ms: 44,
+            full_raster_ms: 55,
+            worker_rss_bytes: 66,
+            ..Default::default()
+        };
+        *state.stats.lock().unwrap() = expected_stats.clone();
         let app = router_with_config(state, test_config(true));
 
         let response = app
@@ -253,6 +267,16 @@ mod tests {
         assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["engine"]["paint_updates"], 180);
+        assert_eq!(json["engine"]["planner_updates"], 30);
+        assert_eq!(json["engine"]["planner_fps"], 5.0);
+        assert_eq!(json["engine"]["mutated_pixel_ratio"], 0.125);
+        assert_eq!(json["engine"]["transport_ms"], 11);
+        assert_eq!(json["engine"]["planner_ms"], 22);
+        assert_eq!(json["engine"]["dirty_ms"], 33);
+        assert_eq!(json["engine"]["worker_cpu_ms"], 44);
+        assert_eq!(json["engine"]["full_raster_ms"], 55);
+        assert_eq!(json["engine"]["worker_rss_bytes"], 66);
         assert_eq!(
             json,
             serde_json::json!({
@@ -260,7 +284,7 @@ mod tests {
                 "buffer_count": 0,
                 "ready": false,
                 "last_segment_at": 0,
-                "engine": crate::pipeline::ProcessingStats::default(),
+                "engine": expected_stats,
             })
         );
     }

@@ -12,11 +12,36 @@ import struct
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
 from render import Painting, grade, grade_reference, palette
 from adaptive import AdaptiveBrushwork
+
+
+@dataclass(frozen=True)
+class PaintTelemetry:
+    planner: bool
+    mutated_pixels: int
+    transport_ms: float
+    planner_ms: float
+    dirty_ms: float
+    worker_cpu_ms: float
+    full_raster_ms: float
+    worker_rss_bytes: int
+
+    def pack(self):
+        return struct.pack('<4sB3xQ5f4xQ', b'PNT2', int(self.planner),
+            self.mutated_pixels, self.transport_ms, self.planner_ms,
+            self.dirty_ms, self.worker_cpu_ms, self.full_raster_ms,
+            self.worker_rss_bytes)
+
+
+def current_rss_bytes():
+    with open('/proc/self/statm', encoding='ascii') as status:
+        resident_pages = int(status.read().split()[1])
+    return resident_pages * os.sysconf('SC_PAGE_SIZE')
 
 
 class Raster:
@@ -148,16 +173,26 @@ def main():
     if not (64 <= w <= 1920 and 36 <= h <= 2160 and w*h <= 4_147_200):
         raise ValueError('Unsupported live canvas')
     painting = LoadedPainting(w, h)
+    incremental = os.environ.get('LOADED_PAINT_MODE') == 'incremental'
     # stdin is a Unix socket supplied by the Rust supervisor. If it disappears,
     # this worker exits instead of retaining a canvas or becoming an orphan.
     with socket.socket(fileno=0) as sock:
-        sock.sendall(b'PAINT1')
+        sock.sendall(b'PAINT2' if incremental else b'PAINT1')
         totals={};count=0
         try:
             while True:
                 hour, = struct.unpack('<d', read_exact(sock, 8))
                 rgb = np.frombuffer(read_exact(sock, w*h*3), np.uint8).reshape(h, w, 3)
+                cpu_started = time.process_time()
                 paint = painting.paint(rgb, hour)
+                if incremental:
+                    planner_ms = sum(painting.cost.get(name, 0.) for name in
+                        ('base', 'adaptive_update', 'refine')) * 1000.
+                    telemetry = PaintTelemetry(True, w*h,
+                        painting.cost.get('flow', 0.)*1000., planner_ms, 0.,
+                        (time.process_time()-cpu_started)*1000.,
+                        painting.cost.get('raster', 0.)*1000., current_rss_bytes())
+                    sock.sendall(telemetry.pack())
                 sock.sendall(memoryview(paint).cast('B'))
                 count+=1
                 for name,seconds in painting.cost.items():totals[name]=totals.get(name,0.)+seconds

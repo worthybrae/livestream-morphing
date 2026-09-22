@@ -1,13 +1,60 @@
 """Production port checks: material parity, bounded identities, and native math."""
 import copy
+import os
+import pathlib
+import socket
+import struct
+import subprocess
+import sys
 import unittest
 import cv2
 import numpy as np
-from live import Raster, LoadedPainting
+from live import PaintTelemetry, Raster, LoadedPainting, current_rss_bytes
 from render import Painting, grade, grade_reference
 from adaptive import AdaptiveBrushwork
 
 class LiveTests(unittest.TestCase):
+    def test_paint2_telemetry_is_fixed_width_and_round_trips(self):
+        value = PaintTelemetry(True, 1234, 1.5, 2.5, 3.5, 4.5, 5.5, 4096)
+
+        packet = value.pack()
+
+        self.assertEqual(len(packet), 48)
+        self.assertEqual(struct.unpack('<4sB3xQ5f4xQ', packet),
+            (b'PNT2', 1, 1234, 1.5, 2.5, 3.5, 4.5, 5.5, 4096))
+
+    def test_current_rss_is_positive_and_page_aligned(self):
+        resident = current_rss_bytes()
+
+        self.assertGreater(resident, 0)
+        self.assertEqual(resident % os.sysconf('SC_PAGE_SIZE'), 0)
+
+    def test_incremental_worker_sends_paint2_telemetry_before_pixels(self):
+        client, peer = socket.socketpair()
+        environment = os.environ.copy()
+        environment['LOADED_PAINT_MODE'] = 'incremental'
+        process = subprocess.Popen(
+            [sys.executable, '-u', str(pathlib.Path(__file__).with_name('live.py')), '64', '36'],
+            stdin=peer, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=environment)
+        peer.close()
+        try:
+            self.assertEqual(client.recv(6), b'PAINT2')
+            client.sendall(struct.pack('<d', 15.0) + bytes([90, 100, 110]) * (64 * 36))
+            header = bytearray()
+            while len(header) < 48:
+                header.extend(client.recv(48 - len(header)))
+            values = struct.unpack('<4sB3xQ5f4xQ', header)
+            self.assertEqual(values[0], b'PNT2')
+            self.assertEqual(values[1], 1)
+            pixels = bytearray()
+            while len(pixels) < 64 * 36 * 3:
+                pixels.extend(client.recv(64 * 36 * 3 - len(pixels)))
+            self.assertEqual(len(pixels), 64 * 36 * 3)
+        finally:
+            client.close()
+            process.wait(timeout=5)
+            process.stderr.close()
+
     def test_base_strokes_replenish_without_exceeding_the_live_budget(self):
         p=Painting(320,180,(160,90),'transported',limit=200)
         zero=np.zeros((90,160,2),np.float32)
