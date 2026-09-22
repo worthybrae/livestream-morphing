@@ -152,3 +152,29 @@ Only paint-target frames are converted to RGB; every source frame still advances
 the output timeline. The wave uses four independent row bands at large sizes.
 `LOADED_CV_THREADS` bounds OpenCV workers to 1–4, default 4. The worker logs mean
 stage timings and brush counts every 30 paint updates for production diagnosis.
+
+## Thirty-FPS optimization baseline (2026-09-21)
+
+`bench_paint_pair.py` now runs two complete painting workers on identical
+recorded frames, alternates which worker runs first, and rejects any RGB, ground,
+base-mark, or detail-mark difference. Decode, Rust socket, wave, encoding, and
+comparison time are excluded. The JSON result reports mean, median, and linear
+p95 wall/CPU time plus every worker stage. The recording is an external fixture,
+not a repository dependency.
+
+The initial gate used a fresh 18.015-second Abbey Road capture at 1920×1080 and
+30000/1001 FPS inside the ARM64 production container. Two unchanged workers ran
+300 frames with 60 warmup frames and matched every pixel and brush population.
+The candidate-order worker measured 85.464 ms mean, 70.174 ms median, and
+148.374 ms p95 wall time per painting update; process CPU averaged 296.705 ms.
+Mean stages were 6.702 ms flow, 38.888 ms base planning, 3.864 ms waiting for
+adaptive work, 17.110 ms raster, and 18.473 ms refinement. Refinement is bursty:
+its median was 0.002 ms and p95 75.560 ms. These figures replace no Railway
+measurement and make no x86 throughput claim; they are the paired local baseline
+for subsequent changes on the same fixture and host.
+
+Reproduce with a separately captured video mounted into the production image:
+
+```sh
+python bench_paint_pair.py abbey.ts --baseline-dir . --frames 300 --warmup 60
+```
