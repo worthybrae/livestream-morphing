@@ -155,12 +155,55 @@ pub fn encode_segment(
     encode_timed(frames, fps as f64, pts_offset * 90000 / fps as i64)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EncoderOptions {
+    gop_frames: Option<u32>,
+}
+
+impl EncoderOptions {
+    pub fn from_value(value: Option<&str>, fps: f64) -> Result<Self, String> {
+        let Some(value) = value else {
+            return Ok(Self { gop_frames: None });
+        };
+        let seconds = value
+            .parse::<f64>()
+            .map_err(|_| "ENCODE_GOP_SECONDS must be numeric".to_string())?;
+        if !seconds.is_finite() || seconds <= 0.0 || seconds > 10.0 {
+            return Err("ENCODE_GOP_SECONDS must be in (0, 10]".into());
+        }
+        Ok(Self {
+            gop_frames: Some((seconds * fps).round().max(1.0) as u32),
+        })
+    }
+}
+
 pub fn encode_timed(frames: &[RawFrame], fps: f64, pts_offset: i64) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if frames.is_empty() {
         return Err("No frames to encode".into());
     }
 
-    let mut encoder=TsEncoder::new(frames[0].width,frames[0].height,fps,pts_offset)?;
+    let mut encoder = TsEncoder::new(frames[0].width, frames[0].height, fps, pts_offset)?;
+    for frame in frames { encoder.push(frame)?; }
+    encoder.finish()
+}
+
+fn encode_timed_with_options(
+    frames: &[RawFrame],
+    fps: f64,
+    pts_offset: i64,
+    options: EncoderOptions,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    if frames.is_empty() {
+        return Err("No frames to encode".into());
+    }
+
+    let mut encoder = TsEncoder::new_with_options(
+        frames[0].width,
+        frames[0].height,
+        fps,
+        pts_offset,
+        options,
+    )?;
     for frame in frames { encoder.push(frame)?; }
     encoder.finish()
 }
@@ -175,6 +218,11 @@ pub struct TsEncoder {
 }
 impl TsEncoder {
     pub fn new(width:u32,height:u32,fps:f64,pts_offset:i64)->Result<Self,Box<dyn std::error::Error + Send + Sync>> {
+    let options = EncoderOptions::from_value(std::env::var("ENCODE_GOP_SECONDS").ok().as_deref(), fps)?;
+    Self::new_with_options(width, height, fps, pts_offset, options)
+    }
+
+    pub fn new_with_options(width:u32,height:u32,fps:f64,pts_offset:i64,options: EncoderOptions)->Result<Self,Box<dyn std::error::Error + Send + Sync>> {
     let tmp = NamedTempFile::new()?;
     let tmp_path = tmp.path().to_owned();
 
@@ -204,6 +252,9 @@ impl TsEncoder {
     encoder.set_frame_rate(Some(ffmpeg::Rational((fps * 1000.0).round() as i32, 1000)));
     // Use 90kHz time_base to match MPEG-TS native clock
     encoder.set_time_base(ffmpeg::Rational(1, 90000));
+    if let Some(frames) = options.gop_frames {
+        encoder.set_gop(frames);
+    }
 
     if needs_global_header {
         encoder.set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
@@ -215,6 +266,12 @@ impl TsEncoder {
     x264_opts.set("crf", &crf.to_string());
     let threads=std::env::var("ENCODE_THREADS").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(2).clamp(1,4);
     x264_opts.set("threads",&threads.to_string());
+    if let Some(frames) = options.gop_frames {
+        let frames = frames.to_string();
+        x264_opts.set("keyint", &frames);
+        x264_opts.set("min-keyint", &frames);
+        x264_opts.set("scenecut", "0");
+    }
 
     let encoder = encoder.open_with(x264_opts)?;
     ost.set_parameters(&encoder);
@@ -295,6 +352,76 @@ impl TsEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn twitch_gop_is_opt_in_and_uses_source_fps() {
+        assert_eq!(
+            EncoderOptions::from_value(None, 30000.0 / 1001.0)
+                .unwrap()
+                .gop_frames,
+            None
+        );
+        assert_eq!(
+            EncoderOptions::from_value(Some("2"), 30000.0 / 1001.0)
+                .unwrap()
+                .gop_frames,
+            Some(60)
+        );
+        assert!(EncoderOptions::from_value(Some("0"), 30.0).is_err());
+        assert!(EncoderOptions::from_value(Some("not-a-number"), 30.0).is_err());
+    }
+
+    fn video_keyframe_indices(bytes: &[u8]) -> Vec<usize> {
+        let mut tmp = NamedTempFile::new().expect("temporary segment");
+        tmp.write_all(bytes).expect("write segment");
+        tmp.flush().expect("flush segment");
+
+        let mut demuxer = input(tmp.path()).expect("demux segment");
+        let video_index = demuxer
+            .streams()
+            .best(Type::Video)
+            .expect("video stream")
+            .index();
+        let mut packets: Vec<_> = demuxer
+            .packets()
+            .filter(|(stream, _)| stream.index() == video_index)
+            .map(|(_, packet)| {
+                (
+                    packet.pts().expect("packet PTS"),
+                    packet.flags().contains(ffmpeg::packet::Flags::KEY),
+                )
+            })
+            .collect();
+        packets.sort_unstable_by_key(|(pts, _)| *pts);
+        packets
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, is_key))| is_key.then_some(index))
+            .collect()
+    }
+
+    #[test]
+    fn configured_two_second_gop_marks_each_interval_as_key() {
+        init();
+        let frames: Vec<_> = (0..180)
+            .map(|i| RawFrame::filled(64, 48, i as u8, 80, 160))
+            .collect();
+        let bytes = encode_timed_with_options(
+            &frames,
+            30000.0 / 1001.0,
+            0,
+            EncoderOptions {
+                gop_frames: Some(60),
+            },
+        )
+        .unwrap();
+        let keys = video_keyframe_indices(&bytes);
+        assert!(keys.contains(&0));
+        assert!(
+            keys.windows(2).all(|pair| pair[1] - pair[0] <= 60),
+            "keyframes: {keys:?}"
+        );
+    }
 
     #[test]
     fn long_local_exports_do_not_relax_the_live_segment_limit() {
