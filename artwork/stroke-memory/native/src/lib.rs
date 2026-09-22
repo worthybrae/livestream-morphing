@@ -20,6 +20,8 @@ impl Hasher for BrushHasher {
 type HashMap<K,V> = std::collections::HashMap<K,V,BuildHasherDefault<BrushHasher>>;
 type HashSet<K> = std::collections::HashSet<K,BuildHasherDefault<BrushHasher>>;
 mod material;
+mod tiles;
+pub use tiles::{TilePainter,TileResult};
 
 struct Stamp { w:usize, h:usize, ox:i32, oy:i32, pixels:Vec<[i16;2]>, spans:Vec<(usize,usize)>, prepared:Vec<[i16;2]>, key:Option<[i32;3]>, pending:[i32;3] }
 fn make_stamp(p:&[f32])->Stamp {
@@ -208,11 +210,13 @@ fn raster(canvas:&mut [u8],w:usize,h:usize,values:&[f32],cache:&HashMap<u32,Stam
 }
 pub struct Painter {
     w:usize,h:usize,canvas:Vec<u8>,rgb:Vec<u8>,cache:HashMap<u32,Stamp>,material:material::Material,
+    incremental:TilePainter,
 }
 impl Painter {
     pub fn new(w:usize,h:usize,style:&str)->Option<Self> {
         if w==0 || h==0 || w>8192 || h>8192 || w*h>16_777_216 {return None;}
-        Some(Self {w,h,canvas:vec![0;w*h*4],rgb:vec![0;w*h*3],cache:HashMap::default(),material:material::Material::parse(style)?})
+        Some(Self {w,h,canvas:vec![0;w*h*4],rgb:vec![0;w*h*3],cache:HashMap::default(),
+            material:material::Material::parse(style)?,incremental:TilePainter::new(w,h,style)?})
     }
     pub fn paint(&mut self,values:&[f32],append:bool)->Option<&[u8]> {
         if values.len()%12!=0 || values.len()>100_000*12 {return None;}
@@ -272,13 +276,38 @@ pub unsafe extern "C" fn paint_frame(p:*mut Painter,marks:*const f32,count:usize
     let values=if count==0 {&[]} else {std::slice::from_raw_parts(marks,count*12)};
     (*p).paint(values,append).map(|pixels|pixels.as_ptr()).unwrap_or(std::ptr::null())
 }
+#[repr(C)]
+pub struct PaintFrameStats {
+    pub mutated_pixels:u64,pub dirty_micros:u64,pub full_raster_micros:u64,pub full_fallback:u8,
+}
 #[no_mangle]
-pub unsafe extern "C" fn paint_clear(p:*mut Painter) {if !p.is_null() {(*p).cache.clear();}}
+pub unsafe extern "C" fn paint_frame_incremental(p:*mut Painter,marks:*const f32,count:usize,stats:*mut PaintFrameStats)->*const u8 {
+    if p.is_null() || stats.is_null() || count>100_000 || (count>0 && marks.is_null()) {return std::ptr::null();}
+    let values=if count==0 {&[]} else {std::slice::from_raw_parts(marks,count*12)};
+    let Some(result)=(*p).incremental.paint(values) else {return std::ptr::null();};
+    *stats=PaintFrameStats {mutated_pixels:result.mutated_pixels,dirty_micros:result.dirty_micros,
+        full_raster_micros:result.full_raster_micros,full_fallback:result.full_fallback as u8};
+    result.rgb.as_ptr()
+}
+#[no_mangle]
+pub unsafe extern "C" fn paint_clear(p:*mut Painter) {if !p.is_null() {(*p).cache.clear();(*p).incremental.clear();}}
 #[no_mangle]
 pub unsafe extern "C" fn paint_free(p:*mut Painter) {if !p.is_null() {drop(Box::from_raw(p));}}
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn incremental_abi_reports_changes_and_rejects_invalid_packets() {
+        let mut painter=Painter::new(79,61,"loaded").unwrap();
+        let mark=[1.,25.25,22.75,18.,7.,0.31,0.17,160.,80.,190.,0.83,1.];
+        let mut stats=PaintFrameStats {mutated_pixels:0,dirty_micros:0,full_raster_micros:0,full_fallback:0};
+        let first=unsafe {paint_frame_incremental(&mut painter,mark.as_ptr(),1,&mut stats)};
+        assert!(!first.is_null());assert_eq!(stats.full_fallback,1);assert!(stats.mutated_pixels>0);
+        let second=unsafe {paint_frame_incremental(&mut painter,mark.as_ptr(),1,&mut stats)};
+        assert!(!second.is_null());assert_eq!(stats.mutated_pixels,0);
+        let duplicate=[mark,mark].concat();
+        assert!(unsafe {paint_frame_incremental(&mut painter,duplicate.as_ptr(),2,&mut stats)}.is_null());
+        assert!(unsafe {paint_frame_incremental(&mut painter,mark.as_ptr(),1,std::ptr::null_mut())}.is_null());
+    }
     #[cfg(target_arch="x86_64")]
     #[test] fn vector_color_grade_preserves_day_night_and_rgb_tails() {
         if !std::arch::is_x86_feature_detected!("avx2") {return;}

@@ -44,6 +44,12 @@ def current_rss_bytes():
     return resident_pages * os.sysconf('SC_PAGE_SIZE')
 
 
+class PaintFrameStats(ctypes.Structure):
+    _fields_ = [('mutated_pixels', ctypes.c_uint64),
+        ('dirty_micros', ctypes.c_uint64), ('full_raster_micros', ctypes.c_uint64),
+        ('full_fallback', ctypes.c_uint8)]
+
+
 class Raster:
     def __init__(self, width, height):
         suffix = '.dylib' if sys.platform == 'darwin' else '.so'
@@ -53,6 +59,9 @@ class Raster:
         self.lib.paint_new.restype = ctypes.c_void_p
         self.lib.paint_frame.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_size_t, ctypes.c_bool]
         self.lib.paint_frame.restype = ctypes.POINTER(ctypes.c_uint8)
+        self.lib.paint_frame_incremental.argtypes = [ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_float), ctypes.c_size_t, ctypes.POINTER(PaintFrameStats)]
+        self.lib.paint_frame_incremental.restype = ctypes.POINTER(ctypes.c_uint8)
         self.lib.paint_clear.argtypes = self.lib.paint_free.argtypes = [ctypes.c_void_p]
         self.lib.paint_clear.restype = self.lib.paint_free.restype = None
         self.lib.paint_grade.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.c_double, ctypes.POINTER(ctypes.c_double)]
@@ -63,6 +72,8 @@ class Raster:
         if not self.handle:
             raise ValueError('Unsupported canvas dimensions')
         self.w, self.h = width, height
+        self.incremental_dirty_ms = 0.
+        self.incremental_full_fallback = False
 
     def paint(self, marks, append=False):
         marks = np.ascontiguousarray(marks, dtype=np.float32)
@@ -70,6 +81,30 @@ class Raster:
         if not ptr:
             raise RuntimeError('Invalid brush packet')
         return np.ctypeslib.as_array(ptr, shape=(self.h*self.w*3,)).reshape(self.h, self.w, 3)
+
+    def paint_incremental(self, marks):
+        marks = np.ascontiguousarray(marks, dtype=np.float32)
+        stats = PaintFrameStats()
+        ptr = self.lib.paint_frame_incremental(self.handle,
+            marks.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), len(marks), ctypes.byref(stats))
+        if not ptr:
+            self.clear()
+            started = time.perf_counter()
+            ptr = self.lib.paint_frame(self.handle,
+                marks.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), len(marks), False)
+            if not ptr:
+                raise RuntimeError('Invalid brush packet')
+            full_ms = (time.perf_counter()-started)*1000.
+            self.incremental_dirty_ms = 0.
+            self.incremental_full_fallback = True
+            mutated = self.w*self.h
+        else:
+            full_ms = stats.full_raster_micros/1000.
+            self.incremental_dirty_ms = stats.dirty_micros/1000.
+            self.incremental_full_fallback = bool(stats.full_fallback)
+            mutated = stats.mutated_pixels
+        pixels = np.ctypeslib.as_array(ptr, shape=(self.h*self.w*3,)).reshape(self.h, self.w, 3)
+        return pixels, mutated, full_ms
 
     def grade(self, source, hour):
         source = np.ascontiguousarray(source, dtype=np.uint8)

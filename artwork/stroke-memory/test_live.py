@@ -1,5 +1,6 @@
 """Production port checks: material parity, bounded identities, and native math."""
 import copy
+import ctypes
 import os
 import pathlib
 import socket
@@ -9,11 +10,36 @@ import sys
 import unittest
 import cv2
 import numpy as np
-from live import PaintTelemetry, Raster, LoadedPainting, current_rss_bytes
+from live import PaintFrameStats, PaintTelemetry, Raster, LoadedPainting, current_rss_bytes
 from render import Painting, grade, grade_reference
 from adaptive import AdaptiveBrushwork
 
 class LiveTests(unittest.TestCase):
+    def test_incremental_raster_clears_and_retries_full_once_after_native_failure(self):
+        class FakeNative:
+            def __init__(self):
+                self.incremental_calls = self.clear_calls = self.full_calls = 0
+                self.pixels = (ctypes.c_uint8 * 12)(*range(12))
+            def paint_frame_incremental(self, handle, marks, count, stats):
+                self.incremental_calls += 1
+                return ctypes.POINTER(ctypes.c_uint8)()
+            def paint_clear(self, handle):
+                self.clear_calls += 1
+            def paint_frame(self, handle, marks, count, append):
+                self.full_calls += 1
+                return ctypes.cast(self.pixels, ctypes.POINTER(ctypes.c_uint8))
+        raster = Raster.__new__(Raster)
+        raster.lib, raster.handle, raster.w, raster.h = FakeNative(), 1, 2, 2
+
+        pixels, mutated, full_ms = raster.paint_incremental(np.empty((0, 12), np.float32))
+
+        self.assertEqual(raster.lib.incremental_calls, 1)
+        self.assertEqual(raster.lib.clear_calls, 1)
+        self.assertEqual(raster.lib.full_calls, 1)
+        self.assertEqual(mutated, 4)
+        self.assertGreaterEqual(full_ms, 0.)
+        np.testing.assert_array_equal(pixels.ravel(), np.arange(12, dtype=np.uint8))
+
     def test_paint2_telemetry_is_fixed_width_and_round_trips(self):
         value = PaintTelemetry(True, 1234, 1.5, 2.5, 3.5, 4.5, 5.5, 4096)
 
