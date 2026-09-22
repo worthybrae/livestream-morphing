@@ -213,21 +213,6 @@ frame 3. These results make the remaining limit explicit: exact planner and
 dirty-canvas semantics need an architectural redesign, not hand-written
 assembly in an isolated blend loop.
 
-Two Railway canaries on 2026-09-22 confirmed that conclusion. Exact
-incremental painting at 1920x1080 produced one 29.97-FPS segment in 17.209 s,
-then correctly fell back to 11.988 FPS. A 960x540 canary still took 16.627 s
-and fell back at the same cadence. The workload is dominated by transporting,
-planning, and replaying brush state rather than output pixel count.
-
-`LOADED_TRANSPORT_MODE=flow` is the deliberately non-exact high-cadence path.
-It continues to transport the bounded brush state every source frame, but
-motion-warps the last reconciled painted canvas with the already-computed
-current-to-previous optical flow instead of replaying all dirty tiles. A full
-planner/raster pass periodically reconciles that canvas; production uses
-`LOADED_PLANNER_STRIDE=30` for one reconciliation per second. Every source
-frame still receives a distinct painted canvas and the legacy/exact paths are
-unchanged when the mode is absent.
-
 Reproduce the retained gate inside the production ARM64 container:
 
 ```sh
