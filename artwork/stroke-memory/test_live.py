@@ -76,6 +76,21 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(len({tuple(mark) for mark in identities}), 6)
         self.assertTrue(all(item.mutated_pixels > 0 for item in telemetry))
 
+    def test_transport_only_frame_does_not_grade_full_resolution_sources(self):
+        def trusted_translation(points, forward, backward, previous=None, current=None):
+            return points + np.array([1., 0.], np.float32), np.ones(len(points), bool)
+        with mock.patch.dict(os.environ, {'LOADED_PAINT_MODE':'incremental',
+                                           'LOADED_PLANNER_STRIDE':'3'}), \
+             mock.patch('render.transport', side_effect=trusted_translation), \
+             mock.patch('adaptive.transport', side_effect=trusted_translation):
+            painting = LoadedPainting(160, 90)
+            frame = np.full((90, 160, 3), [90, 120, 150], np.uint8)
+            painting.paint(frame, 15.)
+            with mock.patch.object(painting.raster, 'grade',
+                                   side_effect=AssertionError('redundant grade')):
+                _, telemetry = painting.paint(frame, 15.)
+        self.assertFalse(telemetry.planner)
+
     def test_incremental_raster_clears_and_retries_full_once_after_native_failure(self):
         class FakeNative:
             def __init__(self):

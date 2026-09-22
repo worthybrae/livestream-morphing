@@ -126,7 +126,8 @@ class Painting:
         self._transport_trusted = trusted
         return changed
 
-    def update(self, image, forward, backward, detail_image=None, attention=None):
+    def update(self, image, forward, backward, detail_image=None, attention=None,
+               motion_grays=None):
         if self.detail=='people' and attention is None:
             raise ValueError('Person-guided brushwork requires an attention field')
         first = not len(self.strokes)
@@ -168,7 +169,8 @@ class Painting:
                 coherence = np.sqrt((tensor[:,:,0]-tensor[:,:,1])**2+4*tensor[:,:,2]**2)/(tensor[:,:,0]+tensor[:,:,1]+1)
             sources.append((accent, detail_scale))
         if len(self.strokes):
-            self.transport_only(forward,backward,self.previous_gray,current_gray)
+            previous_motion,current_motion = motion_grays or (self.previous_gray,current_gray)
+            self.transport_only(forward,backward,previous_motion,current_motion)
             trusted = self._transport_trusted
             self.age += 1
             target = np.empty((len(self.strokes),3),np.float32)

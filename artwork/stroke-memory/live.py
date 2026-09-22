@@ -47,6 +47,7 @@ class PreparedFrame:
     forward: np.ndarray
     backward: np.ndarray
     prepare_ms: float
+    previous_gray: np.ndarray = None
 
 
 class PaintWorker:
@@ -244,14 +245,15 @@ class LoadedPainting:
             raise ValueError('Invalid live paint input')
         started = time.perf_counter()
         small = cv2.resize(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), (self.fw, self.fh), interpolation=cv2.INTER_AREA)
-        if self.previous is None:
+        previous = self.previous
+        if previous is None:
             forward = backward = np.zeros((self.fh, self.fw, 2), np.float32)
         else:
-            forward = self.dis.calc(self.previous, small, None)
-            backward = self.dis.calc(small, self.previous, None)
+            forward = self.dis.calc(previous, small, None)
+            backward = self.dis.calc(small, previous, None)
         self.previous = small
         return PreparedFrame(rgb, small, forward, backward,
-            (time.perf_counter()-started)*1000.)
+            (time.perf_counter()-started)*1000., previous)
 
     def paint(self, rgb, hour):
         return self.paint_prepared(self.prepare(rgb), hour)
@@ -269,16 +271,8 @@ class LoadedPainting:
         planner = not self.incremental or self.updates%self.planner_stride == 0
         if not planner:
             transport_started = time.perf_counter()
-            base_source = self.raster.grade(analysis, hour%24)
-            base_gray = cv2.resize(cv2.cvtColor(base_source, cv2.COLOR_RGB2GRAY),
-                (self.fw, self.fh), interpolation=cv2.INTER_AREA)
-            detail_source = self.raster.grade(rgb, hour%24)
-            detail_gray = cv2.resize(cv2.cvtColor(detail_source, cv2.COLOR_RGB2GRAY),
-                (self.fw, self.fh), interpolation=cv2.INTER_AREA)
-            self.book.transport_only(forward, backward, self.book.previous_gray, base_gray)
-            self.adaptive.transport_only(forward, backward, self.adaptive.previous, detail_gray)
-            self.book.previous_gray = base_gray
-            self.adaptive.previous = detail_gray
+            self.book.transport_only(forward, backward, prepared.previous_gray, prepared.gray)
+            self.adaptive.transport_only(forward, backward, prepared.previous_gray, prepared.gray)
             marks = np.concatenate([self.book.ground, self.book.strokes, self.adaptive.strokes])
             transport_ms = (time.perf_counter()-transport_started)*1000.
             native_started = time.perf_counter()
@@ -290,9 +284,11 @@ class LoadedPainting:
                 self.cost['flow']*1000.+transport_ms, 0., self.raster.incremental_dirty_ms,
                 (time.process_time()-cpu_started)*1000., full_ms, current_rss_bytes())
         def update_adaptive():
-            return self.adaptive.begin(self.raster.grade(rgb, hour%24), forward, backward)
+            return self.adaptive.begin(self.raster.grade(rgb, hour%24), forward, backward,
+                (prepared.previous_gray, prepared.gray))
         future = self.pool.submit(update_adaptive)
-        marks = self.book.update(self.raster.grade(analysis, hour%24), forward, backward)
+        marks = self.book.update(self.raster.grade(analysis, hour%24), forward, backward,
+            motion_grays=(prepared.previous_gray, prepared.gray))
         t2 = time.perf_counter(); self.cost['base'] = t2-t
         retained = future.result()
         t = time.perf_counter(); self.cost['adaptive_update'] = t-t2

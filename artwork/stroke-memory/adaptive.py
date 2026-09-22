@@ -72,7 +72,7 @@ class AdaptiveBrushwork:
         self._transport_trusted=trusted
         return changed
 
-    def begin(self,graded_source,forward,backward):
+    def begin(self,graded_source,forward,backward,motion_grays=None):
         self.first=self.previous is None
         self.valid_references.clear()
         pixels=self.buffer('source_input',graded_source.shape)
@@ -85,7 +85,8 @@ class AdaptiveBrushwork:
         self.edge_gray=gray
         self.has_orientation=False
         if len(self.strokes):
-            self.transport_only(forward,backward,self.previous,current)
+            previous_motion,current_motion=motion_grays or (self.previous,current)
+            self.transport_only(forward,backward,previous_motion,current_motion)
             trusted=self._transport_trusted
             target=np.empty((len(self.strokes),3),np.float32)
             for level,radius in enumerate([12.,6.,2.5]):

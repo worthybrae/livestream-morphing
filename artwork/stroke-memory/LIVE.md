@@ -178,3 +178,12 @@ Reproduce with a separately captured video mounted into the production image:
 ```sh
 python bench_paint_pair.py abbey.ts --baseline-dir . --frames 300 --warmup 60
 ```
+
+The first retained incremental pass removed two full-resolution color grades
+from transport-only frames and used the already prepared adjacent grayscale
+pair for motion confidence. Two identical incremental workers matched every
+pixel and brush population over 120 frames (30 warmup, 90 measured). Candidate
+wall time fell from the prior 96.049 ms mean / 38.017 ms median to 87.432 ms /
+22.714 ms; process CPU fell from 198.592 ms to 182.464 ms per update. The mean
+remains above the 33.24 ms gate, so this is retained as a measured intermediate
+improvement rather than a throughput claim.
