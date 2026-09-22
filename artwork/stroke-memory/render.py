@@ -111,6 +111,21 @@ class Painting:
             self.candidates.append(pts[order])
             self.variants.append(variants[order])
 
+    def transport_only(self, forward, backward, previous_gray, current_gray):
+        changed = np.zeros(len(self.strokes), bool)
+        self._transport_trusted = np.zeros(len(self.strokes), bool)
+        if not len(self.strokes):
+            return changed
+        pts = self.strokes[:, 1:3]*self.factor
+        moved, trusted = transport(pts, forward, backward, previous_gray, current_gray)
+        displacement = (moved-pts)/self.factor
+        displacement[np.linalg.norm(displacement, axis=1)<.22] = 0
+        if self.mode == 'transported':
+            changed = trusted & np.any(displacement != 0, axis=1)
+            self.strokes[trusted, 1:3] += displacement[trusted]
+        self._transport_trusted = trusted
+        return changed
+
     def update(self, image, forward, backward, detail_image=None, attention=None):
         if self.detail=='people' and attention is None:
             raise ValueError('Person-guided brushwork requires an attention field')
@@ -153,13 +168,8 @@ class Painting:
                 coherence = np.sqrt((tensor[:,:,0]-tensor[:,:,1])**2+4*tensor[:,:,2]**2)/(tensor[:,:,0]+tensor[:,:,1]+1)
             sources.append((accent, detail_scale))
         if len(self.strokes):
-            pts = self.strokes[:, 1:3]*self.factor
-            moved, trusted = transport(pts, forward, backward,self.previous_gray,current_gray)
-            if self.mode == 'transported':
-                displacement = (moved-pts)/self.factor
-                # Subpixel jitter on unmoving walls should not erode a mark.
-                displacement[np.linalg.norm(displacement, axis=1)<.22] = 0
-                self.strokes[trusted, 1:3] += displacement[trusted]
+            self.transport_only(forward,backward,self.previous_gray,current_gray)
+            trusted = self._transport_trusted
             self.age += 1
             target = np.empty((len(self.strokes),3),np.float32)
             for coat, (blurred, image_scale) in enumerate(sources):

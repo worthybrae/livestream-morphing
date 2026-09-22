@@ -144,6 +144,8 @@ class LoadedPainting:
         self.updates = 0
         self.cost = {}
         self.pool = ThreadPoolExecutor(max_workers=1)
+        self.incremental = os.environ.get('LOADED_PAINT_MODE') == 'incremental'
+        self.planner_stride = max(2, min(6, int(os.environ.get('LOADED_PLANNER_STRIDE', '3'))))
 
     def compact_ids(self):
         # float32 ids must stay exact AND the three populations must not collide
@@ -161,6 +163,7 @@ class LoadedPainting:
         if rgb.shape != (self.h, self.w, 3) or not np.isfinite(hour):
             raise ValueError('Invalid live paint input')
         started = time.perf_counter()
+        cpu_started = time.process_time()
         self.compact_ids()
         small = cv2.resize(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), (self.fw, self.fh), interpolation=cv2.INTER_AREA)
         if self.previous is None:
@@ -172,6 +175,29 @@ class LoadedPainting:
         t = time.perf_counter(); self.cost['flow'] = t-started
         aw = min(self.w, 960)
         analysis = cv2.resize(rgb, (aw, round(self.h*aw/self.w)), interpolation=cv2.INTER_AREA)
+        planner = not self.incremental or self.updates%self.planner_stride == 0
+        if not planner:
+            transport_started = time.perf_counter()
+            base_source = self.raster.grade(analysis, hour%24)
+            base_gray = cv2.resize(cv2.cvtColor(base_source, cv2.COLOR_RGB2GRAY),
+                (self.fw, self.fh), interpolation=cv2.INTER_AREA)
+            detail_source = self.raster.grade(rgb, hour%24)
+            detail_gray = cv2.resize(cv2.cvtColor(detail_source, cv2.COLOR_RGB2GRAY),
+                (self.fw, self.fh), interpolation=cv2.INTER_AREA)
+            self.book.transport_only(forward, backward, self.book.previous_gray, base_gray)
+            self.adaptive.transport_only(forward, backward, self.adaptive.previous, detail_gray)
+            self.book.previous_gray = base_gray
+            self.adaptive.previous = detail_gray
+            marks = np.concatenate([self.book.ground, self.book.strokes, self.adaptive.strokes])
+            transport_ms = (time.perf_counter()-transport_started)*1000.
+            native_started = time.perf_counter()
+            paint, mutated, full_ms = self.raster.paint_incremental(marks)
+            self.cost.update(base=0., adaptive_update=0., raster=time.perf_counter()-native_started,
+                             refine=0.)
+            self.updates += 1
+            return paint, PaintTelemetry(False, mutated,
+                self.cost['flow']*1000.+transport_ms, 0., self.raster.incremental_dirty_ms,
+                (time.process_time()-cpu_started)*1000., full_ms, current_rss_bytes())
         def update_adaptive():
             return self.adaptive.begin(self.raster.grade(rgb, hour%24), forward, backward)
         future = self.pool.submit(update_adaptive)
@@ -181,13 +207,26 @@ class LoadedPainting:
         t = time.perf_counter(); self.cost['adaptive_update'] = t-t2
         paint = self.raster.paint(np.concatenate([marks, retained]))
         t2 = time.perf_counter(); self.cost['raster'] = t2-t
-        if self.updates%3 == 0:
+        full_raster_ms = self.cost['raster']*1000.
+        if self.incremental or self.updates%3 == 0:
             for level, radius in enumerate([12., 6., 2.5]):
                 added = self.adaptive.propose(paint, radius*self.w/1920, level,
                     [700, 1000, 1400][level] if self.updates == 0 else [140, 240, 600][level])
                 if len(added):
+                    native_started = time.perf_counter()
                     paint = self.raster.paint(added, append=True)
+                    full_raster_ms += (time.perf_counter()-native_started)*1000.
         self.cost['refine'] = time.perf_counter()-t2
+        if self.incremental:
+            marks = np.concatenate([marks, self.adaptive.strokes])
+            paint, mutated, incremental_full_ms = self.raster.paint_incremental(marks)
+            full_raster_ms += incremental_full_ms
+            planner_ms = (self.cost['base']+self.cost['adaptive_update']+
+                self.cost['refine'])*1000.-(full_raster_ms-incremental_full_ms)
+            self.updates += 1
+            return paint, PaintTelemetry(True, mutated, self.cost['flow']*1000.,
+                max(0., planner_ms), self.raster.incremental_dirty_ms,
+                (time.process_time()-cpu_started)*1000., full_raster_ms, current_rss_bytes())
         self.updates += 1
         return paint
 
@@ -218,16 +257,11 @@ def main():
             while True:
                 hour, = struct.unpack('<d', read_exact(sock, 8))
                 rgb = np.frombuffer(read_exact(sock, w*h*3), np.uint8).reshape(h, w, 3)
-                cpu_started = time.process_time()
-                paint = painting.paint(rgb, hour)
                 if incremental:
-                    planner_ms = sum(painting.cost.get(name, 0.) for name in
-                        ('base', 'adaptive_update', 'refine')) * 1000.
-                    telemetry = PaintTelemetry(True, w*h,
-                        painting.cost.get('flow', 0.)*1000., planner_ms, 0.,
-                        (time.process_time()-cpu_started)*1000.,
-                        painting.cost.get('raster', 0.)*1000., current_rss_bytes())
+                    paint, telemetry = painting.paint(rgb, hour)
                     sock.sendall(telemetry.pack())
+                else:
+                    paint = painting.paint(rgb, hour)
                 sock.sendall(memoryview(paint).cast('B'))
                 count+=1
                 for name,seconds in painting.cost.items():totals[name]=totals.get(name,0.)+seconds

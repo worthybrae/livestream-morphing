@@ -11,6 +11,26 @@ from render import grade, grade_reference
 
 
 class AdaptiveTests(unittest.TestCase):
+    def test_transport_only_moves_adaptive_marks_without_birth_retirement_or_failure_changes(self):
+        book=AdaptiveBrushwork(160,96,(40,24))
+        book.strokes=np.array([
+            [2_000_000,40,32,8,3,0,.1,20,30,40,1,4],
+            [2_000_001,80,48,8,3,0,.2,50,60,70,1,5],
+            [2_000_002,112,64,8,3,0,.3,80,90,100,1,6]],np.float32)
+        book.failures=np.array([0,1,0],np.float32)
+        before=book.strokes.copy();failures=book.failures.copy()
+        counters=(book.born,book.retired,book.next_id)
+        forward=np.zeros((24,40,2),np.float32);forward[:]=[2,-1]
+
+        changed=book.transport_only(forward,-forward,None,None)
+
+        np.testing.assert_array_equal(book.strokes[:,0],before[:,0])
+        np.testing.assert_array_equal(book.strokes[:,3:],before[:,3:])
+        np.testing.assert_allclose(book.strokes[:,1:3],before[:,1:3]+[8,-4])
+        self.assertTrue(changed.all())
+        np.testing.assert_array_equal(book.failures,failures)
+        self.assertEqual((book.born,book.retired,book.next_id),counters)
+
     def test_reference_grading_retains_the_established_day_and_night_palette(self):
         rng=np.random.default_rng(61)
         source=rng.integers(0,256,(64,128,3),np.uint8)

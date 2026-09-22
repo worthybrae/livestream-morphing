@@ -57,6 +57,21 @@ class AdaptiveBrushwork:
         self.references={}
         self.valid_references=set()
 
+    def transport_only(self,forward,backward,previous_gray,current_gray):
+        changed=np.zeros(len(self.strokes),bool)
+        self._transport_trusted=np.zeros(len(self.strokes),bool)
+        if not len(self.strokes):
+            return changed
+        points=self.strokes[:,1:3]*self.factor
+        moved,trusted=transport(points,forward,backward,previous_gray,current_gray)
+        displacement=(moved-points)/self.factor
+        displacement[np.linalg.norm(displacement,axis=1)<.22]=0
+        if self.mode=='transported':
+            changed=trusted&np.any(displacement!=0,axis=1)
+            self.strokes[trusted,1:3]+=displacement[trusted]
+        self._transport_trusted=trusted
+        return changed
+
     def begin(self,graded_source,forward,backward):
         self.first=self.previous is None
         self.valid_references.clear()
@@ -70,12 +85,8 @@ class AdaptiveBrushwork:
         self.edge_gray=gray
         self.has_orientation=False
         if len(self.strokes):
-            points=self.strokes[:,1:3]*self.factor
-            moved,trusted=transport(points,forward,backward,self.previous,current)
-            displacement=(moved-points)/self.factor
-            displacement[np.linalg.norm(displacement,axis=1)<.22]=0
-            if self.mode=='transported':
-                self.strokes[trusted,1:3]+=displacement[trusted]
+            self.transport_only(forward,backward,self.previous,current)
+            trusted=self._transport_trusted
             target=np.empty((len(self.strokes),3),np.float32)
             for level,radius in enumerate([12.,6.,2.5]):
                 selected=self.strokes[:,11]==4+level

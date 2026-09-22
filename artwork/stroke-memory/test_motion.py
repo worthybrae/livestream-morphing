@@ -6,6 +6,42 @@ from render import Painting
 
 
 class TransportTests(unittest.TestCase):
+    def test_base_transport_only_moves_trusted_marks_without_planning_or_aging(self):
+        book = Painting(160, 96, (40, 24), 'transported')
+        book.strokes = np.array([
+            [1, 40, 32, 8, 3, 0, .1, 20, 30, 40, 1, 0],
+            [2, 80, 48, 8, 3, 0, .2, 50, 60, 70, 1, 1],
+            [3, 112, 64, 8, 3, 0, .3, 80, 90, 100, 1, 2]], np.float32)
+        book.age = np.array([4, 5, 6], np.int32)
+        book.failures = np.array([0, 1, 0], np.float32)
+        before = book.strokes.copy(); ages = book.age.copy(); failures = book.failures.copy()
+        counters = (book.births, book.retired, book.next_id)
+        forward = np.zeros((24, 40, 2), np.float32); forward[:] = [2, -1]
+        backward = -forward
+
+        changed = book.transport_only(forward, backward, None, None)
+
+        np.testing.assert_array_equal(book.strokes[:, 0], before[:, 0])
+        np.testing.assert_array_equal(book.strokes[:, 3:], before[:, 3:])
+        np.testing.assert_allclose(book.strokes[:, 1:3], before[:, 1:3] + [8, -4])
+        self.assertTrue(changed.all())
+        np.testing.assert_array_equal(book.age, ages)
+        np.testing.assert_array_equal(book.failures, failures)
+        self.assertEqual((book.births, book.retired, book.next_id), counters)
+
+    def test_base_transport_only_retains_an_untrusted_mark_unchanged(self):
+        book = Painting(160, 96, (40, 24), 'transported')
+        book.strokes = np.array([[1, 80, 48, 8, 3, 0, .1, 20, 30, 40, 1, 0]], np.float32)
+        book.age = np.array([7], np.int32); book.failures = np.array([1], np.float32)
+        before = book.strokes.copy()
+        forward = np.zeros((24, 40, 2), np.float32); forward[:] = [3, 0]
+        backward = np.zeros_like(forward)
+
+        changed = book.transport_only(forward, backward, None, None)
+
+        np.testing.assert_array_equal(book.strokes, before)
+        self.assertFalse(changed[0])
+
     def detail_scene(self):
         source = np.full((160,960,3),110,np.uint8)
         source[30:125,400:404] = 25

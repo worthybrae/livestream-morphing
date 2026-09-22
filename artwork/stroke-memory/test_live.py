@@ -8,6 +8,7 @@ import struct
 import subprocess
 import sys
 import unittest
+from unittest import mock
 import cv2
 import numpy as np
 from live import PaintFrameStats, PaintTelemetry, Raster, LoadedPainting, current_rss_bytes
@@ -15,6 +16,34 @@ from render import Painting, grade, grade_reference
 from adaptive import AdaptiveBrushwork
 
 class LiveTests(unittest.TestCase):
+    def test_incremental_mode_paints_every_frame_and_plans_at_bounded_keyframes(self):
+        def trusted_translation(points, forward, backward, previous=None, current=None):
+            return points + np.array([1., 0.], np.float32), np.ones(len(points), bool)
+        with mock.patch.dict(os.environ, {'LOADED_PAINT_MODE':'incremental',
+                                           'LOADED_PLANNER_STRIDE':'3'}), \
+             mock.patch('render.transport', side_effect=trusted_translation), \
+             mock.patch('adaptive.transport', side_effect=trusted_translation):
+            painting = LoadedPainting(160, 90)
+            calls = []
+            native = painting.raster.paint_incremental
+            def capture(marks):
+                calls.append(marks.copy())
+                return native(marks)
+            painting.raster.paint_incremental = capture
+            frame = np.full((90, 160, 3), [90, 120, 150], np.uint8)
+            telemetry = []
+            for _ in range(6):
+                _, update = painting.paint(frame, 15.)
+                telemetry.append(update)
+
+        self.assertEqual(len(calls), 6)
+        self.assertEqual([item.planner for item in telemetry],
+                         [True, False, False, True, False, False])
+        identities = [packet[(packet[:,0] > 0) & (packet[:,0] < 1_000_000)][0, :3]
+                      for packet in calls]
+        self.assertEqual(len({tuple(mark) for mark in identities}), 6)
+        self.assertTrue(all(item.mutated_pixels > 0 for item in telemetry))
+
     def test_incremental_raster_clears_and_retries_full_once_after_native_failure(self):
         class FakeNative:
             def __init__(self):
