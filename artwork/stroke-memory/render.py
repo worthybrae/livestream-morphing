@@ -351,7 +351,7 @@ class Piles:
 
 class Painting:
     def __init__(self, width, height, flow_size, mode, detail='original', detail_hour=None, limit=45000, hand='approved', piles=0, drift=1., stir=0., ripple=1., border_tone='dark', pulse=False,
-                 border_weight=1., border_depth=1., ripple_everywhere=0., stand_out=20, picked=None, slim=18., swell=.85, keen=1.):
+                 border_weight=1., border_depth=1., ripple_everywhere=0., stand_out=20, picked=None, slim=18., swell=.85, keen=1., reserve=0, rate=15.):
         self.w, self.h = width, height
         self.fw, self.fh = flow_size
         self.factor = np.array([self.fw/width, self.fh/height], np.float32)
@@ -380,6 +380,10 @@ class Painting:
         self.picked, self.slim = picked, slim
         self.swell = swell  # the most a pulsing line may swell and thin, as a share of its width
         self.keen = keen  # how readily a faint edge of a thing is given a line
+        # Room kept free of ordinary marks for long strokes, so that a population
+        # running at its limit, as the live one does, can still take a line.
+        self.reserve = reserve
+        self.rate = rate  # updates a second: what turns the count of updates into time
         self.picked_ids, self.picked_owner = (0, 0), None
         self.where = self.line_mask = self.present = self.give = None
         self.showing = []  # picked lines up at each update
@@ -524,7 +528,7 @@ class Painting:
             hold = hold*np.clip(1-self.unrest/6, 0, 1)
         # Eased in and out, so a thing never jumps when something passes it.
         self.held = hold if self.held is None else self.held*.75+hold*.25
-        seconds = self.turn/15
+        seconds = self.turn/self.rate
         y, x = np.mgrid[0:self.fh,0:self.fw].astype(np.float32)
         wave = np.stack([np.sin(2*np.pi*seconds/5+y*.16+x*.05), np.cos(2*np.pi*seconds/6.3+x*.14-y*.04)], axis=2)
         # However it is driven, no patch of paint travels far enough to tear.
@@ -538,7 +542,7 @@ class Painting:
     def lively(self, lines):
         """Phase and reach of each drawn line's motion: one slow wave crossing the
         picture, livelier where people and cars have just passed."""
-        phase = 2*np.pi*self.turn/15/7+(lines[:,1]*.004+lines[:,2]*.006)/self.scale
+        phase = 2*np.pi*self.turn/self.rate/7+(lines[:,1]*.004+lines[:,2]*.006)/self.scale
         reach = np.full(len(lines), self.drift, np.float32)
         if self.stir and self.stirred is not None:
             reach *= 1+self.stir*np.clip(sample(self.stirred, lines[:,1:3]*self.factor)[:,0]/6, 0, 1)
@@ -576,7 +580,8 @@ class Painting:
         if not self.drift or not lines.any():
             return marks
         marks = marks.copy()
-        marks[lines,0] = 4_000_000+2*marks[lines,0]+self.turn%2
+        # Above every other identity, the live finishing marks' 2,000,000 to 8,000,000 included.
+        marks[lines,0] = 9_000_000+2*marks[lines,0]+self.turn%2
         if self.pulse:
             # The line stays where it is and swells and thins instead. For a border, the
             # upper half of the coat's fraction tells the rasteriser to draw it as one.
@@ -584,7 +589,7 @@ class Painting:
             marks[lines,4] *= 1+np.clip(.3*reach, 0, self.swell)*np.sin(phase)
             marks[lines,11] += .5*(self.hand=='border')
         else:
-            marks[lines,11] += (self.turn/15/5%1)/2
+            marks[lines,11] += (self.turn/self.rate/5%1)/2
         return marks
 
     def mixed(self, colours, seeds):
@@ -848,7 +853,8 @@ class Painting:
             self.strokes, self.age, self.failures = self.strokes[keep], self.age[keep], self.failures[keep]
 
         additions = []
-        remaining = max(0,self.limit-len(self.strokes))
+        spare = max(0, self.reserve-int(np.isin(self.strokes[:,11], LONG).sum()))
+        remaining = max(0,self.limit-len(self.strokes)-spare)
         for coat, (pts, variety, step, (blurred, image_scale)) in enumerate(zip(
                 self.candidates, self.variants, self.steps, sources)):
             # A full population cannot accept candidates. Keep transporting and
@@ -992,6 +998,7 @@ class Painting:
                 p[:,7:10], p[:,10], p[:,11] = line_pigment(xy, angle, rv[:,2]), (1 if first else .3), DRAWN
                 additions.append(p)
                 self.next_id += len(ids)
+        remaining += spare
         hidden = None
         if self.picked is not None and first:
             # Lines picked by hand on the still scene: laid once, where they were picked.

@@ -227,4 +227,92 @@ class LiveTests(unittest.TestCase):
         finally:
             p.pool.shutdown();p.raster.close()
 
+    @staticmethod
+    def thing_on_a_ground(width=640, height=360):
+        # Pale blocks on a darker ground: things the borders look outlines.
+        scene = np.full((height, width, 3), [90, 100, 110], np.uint8)
+        scene[height//9:height//3, width//16:width//4] = [225, 215, 185]
+        scene[height//2:height*7//9, width//2:width*11//16] = [225, 215, 185]
+        return cv2.GaussianBlur(scene, (0, 0), 1.2)
+
+    def test_no_look_is_painted_unless_asked_for(self):
+        p = LoadedPainting(160, 90)
+        try:
+            p.paint(np.full((90, 160, 3), [90, 120, 150], np.uint8), 15.)
+            self.assertIsNone(p.look)
+            self.assertEqual(p.book.hand, 'approved')
+            self.assertIsNone(p.book.piles)
+            self.assertEqual(p.book.reserve, 0)
+            self.assertEqual(p.adaptive.error_filter, p.raster.rgb_max_error)
+        finally:
+            p.pool.shutdown(); p.raster.close()
+
+    def test_borders_look_draws_its_lines_last_and_drifts_the_paint(self):
+        scene = self.thing_on_a_ground()
+        with mock.patch.dict(os.environ, {'LOADED_LOOK': 'borders'}):
+            os.environ.pop('LOADED_PAINT_MODE', None)
+            p = LoadedPainting(640, 360)
+        try:
+            packets = []
+            native = p.raster.paint
+            def capture(marks, append=False):
+                if not append:
+                    packets.append(np.array(marks, np.float32))
+                return native(marks, append)
+            p.raster.paint = capture
+            for _ in range(5):
+                shown = p.paint(scene, 15.)
+            canvas = native(packets[-1]).copy()
+        finally:
+            p.pool.shutdown(); p.raster.close()
+
+        self.assertEqual(p.book.hand, 'contour')
+        self.assertIsNotNone(p.book.piles)
+        last = packets[-1]
+        lines = last[:,11] >= 9
+        self.assertGreater(int(lines.sum()), 0)
+        # Every line comes after everything else, the finishing marks included.
+        self.assertTrue(lines[int(np.argmax(lines)):].all())
+        self.assertTrue((last[lines,0] >= 9_000_000).all())
+        self.assertTrue((last[:,0] < 2**24).all())
+        self.assertEqual(len(np.unique(last[:,0])), len(last))
+        self.assertEqual((shown.shape, shown.dtype), ((360, 640, 3), np.uint8))
+        self.assertIsNotNone(p.book.towed)
+        self.assertFalse(np.array_equal(shown, canvas))
+
+    def test_a_reserve_leaves_room_for_lines_in_a_full_population(self):
+        scene = self.thing_on_a_ground()
+        zero = np.zeros((90, 160, 2), np.float32)
+        def lines_after(reserve):
+            p = Painting(640, 360, (160, 90), 'transported', limit=400, hand='contour', reserve=reserve)
+            for _ in range(3):
+                p.update(scene, zero, zero)
+            self.assertLessEqual(len(p.strokes), 400)
+            return int((p.strokes[:,11] >= 9).sum())
+        self.assertEqual(lines_after(0), 0)
+        self.assertGreater(lines_after(80), 0)
+
+    def test_an_unknown_look_paints_the_approved_look(self):
+        with mock.patch.dict(os.environ, {'LOADED_LOOK': 'nonesuch'}), mock.patch('sys.stderr'):
+            p = LoadedPainting(160, 90)
+        try:
+            self.assertIsNone(p.look)
+            self.assertEqual(p.book.hand, 'approved')
+        finally:
+            p.pool.shutdown(); p.raster.close()
+
+    def test_borders_look_refuses_incremental_painting(self):
+        with mock.patch.dict(os.environ, {'LOADED_LOOK': 'borders', 'LOADED_PAINT_MODE': 'incremental'}):
+            with self.assertRaises(ValueError):
+                LoadedPainting(160, 90)
+
+    def test_borders_look_keeps_time_at_the_requested_cadence(self):
+        with mock.patch.dict(os.environ, {'LOADED_LOOK': 'borders', 'LOADED_PAINT_STRIDE': '2.5'}):
+            os.environ.pop('LOADED_PAINT_MODE', None)
+            p = LoadedPainting(160, 90)
+        try:
+            self.assertAlmostEqual(p.book.rate, 30000/1001/2.5, places=6)
+        finally:
+            p.pool.shutdown(); p.raster.close()
+
 if __name__=='__main__':unittest.main()

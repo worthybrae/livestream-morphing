@@ -18,8 +18,17 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
-from render import Painting, grade, grade_reference, palette
+from render import DRAWN, Painting, Piles, along, grade, grade_reference, palette
 from adaptive import AdaptiveBrushwork
+
+# Looks beyond the approved one, chosen with LOADED_LOOK: the study options
+# (render.py) the live painter then runs with. Unset, nothing here is used.
+LOOKS = {
+    # Tone mixed in a few piles; borders round still things in their own colour,
+    # swelling and thinning; the paint drifting and bending a little everywhere.
+    'borders': dict(hand='contour', piles=6, drift=2.6, stir=2., ripple=1.6, border_tone='own', pulse=True,
+                    border_weight=1.25, border_depth=.6, ripple_everywhere=.4, swell=.4, keen=2.2, reserve=400),
+}
 
 
 @dataclass(frozen=True)
@@ -231,11 +240,26 @@ class LoadedPainting:
         self.w, self.h = width, height
         self.fw, self.fh = 480, round(480*height/width)
         self.dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_FAST)
-        self.book = Painting(width, height, (self.fw, self.fh), 'transported', limit=14000)
+        look = os.environ.get('LOADED_LOOK', '')
+        if look and look not in LOOKS:
+            # A mistyped setting must not take the stream down: paint the approved look.
+            print(f'Loaded paint: unknown LOADED_LOOK {look!r}, painting the approved look', file=sys.stderr, flush=True)
+        self.look = LOOKS.get(look)
+        self.book = Painting(width, height, (self.fw, self.fh), 'transported', limit=14000, **(self.look or {}))
         self.adaptive = AdaptiveBrushwork(width, height, (self.fw, self.fh))
         self.raster = Raster(width, height)
         self.adaptive.accept_filter = self.raster.select
         self.adaptive.error_filter = self.raster.rgb_max_error
+        if self.look:
+            if os.environ.get('LOADED_PAINT_MODE') == 'incremental':
+                raise ValueError('This look is not painted incrementally yet')
+            # The study painted 15 times a second. Its slow motions keep their pace
+            # at the cadence the engine is asked for (it may paint slower under load).
+            stride = float(os.environ.get('LOADED_PAINT_STRIDE', '3'))
+            self.book.rate = 30000/1001/min(12., max(2., stride if np.isfinite(stride) else 3.))
+            self.covered = np.zeros((height, width), np.uint8)
+            self.adaptive.error_filter = self.forgiving
+            self.across, self.down = np.meshgrid(np.arange(width, dtype=np.float32), np.arange(height, dtype=np.float32))
         self.previous = None
         self.updates = 0
         self.cost = {}
@@ -254,6 +278,34 @@ class LoadedPainting:
         self.adaptive.next_id = 2_000_000+len(self.adaptive.strokes)
         self.raster.clear()
         return True
+
+    def forgiving(self, reference, working, error):
+        # The finishing pass must not paint over a drawn line, nor "correct" the
+        # lean each stroke takes from its pile.
+        self.raster.rgb_max_error(reference, working, error)
+        np.subtract(error, 7., out=error)
+        np.maximum(error, 0., out=error)
+        error[self.covered>0] = 0
+
+    def cover(self, lines):
+        # Where the drawn lines run, a little wider than they are.
+        self.covered[:] = 0
+        if len(lines):
+            routes = np.round(np.stack([along(lines, u) for u in np.linspace(-1, 1, 9)], axis=1)).astype(np.int32)
+            for route, width in zip(routes, lines[:,4]):
+                cv2.polylines(self.covered, [route], False, 1, int(round(width*2+6)))
+
+    def shown(self, paint):
+        # The paint drifts and bends as the study's does: a little everywhere, more
+        # inside bordered things. The raster's own canvas is left as it was painted.
+        if self.book.towed is None:
+            return paint
+        started = time.perf_counter()
+        shift = cv2.resize(self.book.towed, (self.w, self.h), interpolation=cv2.INTER_LINEAR)
+        moved = cv2.remap(paint, self.across-shift[:,:,0], self.down-shift[:,:,1], cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_REPLICATE)
+        self.cost['drift'] = time.perf_counter()-started
+        return moved
 
     def prepare(self, rgb):
         if rgb.shape != (self.h, self.w, 3):
@@ -299,8 +351,14 @@ class LoadedPainting:
                 (time.process_time()-cpu_started)*1000., full_ms, current_rss_bytes())
         aw = min(self.w, 960)
         analysis = cv2.resize(rgb, (aw, round(self.h*aw/self.w)), interpolation=cv2.INTER_AREA)
+        if self.look and self.book.piles is None:
+            # Mixed here, before the finishing pass reads them from its own thread.
+            self.book.piles = Piles(self.raster.grade(analysis, hour%24), self.book.pile_count)
         def update_adaptive():
-            return self.adaptive.begin(self.raster.grade(rgb, hour%24), forward, backward,
+            reference = self.raster.grade(rgb, hour%24)
+            if self.look:
+                reference = self.book.piles.repaint(reference)
+            return self.adaptive.begin(reference, forward, backward,
                 (prepared.previous_gray, prepared.gray))
         future = self.pool.submit(update_adaptive)
         marks = self.book.update(self.raster.grade(analysis, hour%24), forward, backward,
@@ -308,6 +366,12 @@ class LoadedPainting:
         t2 = time.perf_counter(); self.cost['base'] = t2-t
         retained = future.result()
         t = time.perf_counter(); self.cost['adaptive_update'] = t-t2
+        if self.look:
+            retained = retained.copy()
+            retained[:,7:10] += Piles.lean(retained[:,6], retained[:,7:10])
+            drawn = marks[:,11]>=DRAWN  # drawn lines go on last, over the finishing marks
+            self.cover(marks[drawn])
+            marks, retained = marks[~drawn], np.concatenate([retained, marks[drawn]])
         paint = self.raster.paint(np.concatenate([marks, retained]))
         t2 = time.perf_counter(); self.cost['raster'] = t2-t
         full_raster_ms = self.cost['raster']*1000.
@@ -332,7 +396,7 @@ class LoadedPainting:
                 max(0., planner_ms), self.raster.incremental_dirty_ms,
                 (time.process_time()-cpu_started)*1000., full_raster_ms, current_rss_bytes())
         self.updates += 1
-        return paint
+        return self.shown(paint) if self.look else paint
 
 
 def read_exact(sock, size):

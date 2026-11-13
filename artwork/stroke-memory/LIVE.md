@@ -221,3 +221,34 @@ python bench_paint_pair.py abbey.ts --baseline-dir BASELINE_SOURCE \
   --baseline-native BASELINE_SO --candidate-native CANDIDATE_SO \
   --frames 300 --warmup 60
 ```
+
+## Borders look (2026-11-13, not deployed)
+
+`LOADED_LOOK=borders` runs the worker with the look chosen in the brush studies:
+tone mixed in six piles, borders round still things in their own colour that
+swell and thin, and the paint drifting and bending a little everywhere. Unset,
+the worker paints the approved look and none of this code runs; an unknown value
+is reported on stderr and ignored. The engine needs no change: the variable is
+inherited by the worker it starts.
+
+It is a first port, measured only on an arm64 Mac, and not a production
+candidate yet:
+
+- With the variable unset, 90 updates of a 1920×1080 recording matched the
+  worker and native library of commit `5953d06` in every pixel and in the base,
+  ground and finishing mark populations.
+- With it set, the worker laid the same borders as the study on the same
+  recording (184 showing on average over 270 updates) and bent the paint on the
+  same share of the picture.
+- It costs about twice as much: 108.8 ms mean and 94.3 ms median per update
+  against 53.6 and 49.5 for the approved look on the same machine and
+  recording. Nearly all of it is base planning (77.7 ms against 24.0), mostly
+  wide blurs for the edge fields and many small colour lookups for the lines.
+  Bending the picture is 2.3 ms. At that cost the cadence guard would settle
+  near half the present paint rate.
+- Incremental painting refuses it: lines are not yet carried through
+  transport-only frames.
+- Its slow motions count paint updates, at the rate `LOADED_PAINT_STRIDE` asks
+  for. When the guard slows painting they slow with it.
+- The engine's night grade makes this look murky; the study's night clips were
+  painted with the day grade. Unresolved.
