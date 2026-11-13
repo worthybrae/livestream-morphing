@@ -114,27 +114,29 @@ def along(marks, u):
 def trace(start, heading, alive, step, count, settle=None, turn=.9):
     """Walk both ways from each start along a direction field.
 
-    heading(points) gives unit tangents of either sign, alive(points) says which
-    walks may go on, settle(points, direction) may pull a walker back onto its
-    edge. Returns the walked points [n, 2*count+1, 2] and which were reached.
+    heading(points) gives unit tangents of either sign, alive(points, who) says
+    which of the walkers numbered `who` may go on, settle(points, direction) may
+    pull a walker back onto its edge. Returns the walked points [n, 2*count+1, 2]
+    and which were reached.
     """
     n = len(start)
     path = np.repeat(start[:,None,:], 2*count+1, axis=1).astype(np.float32)
     valid = np.zeros((n, 2*count+1), bool); valid[:,count] = True
     first = heading(start)
     for sign in (1, -1):
-        at, direction, going = start.astype(np.float32).copy(), first*sign, np.ones(n, bool)
+        # Only the walkers still going are carried on: most stop within a few steps.
+        who, at, direction = np.arange(n), start.astype(np.float32).copy(), first*sign
         for k in range(1, count+1):
             at = at+direction*step
             if settle is not None:
                 at = settle(at, direction)
             ahead = heading(at)
             ahead = ahead*np.where((ahead*direction).sum(axis=1, keepdims=True)<0, -1, 1)
-            going &= alive(at) & ((ahead*direction).sum(axis=1)>turn) & ((ahead*first).sum(axis=1)*sign>.3)
+            going = alive(at, who) & ((ahead*direction).sum(axis=1)>turn) & ((ahead*first[who]).sum(axis=1)*sign>.3)
             if not going.any():
                 break
-            direction = np.where(going[:,None], ahead, direction)
-            path[going, count+sign*k], valid[going, count+sign*k] = at[going], True
+            who, at, direction = who[going], at[going], ahead[going]
+            path[who, count+sign*k], valid[who, count+sign*k] = at, True
     return path, valid
 
 
@@ -326,7 +328,8 @@ class Piles:
     def lean(seeds, colours):
         """Neighbouring strokes of one pile lean a little warm or cool, light or dark.
         Less so in the dark, where the same lean would shout."""
-        warm, value = ((seeds*37.31)%1-.5)[:,None]*2, ((seeds*71.93)%1-.5)[:,None]*2
+        warm, value = seeds*37.31, seeds*71.93
+        warm, value = (warm-np.floor(warm)-.5)[:,None]*2, (value-np.floor(value)-.5)[:,None]*2
         return (warm*np.array([7,1,-7], np.float32)+value*5)*np.clip(colours.max(axis=1)/90, .25, 1)[:,None]
 
     def mix(self, colours, seeds=None):
@@ -1107,8 +1110,25 @@ class Painting:
                     if len(chosen)>=budget:
                         break
                 return marks[chosen]
-            def sites(eligible, most):
-                ids = np.flatnonzero(eligible & (sample(calm, pts*self.factor)[:,0]<4))
+            # Looked for seldom, the search for lines is made cheaper in two ways that
+            # the study's pace does without: a site reads each field at its nearest
+            # pixel, and no walker is sent out where a line of its kind already runs.
+            cells = grid = None
+            if self.pace>1:
+                cells = np.clip(np.round(self.line_candidates*analysis_scale), 0, [image.shape[1]-1,image.shape[0]-1]).astype(int)
+                grid = np.clip(np.round(self.line_candidates*self.factor), 0, [self.fw-1,self.fh-1]).astype(int)
+            def read(field):
+                return pigment(field, pts)[:,0] if cells is None else field[cells[:,1],cells[:,0]]
+            def sites(eligible, most, coat=None):
+                if coat is None or grid is None:
+                    ids = np.flatnonzero(eligible & (sample(calm, pts*self.factor)[:,0]<4))
+                else:
+                    taken = np.zeros((self.fh,self.fw), np.uint8)
+                    old = self.strokes[self.strokes[:,11]==coat]
+                    if len(old):
+                        routes = np.round(np.stack([along(old, u) for u in np.linspace(-1, 1, 9)], axis=1)*self.factor).astype(np.int32)
+                        cv2.polylines(taken, list(routes), False, 1, 1)
+                    ids = np.flatnonzero(eligible & (calm[grid[:,1],grid[:,0]]<4) & (taken[grid[:,1],grid[:,0]]==0))
                 return ids if first else np.roll(ids, -self.turn*211)[:most*seldom]
             def settle(image):
                 # Nudge a walker sideways onto the crest of the edge or line it follows.
@@ -1139,8 +1159,8 @@ class Painting:
             ids = sites(pigment(cv2.absdiff(fine, broad), pts).max(axis=1)<12, 800) if self.hand=='gesture' and outlining else []
             if len(ids):
                 origin = pigment(medium, pts[ids])
-                def same(points):
-                    return (np.abs(pigment(medium, points)-origin).max(axis=1)<20) & within(points, 6)
+                def same(points, who):
+                    return (np.abs(pigment(medium, points)-origin[who]).max(axis=1)<20) & within(points, 6)
                 path, valid = trace(pts[ids], heading(form_way), same, 12*self.scale, 22)
                 rv = self.pull_variants[ids]
                 found = fit(path, valid, rv[:,3]<.35, 5*self.scale)
@@ -1163,7 +1183,7 @@ class Painting:
                 p[:,7:10] = self.mixed(c, p[:,6])
                 laid.append(lay(p, .4, 900 if first else 30*seldom, .8))
             pts = self.line_candidates
-            thin = pigment(lift, pts)[:,0] if restating else None
+            thin = read(lift) if restating else None
             # Contour lines: the point of the brush run round the outline of a thing.
             if finding or self.solid is None:
                 self.solid, self.off_outline = self.things(image)
@@ -1191,12 +1211,12 @@ class Painting:
                 p[:,7:10] = border_pigment(p[:,1:3], p[:,5]+np.arctan(bends(p[:,6])[1]), p[:,6])
                 laid.append(lay(p, .3, 1400 if first else 60*seldom, .5))
             elif self.hand!='border':
-                ids = sites((pigment(strength, pts)[:,0]>6.5/self.keen) & (pigment(firm, pts)[:,0]>.62/self.keen**.5) &
-                            (pigment(off_outline, pts)[:,0]<3), 600) if outlining else []
+                ids = sites((read(strength)>6.5/self.keen) & (read(firm)>.62/self.keen**.5) &
+                            (read(off_outline)<3), 600, CONTOUR) if outlining else []
                 if len(ids):
                     # One picture of the three things a walker asks at every step.
                     footing = np.dstack([strength, firm, off_outline])
-                    def on_edge(points):
+                    def on_edge(points, who):
                         at = pigment(footing, points)
                         return ((at[:,0]>5.5/self.keen) & (at[:,1]>.5/self.keen**.5) &
                                 within(points, 3) & (at[:,2]<5))
@@ -1208,14 +1228,14 @@ class Painting:
                 # Restated lines: a road marking or a pole put back in one stroke of its own colour.
                 # Light markings only need it under the pulls, which smear over them;
                 # dark poles and rails are things in their own right and are always drawn.
-                ids = sites(((np.abs(thin) if self.hand=='gesture' else -thin)>14) & (pigment(firm, pts)[:,0]>.6), 600) if restating else []
+                ids = sites(((np.abs(thin) if self.hand=='gesture' else -thin)>14) & (read(firm)>.6), 600, RIDGE) if restating else []
                 if len(ids):
                     sign, origin = np.sign(thin[ids]), pigment(fine, pts[ids])
                     marking = np.dstack([fine, lift])
-                    def on_line(points):
+                    def on_line(points, who):
                         at = pigment(marking, points)
-                        return ((at[:,3]*sign>8) & within(points, 3) &
-                                (np.abs(at[:,:3]-origin).max(axis=1)<34))
+                        return ((at[:,3]*sign[who]>8) & within(points, 3) &
+                                (np.abs(at[:,:3]-origin[who]).max(axis=1)<34))
                     p = drawn_line(ids, on_line, settle(np.abs(lift)), RIDGE, lambda found, rv: np.full(len(found), 9*self.scale))
                     if self.hand!='gesture':
                         # A dark line lying across the ground is a shadow or a crack; one

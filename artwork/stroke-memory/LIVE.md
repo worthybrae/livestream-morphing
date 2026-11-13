@@ -291,6 +291,18 @@ candidate yet:
   pair, median of means 61.3 ms against 70.0, with the approved look at 52.9
   alongside: about 1.16 times against 1.32. On a quiet machine pace 4 had
   measured 1.29 times, so these figures are relative, not absolute.
+- A leaner search for new lines followed. A border walker that has stopped is
+  no longer carried through the remaining steps (exact, and the largest single
+  gain: 16 ms to 5 for one search). At a pace above 1 a site reads each field at
+  its nearest pixel, and no walker is sent out from a site that a line of its
+  kind already runs through; borders showing rose slightly (231 in the last 18
+  of 72 seconds, against 227). Over five alternating runs of 150 updates on a
+  quieter machine: 54.8 ms median of means against 57.0 for the commit before
+  and 47.9 for the approved look, so about 1.14 times against 1.19.
+- Tried and withdrawn in that round: finding things on every other round only.
+  It saved under a millisecond and drew two dark strokes along a kerb that no
+  earlier clip had, because lines were then laid against where moving things
+  had been. Things are found once a round.
 - Incremental painting refuses it: lines are not yet carried through
   transport-only frames.
 - Its slow motions count paint updates, at the rate `LOADED_PAINT_STRIDE` asks
