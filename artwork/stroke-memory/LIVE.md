@@ -267,6 +267,18 @@ candidate yet:
   the first 18), about 6% fewer, because a border lost for good is found again
   a little later. At 1.3 times the cost the cadence guard would settle near
   three quarters of the present paint rate.
+- A third round is exact again (150 updates identical to the round before).
+  The reference is recoloured into piles by the native library (`paint_piles`;
+  an older library without it falls back to NumPy), the finishing pass's error
+  is cleared along the lines by drawing them into it instead of through a mask
+  picture, and the drift reuses its buffers. Over four alternating runs of 150
+  updates the look's mean fell from 64.6 to 61.2 ms, with the approved look at
+  47.6 alongside: about 1.29 times. What remains, per update: on every fourth
+  update the main thread studies the scene while the finishing thread waits
+  (about 26 ms over, 6.5 amortised), and about 5 ms of work after both threads
+  join (the drift, the lean of the finishing marks, fresh stamps for lines that
+  changed width). Closing the first needs that study moved to a thread of its
+  own or into the native library.
 - Incremental painting refuses it: lines are not yet carried through
   transport-only frames.
 - Its slow motions count paint updates, at the rate `LOADED_PAINT_STRIDE` asks

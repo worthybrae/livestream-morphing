@@ -313,6 +313,19 @@ class LiveTests(unittest.TestCase):
         self.assertGreater(int((seldom.strokes[:,11] >= 9).sum()), 0)
         self.assertEqual(int((seldom.strokes[:,11] >= 9).sum()), int((every.strokes[:,11] >= 9).sum()))
 
+    def test_native_piles_match_the_python_repaint(self):
+        from render import Piles
+        rng = np.random.default_rng(5)
+        piles = Piles(cv2.GaussianBlur(rng.integers(0, 256, (90, 160, 3), dtype=np.uint8), (0, 0), 2), 6)
+        raster = Raster(192, 108)
+        try:
+            self.assertTrue(raster.has_piles)
+            for shape in ((1, 1, 3), (7, 5, 3), (1080, 1920, 3)):
+                image = rng.integers(0, 256, shape, dtype=np.uint8)
+                np.testing.assert_array_equal(raster.piles(image, piles), piles.repaint(image))
+        finally:
+            raster.close()
+
     def test_an_unknown_look_paints_the_approved_look(self):
         with mock.patch.dict(os.environ, {'LOADED_LOOK': 'nonesuch'}), mock.patch('sys.stderr'):
             p = LoadedPainting(160, 90)

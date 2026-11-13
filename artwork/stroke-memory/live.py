@@ -165,6 +165,11 @@ class Raster:
         self.lib.paint_select.restype = ctypes.c_size_t
         self.lib.paint_rgb_max_error.argtypes = [ctypes.POINTER(ctypes.c_float),ctypes.POINTER(ctypes.c_float),ctypes.POINTER(ctypes.c_float),ctypes.c_size_t]
         self.lib.paint_rgb_max_error.restype = None
+        # Newer than the rest: an older library, as a paired benchmark may load, lacks it.
+        self.has_piles = hasattr(self.lib, 'paint_piles')
+        if self.has_piles:
+            self.lib.paint_piles.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
+            self.lib.paint_piles.restype = None
         self.handle = self.lib.paint_new(width, height, True)
         if not self.handle:
             raise ValueError('Unsupported canvas dimensions')
@@ -214,6 +219,16 @@ class Raster:
         self.lib.paint_grade(source.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), result.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), source.size//3, float(night), tint.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
         return result
 
+    def piles(self, source, piles):
+        # The picture in a painter's mixed piles (render.Piles), as its repaint gives it.
+        if not self.has_piles:
+            return piles.repaint(source)
+        source = np.ascontiguousarray(source, dtype=np.uint8)
+        table = np.ascontiguousarray(piles.table, dtype=np.uint8)
+        result = np.empty_like(source)
+        self.lib.paint_piles(source.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), result.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), source.size//3, table.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)))
+        return result
+
     def select(self, work, target, candidates, budget, scale):
         work=np.ascontiguousarray(work,dtype=np.float32)
         target=np.ascontiguousarray(target,dtype=np.float32)
@@ -260,9 +275,11 @@ class LoadedPainting:
             # at the cadence the engine is asked for (it may paint slower under load).
             stride = float(os.environ.get('LOADED_PAINT_STRIDE', '3'))
             self.book.rate = 30000/1001/min(12., max(2., stride if np.isfinite(stride) else 3.))
-            self.covered = np.zeros((height, width), np.uint8)
+            self.routes = []
             self.adaptive.error_filter = self.forgiving
             self.across, self.down = np.meshgrid(np.arange(width, dtype=np.float32), np.arange(height, dtype=np.float32))
+            self.from_x, self.from_y = np.empty_like(self.across), np.empty_like(self.down)
+            self.moved = np.empty((height, width, 3), np.uint8)
         self.previous = None
         self.updates = 0
         self.cost = {}
@@ -286,17 +303,17 @@ class LoadedPainting:
         # The finishing pass must not paint over a drawn line, nor "correct" the
         # lean each stroke takes from its pile.
         self.raster.rgb_max_error(reference, working, error)
-        np.subtract(error, 7., out=error)
-        np.maximum(error, 0., out=error)
-        error[self.covered>0] = 0
+        cv2.subtract(error, 7., dst=error)
+        cv2.max(error, 0., dst=error)
+        for route, width in self.routes:
+            cv2.polylines(error, [route], False, 0., width)
 
     def cover(self, lines):
         # Where the drawn lines run, a little wider than they are.
-        self.covered[:] = 0
+        self.routes = []
         if len(lines):
             routes = np.round(np.stack([along(lines, u) for u in np.linspace(-1, 1, 9)], axis=1)).astype(np.int32)
-            for route, width in zip(routes, lines[:,4]):
-                cv2.polylines(self.covered, [route], False, 1, int(round(width*2+6)))
+            self.routes = [(route, int(round(width*2+6))) for route, width in zip(routes, lines[:,4])]
 
     def shown(self, paint):
         # The paint drifts and bends as the study's does: a little everywhere, more
@@ -304,11 +321,13 @@ class LoadedPainting:
         if self.book.towed is None:
             return paint
         started = time.perf_counter()
-        shift = cv2.resize(self.book.towed, (self.w, self.h), interpolation=cv2.INTER_LINEAR)
-        moved = cv2.remap(paint, self.across-shift[:,:,0], self.down-shift[:,:,1], cv2.INTER_LINEAR,
-                          borderMode=cv2.BORDER_REPLICATE)
+        # Like the canvas, the picture returned is overwritten by the next update.
+        for shift, home, source in ((0, self.across, self.from_x), (1, self.down, self.from_y)):
+            cv2.resize(np.ascontiguousarray(self.book.towed[:,:,shift]), (self.w, self.h), dst=source, interpolation=cv2.INTER_LINEAR)
+            cv2.subtract(home, source, dst=source)
+        cv2.remap(paint, self.from_x, self.from_y, cv2.INTER_LINEAR, dst=self.moved, borderMode=cv2.BORDER_REPLICATE)
         self.cost['drift'] = time.perf_counter()-started
-        return moved
+        return self.moved
 
     def prepare(self, rgb):
         if rgb.shape != (self.h, self.w, 3):
@@ -360,7 +379,7 @@ class LoadedPainting:
         def update_adaptive():
             reference = self.raster.grade(rgb, hour%24)
             if self.look:
-                reference = self.book.piles.repaint(reference)
+                reference = self.raster.piles(reference, self.book.piles)
             return self.adaptive.begin(reference, forward, backward,
                 (prepared.previous_gray, prepared.gray))
         future = self.pool.submit(update_adaptive)

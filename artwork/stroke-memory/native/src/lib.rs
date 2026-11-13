@@ -409,6 +409,20 @@ pub unsafe extern "C" fn paint_rgb_max_error(source:*const f32,canvas:*const f32
             }
         }
     }
+    #[test] fn piles_lookup_matches_its_index_on_small_and_split_frames() {
+        let table:Vec<u8>=(0..32768*3).map(|i|((i as u32).wrapping_mul(2654435761)>>24) as u8).collect();
+        for count in [0usize,1,2,7,65539,1_000_003] {
+            let input:Vec<u8>=(0..count*3).map(|i| {
+                ((i as u32).wrapping_mul(1664525).wrapping_add(1013904223)>>16) as u8
+            }).collect();
+            let mut actual=vec![0u8;input.len()];
+            unsafe {paint_piles(input.as_ptr(),actual.as_mut_ptr(),count,table.as_ptr());}
+            for (pixel,(source,painted)) in input.chunks_exact(3).zip(actual.chunks_exact(3)).enumerate() {
+                let at=((source[0] as usize/8)*1024+(source[1] as usize/8)*32+source[2] as usize/8)*3;
+                assert_eq!(painted,&table[at..at+3],"count={count}, pixel={pixel}");
+            }
+        }
+    }
     #[test] fn parallel_texture_generation_preserves_large_and_small_stroke_order() {
         let (w,h)=(129,97);
         let mut painter=Painter::new(w,h,"loaded").unwrap();
@@ -514,6 +528,29 @@ pub unsafe extern "C" fn paint_grade(src:*const u8,dst:*mut u8,count:usize,night
             }
         });
     } else {grade_pixels(input,output,night,color);}
+}
+/// Each pixel as the mixed pile a painter would reach for: a lookup in the
+/// 32x32x32 table the Python `Piles` builds, by the top five bits of each channel.
+#[no_mangle]
+pub unsafe extern "C" fn paint_piles(src:*const u8,dst:*mut u8,count:usize,table:*const u8) {
+    if src.is_null() || dst.is_null() || table.is_null() || count>4_147_200 {return;}
+    let input=std::slice::from_raw_parts(src,count*3);
+    let output=std::slice::from_raw_parts_mut(dst,count*3);
+    let piles=std::slice::from_raw_parts(table,32768*3);
+    if count>=1_000_000 {
+        let size=count.div_ceil(2)*3;
+        std::thread::scope(|scope| {
+            for (source,dest) in input.chunks(size).zip(output.chunks_mut(size)) {
+                scope.spawn(move||pile_pixels(source,dest,piles));
+            }
+        });
+    } else {pile_pixels(input,output,piles);}
+}
+fn pile_pixels(input:&[u8],output:&mut [u8],piles:&[u8]) {
+    for (source,dest) in input.chunks_exact(3).zip(output.chunks_exact_mut(3)) {
+        let at=((source[0] as usize>>3)<<10|(source[1] as usize>>3)<<5|source[2] as usize>>3)*3;
+        dest.copy_from_slice(&piles[at..at+3]);
+    }
 }
 fn grade_pixels(input:&[u8],output:&mut [u8],night:f64,color:&[f64]) {
     #[cfg(target_arch="x86_64")]
