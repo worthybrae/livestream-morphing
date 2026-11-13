@@ -240,12 +240,21 @@ candidate yet:
 - With it set, the worker laid the same borders as the study on the same
   recording (184 showing on average over 270 updates) and bent the paint on the
   same share of the picture.
-- It costs about twice as much: 108.8 ms mean and 94.3 ms median per update
-  against 53.6 and 49.5 for the approved look on the same machine and
-  recording. Nearly all of it is base planning (77.7 ms against 24.0), mostly
-  wide blurs for the edge fields and many small colour lookups for the lines.
-  Bending the picture is 2.3 ms. At that cost the cadence guard would settle
-  near half the present paint rate.
+- It costs about 1.6 times as much: 85.5 ms mean and 71.7 ms median per update
+  against 52.2 and 43.0 for the approved look, over 90 updates of the same
+  recording on the same machine (timings there vary by several ms run to run).
+  The first port cost 109.3 ms. Three cuts brought it down with every pixel and
+  mark of those 90 updates unchanged: the widest edge field is no longer built
+  for hands that never read it, the reference is recoloured into piles with a
+  16-bit lookup, and a border walker asks its questions of one stacked picture
+  instead of several. What is left is the look's own analysis running at every
+  paint update (edge fields 8 ms, finding things and walking new borders 14 ms
+  spread over four updates, colour lookups for the lines) plus about 13 ms of
+  fixed work (bending the picture 3 ms, pile mixing, line stamps). The still
+  scene does not need judging twelve times a second; running that analysis a
+  few times a second instead is the next cut, and it will not be pixel-exact.
+  At 1.6 times the cost the cadence guard would settle near two thirds of the
+  present paint rate.
 - Incremental painting refuses it: lines are not yet carried through
   transport-only frames.
 - Its slow motions count paint updates, at the rate `LOADED_PAINT_STRIDE` asks

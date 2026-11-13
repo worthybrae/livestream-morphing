@@ -19,6 +19,9 @@ from motion import transport
 def sample(image, points):
     if not len(points):
         return np.empty((0, 1 if image.ndim==2 else image.shape[2]), np.float32)
+    if len(points)<=16384:
+        return cv2.remap(image, points[:, 0:1].astype(np.float32), points[:, 1:2].astype(np.float32),
+                         cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE).reshape(len(points), -1)
     # OpenCV uses signed 16-bit destination coordinates internally.
     return np.concatenate([cv2.remap(image, part[:, 0:1].astype(np.float32),
                      part[:, 1:2].astype(np.float32), cv2.INTER_LINEAR,
@@ -345,8 +348,9 @@ class Piles:
 
     def repaint(self, image):
         """A whole image in pile colours, for the finishing pass to measure against."""
-        index = ((image[:,:,0].astype(np.int32)>>3)<<10)|((image[:,:,1].astype(np.int32)>>3)<<5)|(image[:,:,2]>>3)
-        return self.table[index]
+        image = image.astype(np.uint8, copy=False)
+        index = (image[:,:,0]>>3).astype(np.uint16)<<10 | (image[:,:,1]>>3).astype(np.uint16)<<5 | image[:,:,2]>>3
+        return self.table.take(index, axis=0)
 
 
 class Painting:
@@ -609,8 +613,9 @@ class Painting:
             return np.stack([-across, -lengthwise], axis=2)/(size[:,:,None]+1e-3), size/(t[:,:,0]+t[:,:,1]+1)
         edge = tensor(1.1*brush_scale, 3.5*brush_scale)
         edge_way, firm = way(edge)
-        # Broad passages take their lie from the big shapes around them.
-        form_way, _ = way(tensor(3*brush_scale, 22*brush_scale))
+        # Broad passages take their lie from the big shapes around them. Only the
+        # long pulls of the gesture hand follow it, and it is the costliest field.
+        form_way = way(tensor(3*brush_scale, 22*brush_scale))[0] if self.hand=='gesture' else None
         # Thin things lighter or darker than what surrounds them: road markings, poles.
         lift = cv2.GaussianBlur(gray, (0,0), 2*brush_scale)-cv2.GaussianBlur(gray, (0,0), 8*brush_scale)
         return np.sqrt(edge[:,:,0]+edge[:,:,1]), firm, edge_way, form_way, lift
@@ -1075,7 +1080,9 @@ class Painting:
                 # Nudge a walker sideways onto the crest of the edge or line it follows.
                 def onto(points, direction):
                     side = np.stack([-direction[:,1], direction[:,0]], axis=1)*(1.5*self.scale)
-                    lean = pigment(image, points+side)[:,0]-pigment(image, points-side)[:,0]
+                    # Both sides in one lookup: a walk makes thousands of these.
+                    either = pigment(image, np.concatenate([points+side, points-side]))[:,0]
+                    lean = either[:len(points)]-either[len(points):]
                     return points+side*np.clip(lean*.25, -.4, .4)[:,None]
                 return onto
             def drawn_line(ids, alive, onto, coat, widths, faces_in=None):
@@ -1151,9 +1158,12 @@ class Painting:
                 ids = sites((pigment(strength, pts)[:,0]>6.5/self.keen) & (pigment(firm, pts)[:,0]>.62/self.keen**.5) &
                             (pigment(off_outline, pts)[:,0]<3), 600)
                 if len(ids):
+                    # One picture of the three things a walker asks at every step.
+                    footing = np.dstack([strength, firm, off_outline])
                     def on_edge(points):
-                        return ((pigment(strength, points)[:,0]>5.5/self.keen) & (pigment(firm, points)[:,0]>.5/self.keen**.5) &
-                                within(points, 3) & (pigment(off_outline, points)[:,0]<5))
+                        at = pigment(footing, points)
+                        return ((at[:,0]>5.5/self.keen) & (at[:,1]>.5/self.keen**.5) &
+                                within(points, 3) & (at[:,2]<5))
                     # A longer line is drawn with more of the brush.
                     p = drawn_line(ids, on_edge, settle(strength), CONTOUR, lambda found, rv:
                         (1.6+3.*rv[:,0])*self.scale*self.border_weight*(.75+.5*np.minimum(1, found[:,2]/(150*self.scale))), faces_in)
@@ -1165,9 +1175,11 @@ class Painting:
                 ids = sites(((np.abs(thin) if self.hand=='gesture' else -thin)>14) & (pigment(firm, pts)[:,0]>.6), 600)
                 if len(ids):
                     sign, origin = np.sign(thin[ids]), pigment(fine, pts[ids])
+                    marking = np.dstack([fine, lift])
                     def on_line(points):
-                        return ((pigment(lift, points)[:,0]*sign>8) & within(points, 3) &
-                                (np.abs(pigment(fine, points)-origin).max(axis=1)<34))
+                        at = pigment(marking, points)
+                        return ((at[:,3]*sign>8) & within(points, 3) &
+                                (np.abs(at[:,:3]-origin).max(axis=1)<34))
                     p = drawn_line(ids, on_line, settle(np.abs(lift)), RIDGE, lambda found, rv: np.full(len(found), 9*self.scale))
                     if self.hand!='gesture':
                         # A dark line lying across the ground is a shadow or a crack; one
