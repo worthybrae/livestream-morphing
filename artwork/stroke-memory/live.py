@@ -27,7 +27,10 @@ LOOKS = {
     # Tone mixed in a few piles; borders round still things in their own colour,
     # swelling and thinning; the paint drifting and bending a little everywhere.
     'borders': dict(hand='contour', piles=6, drift=2.6, stir=2., ripple=1.6, border_tone='own', pulse=True,
-                    border_weight=1.25, border_depth=.6, ripple_everywhere=.4, swell=.4, keen=2.2, reserve=400),
+                    border_weight=1.25, border_depth=.6, ripple_everywhere=.4, swell=.4, keen=2.2, reserve=400,
+                    # The still scene is looked at on every fourth paint update, about
+                    # three times a second, where the study looks at every one.
+                    pace=4),
 }
 
 

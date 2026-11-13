@@ -292,6 +292,27 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(lines_after(0), 0)
         self.assertGreater(lines_after(80), 0)
 
+    def test_a_slower_pace_looks_at_the_scene_less_often_and_still_keeps_lines(self):
+        scene = self.thing_on_a_ground()
+        zero = np.zeros((90, 160, 2), np.float32)
+        def painted(pace):
+            p = Painting(640, 360, (160, 90), 'transported', hand='contour', pace=pace)
+            looks = []
+            fields = p.fields
+            p.fields = lambda *a, **k: looks.append(p.turn) or fields(*a, **k)
+            for _ in range(13):
+                p.update(scene, zero, zero)
+            self.assertEqual(len(p.doubt), len(p.strokes))
+            return p, looks
+        every, looks = painted(1)
+        self.assertEqual(looks, list(range(13)))
+        self.assertEqual(len(every.thing_counts), 4)
+        seldom, looks = painted(4)
+        self.assertEqual(looks, [0, 4, 8, 12])
+        self.assertEqual(len(seldom.thing_counts), 2)
+        self.assertGreater(int((seldom.strokes[:,11] >= 9).sum()), 0)
+        self.assertEqual(int((seldom.strokes[:,11] >= 9).sum()), int((every.strokes[:,11] >= 9).sum()))
+
     def test_an_unknown_look_paints_the_approved_look(self):
         with mock.patch.dict(os.environ, {'LOADED_LOOK': 'nonesuch'}), mock.patch('sys.stderr'):
             p = LoadedPainting(160, 90)

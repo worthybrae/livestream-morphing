@@ -355,7 +355,7 @@ class Piles:
 
 class Painting:
     def __init__(self, width, height, flow_size, mode, detail='original', detail_hour=None, limit=45000, hand='approved', piles=0, drift=1., stir=0., ripple=1., border_tone='dark', pulse=False,
-                 border_weight=1., border_depth=1., ripple_everywhere=0., stand_out=20, picked=None, slim=18., swell=.85, keen=1., reserve=0, rate=15.):
+                 border_weight=1., border_depth=1., ripple_everywhere=0., stand_out=20, picked=None, slim=18., swell=.85, keen=1., reserve=0, rate=15., pace=1):
         self.w, self.h = width, height
         self.fw, self.fh = flow_size
         self.factor = np.array([self.fw/width, self.fh/height], np.float32)
@@ -388,6 +388,13 @@ class Painting:
         # running at its limit, as the live one does, can still take a line.
         self.reserve = reserve
         self.rate = rate  # updates a second: what turns the count of updates into time
+        # How many updates pass between looks at the still scene: its edges, its
+        # things, where a new line could go. 1, the study's pace, looks at every
+        # update. A scene that stands still need not be looked at so often; what is
+        # crossing a line is still asked at every update.
+        self.pace = max(1, int(pace))
+        self.doubt = np.empty(0, bool)  # for each stroke, whether the last look found its footing gone
+        self.solid = self.off_outline = None
         self.picked_ids, self.picked_owner = (0, 0), None
         self.where = self.line_mask = self.present = self.give = None
         self.showing = []  # picked lines up at each update
@@ -470,9 +477,10 @@ class Painting:
                 continue  # ragged or strung out: foliage, a kerb, a shadow's edge
             x0, y0, x1, y1 = max(0,x-pad), max(0,y-pad), min(key.shape[1],x+w+pad), min(key.shape[0],y+h+pad)
             inside = (labels[y0:y1,x0:x1]==i).astype(np.uint8)
-            rim = int((inside-cv2.erode(inside, np.ones((3,3), np.uint8))).sum())
-            if self.hand=='border' and (rim*rim>self.raggedness*area[i] or area[i]<300*unit*unit):
-                continue  # a border only goes round a clean, sizeable shape
+            if self.hand=='border':
+                rim = int((inside-cv2.erode(inside, np.ones((3,3), np.uint8))).sum())
+                if rim*rim>self.raggedness*area[i] or area[i]<300*unit*unit:
+                    continue  # a border only goes round a clean, sizeable shape
             around = cv2.dilate(inside, ring)-inside
             patch = image[y0:y1,x0:x1]
             if np.abs(patch[inside>0].mean(axis=0)-patch[around>0].mean(axis=0)).max()>self.stand_out+(6 if self.hand=='border' else 0):
@@ -715,8 +723,10 @@ class Painting:
             own = pigment(fine, marks[:,1:3])
             around = (pigment(medium, marks[:,1:3]+beside)+pigment(medium, marks[:,1:3]-beside))/2
             return np.clip(own+(own-around)*.35*self.border_depth, 0, 255)
+        looking = first or self.turn%self.pace==0
         if self.hand in LINE_HANDS:
-            strength, firm, edge_way, form_way, lift = self.fields(gray, brush_scale)
+            if looking:
+                strength, firm, edge_way, form_way, lift = self.fields(gray, brush_scale)
             def heading(way):
                 def at(points):
                     doubled = pigment(way, points)
@@ -793,25 +803,31 @@ class Painting:
                 # was laid on is covered or gone, and comes back when that comes back.
                 marks = self.strokes[long]
                 spots = [along(marks, u) for u in (-.9, -.5, 0., .5, .9)]
-                tone = [pigment(medium, spot) for spot in spots]
-                uneven = np.max([np.abs(t-tone[2]).max(axis=1) for t in tone], axis=0)>44
-                edge = np.min([pigment(strength, spot)[:,0] for spot in spots[1:4]], axis=0)
-                grip = np.min([pigment(firm, spot)[:,0] for spot in spots[1:4]], axis=0)
-                thin = np.min([np.abs(pigment(lift, spot)[:,0]) for spot in spots[1:4]], axis=0)
-                way = heading(edge_way)(spots[2])
-                slope = marks[:,5]+np.arctan(bends(marks[:,6])[1])
-                turned = np.abs(way[:,0]*np.sin(slope)-way[:,1]*np.cos(slope))>.5
-                gone = (edge<4.5/self.keen) | (grip<.4/self.keen**.5) | turned
-                if self.hand=='border':
-                    # A border holds for as long as the paint still differs across it.
-                    out = np.stack([-np.sin(slope), np.cos(slope)], axis=1)*(8*self.scale)
-                    gone = np.max([np.abs(pigment(medium, spot+out)-pigment(medium, spot-out)).max(axis=1)
-                                   for spot in spots[1:4]], axis=0)<12
-                lost = np.select([marks[:,11]==PULL, marks[:,11]==CONTOUR], [uneven, gone], (thin<5) | turned)
-                lost |= mismatch[long]>50
-                if picked.any():
-                    # A picked line is never doubted for a weak edge or a change of light.
-                    lost[picked[long]] = ~showing(marks[picked[long]])
+                if len(self.doubt)!=len(self.strokes):
+                    self.doubt = np.zeros(len(self.strokes), bool)
+                if looking:
+                    tone = [pigment(medium, spot) for spot in spots]
+                    uneven = np.max([np.abs(t-tone[2]).max(axis=1) for t in tone], axis=0)>44
+                    edge = np.min([pigment(strength, spot)[:,0] for spot in spots[1:4]], axis=0)
+                    grip = np.min([pigment(firm, spot)[:,0] for spot in spots[1:4]], axis=0)
+                    thin = np.min([np.abs(pigment(lift, spot)[:,0]) for spot in spots[1:4]], axis=0)
+                    way = heading(edge_way)(spots[2])
+                    slope = marks[:,5]+np.arctan(bends(marks[:,6])[1])
+                    turned = np.abs(way[:,0]*np.sin(slope)-way[:,1]*np.cos(slope))>.5
+                    gone = (edge<4.5/self.keen) | (grip<.4/self.keen**.5) | turned
+                    if self.hand=='border':
+                        # A border holds for as long as the paint still differs across it.
+                        out = np.stack([-np.sin(slope), np.cos(slope)], axis=1)*(8*self.scale)
+                        gone = np.max([np.abs(pigment(medium, spot+out)-pigment(medium, spot-out)).max(axis=1)
+                                       for spot in spots[1:4]], axis=0)<12
+                    verdict = np.select([marks[:,11]==PULL, marks[:,11]==CONTOUR], [uneven, gone], (thin<5) | turned)
+                    if picked.any():
+                        verdict[picked[long]] = ~showing(marks[picked[long]])
+                    self.doubt[long] = verdict
+                # Between looks at the scene the last verdict on a stroke's footing stands.
+                # A picked line is never doubted for a change of light.
+                verdict = self.doubt[long]
+                lost = np.where(picked[long], verdict, verdict | (mismatch[long]>50))
                 if self.unrest is not None:
                     # A broad pull would smear over anything crossing it, so it hides
                     # at once and stays hidden until the place has been still a moment.
@@ -855,6 +871,8 @@ class Painting:
                       (self.strokes[:, 2]>0) & (self.strokes[:, 2]<self.h-1))
             keep = inside & ((self.strokes[:, 10]>.015) | (long & (self.failures<45)))
             self.retired += int((~keep).sum())
+            if len(self.doubt)==len(keep):
+                self.doubt = self.doubt[keep]
             self.strokes, self.age, self.failures = self.strokes[keep], self.age[keep], self.failures[keep]
 
         additions = []
@@ -1037,7 +1055,15 @@ class Painting:
             across = np.zeros(len(self.picked)+1, np.float32)
             np.maximum.at(across, owner+1, np.where(outline, breadth, 2*breadth))
             self.give = cv2.GaussianBlur(np.maximum(.16*across, 3*self.scale)[self.where], (0,0), 1.5)
-        if self.hand in LINE_HANDS and self.picked is None and remaining and (first or self.turn%4==0):
+        # New lines are looked for every fourth update at the study's pace: things,
+        # their outlines, and markings to restate, all at once. At a slower pace the
+        # three take turns, one to a look, so no single update carries them all.
+        cycle, turns = (4, (0, 0, 0)) if self.pace==1 else (3*self.pace, (0, self.pace, 2*self.pace))
+        outlining, restating, finding = (first or self.turn%cycle==turn for turn in turns)
+        # A kind of line looked for less often is looked for at as many more sites,
+        # and may lay as many more, so that lines are found at the same rate.
+        seldom = cycle//4
+        if self.hand in LINE_HANDS and self.picked is None and remaining and (outlining or restating or finding):
             calm = np.zeros((self.fh,self.fw), np.float32) if self.unrest is None else self.unrest
             def still(marks):
                 return np.max([sample(calm, along(marks, u)*self.factor)[:,0] for u in (-.9, -.5, 0., .5, .9)], axis=0)<4
@@ -1075,7 +1101,7 @@ class Painting:
                 return marks[chosen]
             def sites(eligible, most):
                 ids = np.flatnonzero(eligible & (sample(calm, pts*self.factor)[:,0]<4))
-                return ids if first else np.roll(ids, -self.turn*211)[:most]
+                return ids if first else np.roll(ids, -self.turn*211)[:most*seldom]
             def settle(image):
                 # Nudge a walker sideways onto the crest of the edge or line it follows.
                 def onto(points, direction):
@@ -1102,7 +1128,7 @@ class Painting:
             laid = []
             # Long pulls: a loaded brush drawn through a quiet passage, along its lie.
             pts = self.pull_candidates
-            ids = sites(pigment(cv2.absdiff(fine, broad), pts).max(axis=1)<12, 800) if self.hand=='gesture' else []
+            ids = sites(pigment(cv2.absdiff(fine, broad), pts).max(axis=1)<12, 800) if self.hand=='gesture' and outlining else []
             if len(ids):
                 origin = pigment(medium, pts[ids])
                 def same(points):
@@ -1127,16 +1153,18 @@ class Painting:
                         active[stop] = False
                 p[:,4] = np.maximum(p[:,4]*limit, 5*self.scale)
                 p[:,7:10] = self.mixed(c, p[:,6])
-                laid.append(lay(p, .4, 900 if first else 30, .8))
+                laid.append(lay(p, .4, 900 if first else 30*seldom, .8))
             pts = self.line_candidates
-            thin = pigment(lift, pts)[:,0]
+            thin = pigment(lift, pts)[:,0] if restating else None
             # Contour lines: the point of the brush run round the outline of a thing.
-            solid, off_outline = self.things(image)
-            self.thing_mask = cv2.resize(solid, (self.fw,self.fh), interpolation=cv2.INTER_AREA)
+            if finding or self.solid is None:
+                self.solid, self.off_outline = self.things(image)
+                self.thing_mask = cv2.resize(self.solid, (self.fw,self.fh), interpolation=cv2.INTER_AREA)
+            solid, off_outline = self.solid, self.off_outline
             def faces_in(found):
                 side = np.stack([-np.sin(found[:,3]), np.cos(found[:,3])], axis=1)*(8*self.scale)
                 return pigment(solid, found[:,:2]+side)[:,0]>pigment(solid, found[:,:2]-side)[:,0]
-            if self.hand=='border':
+            if self.hand=='border' and outlining:
                 # Only round things that have held their place for a second or so:
                 # a patch that comes and goes between looks is texture, not a thing.
                 self.votes = solid if self.votes is None or first else self.votes*.6+solid*.4
@@ -1153,10 +1181,10 @@ class Painting:
                 rv = self.line_variants[(np.arange(len(found))*7919+self.turn*31)%len(self.line_variants)]
                 p = record(found, rv, (2.6+1.6*rv[:,0])*self.scale, CONTOUR)
                 p[:,7:10] = border_pigment(p[:,1:3], p[:,5]+np.arctan(bends(p[:,6])[1]), p[:,6])
-                laid.append(lay(p, .3, 1400 if first else 60, .5))
-            else:
+                laid.append(lay(p, .3, 1400 if first else 60*seldom, .5))
+            elif self.hand!='border':
                 ids = sites((pigment(strength, pts)[:,0]>6.5/self.keen) & (pigment(firm, pts)[:,0]>.62/self.keen**.5) &
-                            (pigment(off_outline, pts)[:,0]<3), 600)
+                            (pigment(off_outline, pts)[:,0]<3), 600) if outlining else []
                 if len(ids):
                     # One picture of the three things a walker asks at every step.
                     footing = np.dstack([strength, firm, off_outline])
@@ -1168,11 +1196,11 @@ class Painting:
                     p = drawn_line(ids, on_edge, settle(strength), CONTOUR, lambda found, rv:
                         (1.6+3.*rv[:,0])*self.scale*self.border_weight*(.75+.5*np.minimum(1, found[:,2]/(150*self.scale))), faces_in)
                     p[:,7:10] = border_pigment(p[:,1:3], p[:,5]+np.arctan(bends(p[:,6])[1]), p[:,6])
-                    laid.append(lay(p, .25, 1400 if first else 40, .5))
+                    laid.append(lay(p, .25, 1400 if first else 40*seldom, .5))
                 # Restated lines: a road marking or a pole put back in one stroke of its own colour.
                 # Light markings only need it under the pulls, which smear over them;
                 # dark poles and rails are things in their own right and are always drawn.
-                ids = sites(((np.abs(thin) if self.hand=='gesture' else -thin)>14) & (pigment(firm, pts)[:,0]>.6), 600)
+                ids = sites(((np.abs(thin) if self.hand=='gesture' else -thin)>14) & (pigment(firm, pts)[:,0]>.6), 600) if restating else []
                 if len(ids):
                     sign, origin = np.sign(thin[ids]), pigment(fine, pts[ids])
                     marking = np.dstack([fine, lift])
@@ -1199,7 +1227,7 @@ class Painting:
                     # Anything wider than that is a shape, not a line: the coats paint it.
                     p, c = p[~open_], c[~open_]
                     p[:,7:10] = self.mixed(c, p[:,6])
-                    laid.append(lay(p, .25, 1400 if first else 40, .5))
+                    laid.append(lay(p, .25, 1400 if first else 40*seldom, .5))
             for p in laid:
                 p = p[:remaining]
                 remaining -= len(p)
@@ -1214,8 +1242,12 @@ class Painting:
             self.strokes = np.concatenate([self.strokes,added])
             self.age = np.concatenate([self.age,np.zeros(len(added),np.int32)])
             self.failures = np.concatenate([self.failures,np.zeros(len(added),np.float32)])
+            if len(self.doubt)+len(added)!=len(self.strokes):
+                self.doubt = np.zeros(len(self.strokes)-len(added), bool)
+            self.doubt = np.concatenate([self.doubt,np.zeros(len(added),bool)])
             order = np.argsort(self.strokes[:,11],kind='stable')
             self.strokes,self.age,self.failures = self.strokes[order],self.age[order],self.failures[order]
+            self.doubt = self.doubt[order]
             if hidden is not None:
                 self.failures[np.isin(self.strokes[:,0], hidden)] = 9
         if len(self.strokes)>self.limit:

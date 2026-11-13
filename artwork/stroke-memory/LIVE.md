@@ -250,11 +250,23 @@ candidate yet:
   instead of several. What is left is the look's own analysis running at every
   paint update (edge fields 8 ms, finding things and walking new borders 14 ms
   spread over four updates, colour lookups for the lines) plus about 13 ms of
-  fixed work (bending the picture 3 ms, pile mixing, line stamps). The still
-  scene does not need judging twelve times a second; running that analysis a
-  few times a second instead is the next cut, and it will not be pixel-exact.
-  At 1.6 times the cost the cadence guard would settle near two thirds of the
-  present paint rate.
+  fixed work (bending the picture 3 ms, pile mixing, line stamps).
+- A further cut is not pixel-exact and applies to the live look only
+  (`pace=4`; the study keeps `pace=1` and its frames are unchanged). The still
+  scene is looked at on every fourth paint update instead of every one: edge
+  fields are built then, and each line's footing is judged then and the verdict
+  kept in between. Whether something is crossing a line is still asked at every
+  update, so a border still dissolves under a passing car at once. Finding
+  things, outlining them and restating markings take turns, one to a look, each
+  at three times as many sites, so no update carries all three. Cost on the
+  same 90 updates: 63.1 ms mean and 53.9 ms median against 46.9 and 40.0 for
+  the approved look measured alongside, about 1.3 times; 95th percentile over
+  270 updates fell from 181 to 107 ms. The price: over 72 seconds of the
+  recording played forwards and backwards, borders showing averaged 235 in the
+  last 18 seconds against 250 when looking at every update (161 against 174 in
+  the first 18), about 6% fewer, because a border lost for good is found again
+  a little later. At 1.3 times the cost the cadence guard would settle near
+  three quarters of the present paint rate.
 - Incremental painting refuses it: lines are not yet carried through
   transport-only frames.
 - Its slow motions count paint updates, at the rate `LOADED_PAINT_STRIDE` asks
