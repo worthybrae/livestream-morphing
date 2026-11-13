@@ -839,6 +839,10 @@ class Painting:
                     crossed = touched>=np.where(marks[:,11]==PULL, 1, 2)
                     lost = np.where(marks[:,11]==PULL, lost | crossed, lost & ~crossed)
                     covered[long] = crossed & (marks[:,11]!=PULL)
+                    if self.pace>1:
+                        # What a line stands on once something has crossed it, nobody
+                        # knows until the scene is next looked at: it waits for that.
+                        self.doubt[long] |= covered[long]
                 bad[long] = lost
             people_marks = (self.strokes[:,11]==3) & (self.detail=='people')
             if people_marks.any():
@@ -858,6 +862,10 @@ class Painting:
             step = np.where(dying, np.select([lines, pulls], [-.06, -.2], -.28), np.select([lines, pulls], [.04, .12], .24))
             step = np.where(covered, -.2, step)
             step[picked & bad & ~dying & ~covered] = 0
+            if self.pace>1:
+                # Nor does a line come up while its footing is in doubt: looked at
+                # seldom, it could otherwise rise over a car that has stopped on it.
+                step[lines & bad & ~dying & ~covered] = 0
             self.strokes[:, 10] = np.clip(self.strokes[:, 10]+step, 0, 1)
             # Pigment settles per mark, not per pixel. Deadband ignores camera noise.
             delta[np.abs(delta)<2.5] = 0

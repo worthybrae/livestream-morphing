@@ -279,6 +279,18 @@ candidate yet:
   join (the drift, the lean of the finishing marks, fresh stamps for lines that
   changed width). Closing the first needs that study moved to a thread of its
   own or into the native library.
+- The owner then relaxed the brief: it need not be pixel-exact, and fewer
+  borders are acceptable. The live look now sets `pace=8`, looking at the scene
+  once or twice a second. With that, a line that something has crossed waits
+  for the next look before it comes back, and no line rises while its footing is
+  in doubt, so a border cannot fade up over a car that has stopped on it. Over
+  72 seconds borders showing averaged 227 in the last 18 against 233 at pace 4
+  and 250 at pace 1; at pace 12 they fell to 197, so 8 is where it was left.
+  Timed on a busy machine (another program held a core), over seven paired
+  runs of 150 updates: pace 8 was cheaper than or equal to pace 4 in every
+  pair, median of means 61.3 ms against 70.0, with the approved look at 52.9
+  alongside: about 1.16 times against 1.32. On a quiet machine pace 4 had
+  measured 1.29 times, so these figures are relative, not absolute.
 - Incremental painting refuses it: lines are not yet carried through
   transport-only frames.
 - Its slow motions count paint updates, at the rate `LOADED_PAINT_STRIDE` asks
