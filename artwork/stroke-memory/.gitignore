@@ -1,3 +1,5 @@
 __pycache__/
 native/target/
 models/
+.venv-sam/
+scene/lines.previous.json

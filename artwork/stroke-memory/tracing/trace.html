@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trace the scene</title>
+<style>
+  :root {
+    --table: #1c1e22;      /* the surface the plate lies on */
+    --panel: #25282d;
+    --rule: #3b3f46;
+    --ink: #ece8df;
+    --quiet: #9b9ea4;
+    --mine: #ffd23f;       /* lines you drew */
+    --grab: #58c8f5;       /* where a stroke would land */
+    --rub: #ff6b6b;        /* about to be erased */
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: var(--table); color: var(--ink);
+    font: 14px/1.35 "Avenir Next", "Helvetica Neue", system-ui, sans-serif; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; touch-action: none; display: block; }
+  .tools { position: fixed; left: 12px; top: 12px; width: 176px; padding: 10px; background: var(--panel);
+    border: 1px solid var(--rule); border-radius: 10px; display: grid; gap: 10px; user-select: none; }
+  .row { display: grid; gap: 6px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  button { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 7px;
+    padding: 7px 9px; text-align: left; cursor: pointer; display: flex; justify-content: space-between; align-items: baseline; }
+  button:hover { border-color: var(--quiet); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--mine); outline-offset: 2px; }
+  button[aria-pressed="true"] { background: var(--ink); color: var(--table); border-color: var(--ink); }
+  button:disabled { opacity: .4; cursor: default; }
+  kbd { font: inherit; font-size: 12px; color: var(--quiet); }
+  button[aria-pressed="true"] kbd { color: #5a5d63; }
+  label { display: grid; gap: 4px; color: var(--quiet); font-size: 13px; }
+  label.check { grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; color: var(--ink); cursor: pointer; }
+  [hidden] { display: none !important; }
+  input[type="range"] { width: 100%; accent-color: var(--mine); margin: 0; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+  .status { position: fixed; left: 12px; bottom: 12px; padding: 7px 10px; background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 8px; display: flex; gap: 14px; color: var(--quiet); font-size: 13px; }
+  .status b { color: var(--ink); font-weight: 600; }
+  .status .key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  .hint { position: fixed; right: 16px; top: 16px; max-width: 300px; padding: 12px 14px; background: var(--panel);
+    border: 1px solid var(--rule); border-radius: 10px; }
+  .hint p { margin: 0 0 8px; }
+  .hint p:last-child { margin: 0; color: var(--quiet); }
+  .trouble { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 24px; }
+  .trouble.shown { display: grid; }
+</style>
+</head>
+<body>
+<canvas id="board" aria-label="The scene. Draw over the lines that matter."></canvas>
+
+<aside class="tools" aria-label="Tools">
+  <div class="row" role="group" aria-label="Tool">
+    <button id="tool-select" aria-pressed="false">Select <kbd>S</kbd></button>
+    <button id="tool-draw" aria-pressed="true">Draw <kbd>D</kbd></button>
+    <button id="tool-erase" aria-pressed="false">Erase <kbd>E</kbd></button>
+    <button id="tool-move" aria-pressed="false">Move <kbd>H</kbd></button>
+  </div>
+  <div class="pair">
+    <button id="undo" title="Undo (Cmd+Z)">Undo</button>
+    <button id="redo" title="Redo (Shift+Cmd+Z)">Redo</button>
+  </div>
+  <hr>
+  <label>How much a click takes in
+    <input id="alike" type="range" min="8" max="90" value="30">
+  </label>
+  <label>How far a stroke reaches for a line
+    <input id="reach" type="range" min="0" max="40" value="18">
+  </label>
+  <label>Lighten the scene
+    <input id="lighten" type="range" min="100" max="320" value="170">
+  </label>
+  <label class="check" id="by-day-row" hidden title="An older daytime view of the same place, laid over this one. Some things have changed since."><input id="by-day" type="checkbox"> See it by day <kbd>V</kbd></label>
+  <label class="check"><input id="see-edges" type="checkbox"> Show what a stroke is pulled to</label>
+  <hr>
+  <div class="row">
+    <button id="fit">Fit to window <kbd>0</kbd></button>
+  </div>
+</aside>
+
+<div class="hint" id="hint">
+  <p>Select: point at a thing and it lights up; click to keep its outline. If it lit the wrong amount, the up and down arrows step to the bigger or smaller thing there. Zoom in on small or thin things: the model looks harder at what fills the screen.</p>
+  <p>Draw: sketch roughly along a line and the stroke jumps onto the nearest contour; hold Option to draw freely. For a thing the night hides, switch to the day view. Pinch or Cmd+scroll to zoom. Everything saves as you go.</p>
+</div>
+
+<footer class="status" aria-live="polite">
+  <span><span class="key" style="background:var(--mine)"></span><b id="mine">0</b> <span id="noun">lines</span></span>
+  <span id="saved">Loading the scene</span>
+</footer>
+
+<div class="trouble" id="trouble">
+  <p>No scene to trace yet.<br>Run <code>tracing/prepare.py</code> on a short clip of the view, then reload this page.</p>
+</div>
+
+<script>
+const board = document.getElementById('board'), ctx = board.getContext('2d');
+const $ = id => document.getElementById(id);
+let W = 1920, H = 1080;               // the scene, in its own pixels
+let pull = null, pullW = 0, pullH = 0; // how strongly each place reads as a line
+let lines = [];                        // {points: [[x, y], ...]}
+let past = [], ahead = [];             // undo and redo, as saved copies of `lines`
+let view = {k: 1, x: 0, y: 0};         // scene to screen: s = p*k + (x, y)
+let tool = 'draw', held = null;        // held: what the pointer is doing right now
+let pointer = null, free = false, space = false;
+let saveTimer = 0, loaded = false;
+const plate = new Image();
+
+// --- the scene and what is already drawn -------------------------------------------------
+
+async function load() {
+  try {
+    await new Promise((ok, no) => { plate.onload = ok; plate.onerror = no; plate.src = '/scene/plate.jpg'; });
+  } catch { $('trouble').classList.add('shown'); $('saved').textContent = 'Nothing to trace'; return; }
+  W = plate.naturalWidth; H = plate.naturalHeight;
+  const edges = new Image();
+  await new Promise(ok => { edges.onload = edges.onerror = ok; edges.src = '/scene/edges.png'; });
+  if (edges.naturalWidth) {
+    const c = document.createElement('canvas'); c.width = pullW = edges.naturalWidth; c.height = pullH = edges.naturalHeight;
+    const g = c.getContext('2d'); g.drawImage(edges, 0, 0);
+    const rgba = g.getImageData(0, 0, pullW, pullH).data;
+    pull = new Uint8Array(pullW*pullH);
+    for (let i = 0; i < pull.length; i++) pull[i] = rgba[i*4];
+    edgeLayer = c;
+  }
+  const day = new Image();
+  await new Promise(ok => { day.onload = day.onerror = ok; day.src = '/scene/plate-day.jpg'; });
+  if (day.naturalWidth) { dayPlate = day; $('by-day-row').hidden = false; }
+  for (const [name, image] of [['night', plate], ['day', dayPlate]]) {
+    if (!image) continue;
+    // Half size and slightly softened: a shape is told by its colour, not its grain.
+    const c = document.createElement('canvas'); c.width = Math.round(W/2); c.height = Math.round(H/2);
+    const g = c.getContext('2d', {willReadFrequently: true}); g.filter = 'blur(1px)'; g.drawImage(image, 0, 0, c.width, c.height);
+    shots[name] = {w: c.width, h: c.height, data: g.getImageData(0, 0, c.width, c.height).data};
+  }
+  const found = await fetch('/scene/shapes.json').catch(() => null);
+  if (found && found.ok) things = (await found.json()).shapes.map(t => {
+    const xs = t.points.map(q => q[0]), ys = t.points.map(q => q[1]);
+    return {points: t.points, area: t.area, view: t.view, box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]};
+  });
+  const reply = await fetch('/scene/lines.json').catch(() => null);
+  // Lines suggested by an earlier version of this page are not yours; leave them behind.
+  if (reply && reply.ok) lines = (await reply.json()).lines.filter(l => !l.draft).map(l => ({points: l.points}));
+  $('saved').textContent = lines.length ? 'Picked up where you left off' : 'Nothing drawn yet';
+  loaded = true; fit(); count();
+}
+let edgeLayer = null, dayPlate = null;
+const shots = {};  // each view of the scene as plain pixels, for picking shapes out of
+let things = [];    // every object the model told apart, smallest first: {points, view, box}
+let shape = null;   // the shape under the pointer, as its outline
+let depth = 0;      // steps bigger (or, below zero, smaller) than what Select would take by itself
+let depthAt = null; // where the pointer was when that was last changed
+const answers = new Map();  // what the model has said is at each spot asked about
+let waiting = false, wanted = null, modelGone = false;
+
+function save() {
+  clearTimeout(saveTimer);
+  $('saved').textContent = 'Saving';
+  saveTimer = setTimeout(async () => {
+    try {
+      const reply = await fetch('/save', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({width: W, height: H, lines})});
+      if (!reply.ok) throw new Error();
+      $('saved').textContent = 'Saved ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    } catch { $('saved').textContent = 'Not saved. Is the tracing server still running?'; }
+  }, 500);
+}
+
+function change(next) {
+  past.push(JSON.stringify(lines)); if (past.length > 200) past.shift();
+  ahead = []; lines = next; count(); save(); draw();
+}
+function step(from, to) {
+  if (!from.length) return;
+  to.push(JSON.stringify(lines)); lines = JSON.parse(from.pop()); count(); save(); draw();
+}
+function count() {
+  $('mine').textContent = lines.length; $('noun').textContent = lines.length === 1 ? 'line' : 'lines';
+  $('undo').disabled = !past.length; $('redo').disabled = !ahead.length;
+}
+
+// --- settling a stroke onto the scene's own lines -----------------------------------------
+
+function pullAt(x, y) {
+  const u = x*pullW/W - .5, v = y*pullH/H - .5;
+  const i = Math.floor(u), j = Math.floor(v);
+  if (i < 0 || j < 0 || i >= pullW - 1 || j >= pullH - 1) return 0;
+  const a = u - i, b = v - j, at = j*pullW + i;
+  return (pull[at]*(1 - a) + pull[at + 1]*a)*(1 - b) + (pull[at + pullW]*(1 - a) + pull[at + pullW + 1]*a)*b;
+}
+
+function evenly(points, gap) {
+  const out = [points[0]]; let carry = 0;
+  for (let i = 1; i < points.length; i++) {
+    const [ax, ay] = points[i - 1], [bx, by] = points[i], length = Math.hypot(bx - ax, by - ay);
+    let along = gap - carry;
+    while (along <= length) { out.push([ax + (bx - ax)*along/length, ay + (by - ay)*along/length]); along += gap; }
+    carry = (carry + length) % gap;
+  }
+  const last = points[points.length - 1];
+  if (Math.hypot(out[out.length - 1][0] - last[0], out[out.length - 1][1] - last[1]) > gap*.4) out.push(last);
+  return out;
+}
+
+// The whole stroke moves at once. Each point may slide sideways, across the way the
+// stroke runs, up to `reach`; the stroke takes the run of places that reads most strongly
+// as a line while staying smooth and not straying further than it has to. Where the
+// scene offers nothing, it stays where the hand put it.
+function settle(raw, reach) {
+  const path = evenly(raw, 2), n = path.length;
+  if (!pull || reach < 1 || n < 4) return path;
+  const R = Math.max(1, Math.round(reach)), states = 2*R + 1;
+  const normals = path.map((_, i) => {
+    const a = path[Math.max(0, i - 4)], b = path[Math.min(n - 1, i + 4)], d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return [-(b[1] - a[1])/d, (b[0] - a[0])/d];
+  });
+  let score = new Float32Array(states), next = new Float32Array(states);
+  const from = new Int8Array(n*states);
+  const worth = (i, s) => {
+    const o = s - R, p = path[i], q = normals[i];
+    return pullAt(p[0] + q[0]*o, p[1] + q[1]*o) - 40*Math.abs(o)/R;
+  };
+  for (let s = 0; s < states; s++) score[s] = worth(0, s);
+  for (let i = 1; i < n; i++) {
+    for (let s = 0; s < states; s++) {
+      let best = -1e9, step = 0;
+      for (let d = -2; d <= 2; d++) {
+        const t = s + d; if (t < 0 || t >= states) continue;
+        const value = score[t] - 38*Math.abs(d);
+        if (value > best) { best = value; step = d; }
+      }
+      next[s] = best + worth(i, s); from[i*states + s] = step;
+    }
+    [score, next] = [next, score];
+  }
+  let s = 0; for (let t = 1; t < states; t++) if (score[t] > score[s]) s = t;
+  const offsets = new Float32Array(n);
+  for (let i = n - 1; i >= 0; i--) { offsets[i] = s - R; s += from[i*states + s]; }
+  const eased = path.map((p, i) => {
+    let total = 0, weight = 0;
+    for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) { total += offsets[j]; weight++; }
+    const o = total/weight;
+    return [p[0] + normals[i][0]*o, p[1] + normals[i][1]*o];
+  });
+  return eased;
+}
+
+function inside(points, p) {
+  let within = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [ax, ay] = points[i], [bx, by] = points[j];
+    if ((ay > p[1]) !== (by > p[1]) && p[0] < (bx - ax)*(p[1] - ay)/(by - ay) + ax) within = !within;
+  }
+  return within;
+}
+
+const viewed = () => dayPlate && $('by-day').checked ? 'day' : 'night';
+const span = () => innerWidth/view.k;  // how much of the scene, in its own pixels, is on screen
+// Readings are kept per spot and per closeness: zoomed in, the model looks harder.
+const spot = (p, view) => `${view}:${span() <= W/4*1.2 ? 4 : span() <= W/2*1.2 ? 2 : 1}:${Math.round(p[0]/3)}:${Math.round(p[1]/3)}`;
+
+// Everything Select could take from a point, smallest first, and which of them it
+// takes unless told otherwise. The model's reading of that exact spot leads; the
+// things it found in advance fill in around it, and stand in until it has answered.
+function choices(p) {
+  const view = viewed();
+  const under = things.filter(t => t.view === view && p[0] >= t.box[0] && p[0] <= t.box[2] && p[1] >= t.box[1] && p[1] <= t.box[3] && inside(t.points, p));
+  const heard = answers.get(spot(p, view));
+  if (!heard && !modelGone) wonder(p, view);
+  // A reading the model itself hardly believes is worse than none.
+  const told = heard && heard.filter(r => r.score >= .2);
+  if (!told || !told.length) return {list: under, base: 0};
+  const list = [...told, ...under.filter(t => !told.some(r => Math.abs(r.area - t.area) < .2*Math.max(r.area, t.area)))].sort((a, b) => a.area - b.area);
+  // The reading it is surest of, unless a smaller one is nearly as sure: pointing
+  // at a thin line means the line, not the pavement it lies on.
+  const surest = Math.max(...told.map(r => r.score));
+  return {list, base: list.indexOf(told.find(r => r.score >= surest - .08))};
+}
+function shapeAt(p) {
+  const {list, base} = choices(p);
+  if (!list.length) return modelGone ? patchAt(p) : null;
+  return list[Math.max(0, Math.min(list.length - 1, base + depth))].points;
+}
+// Ask the model what is at a spot. One question at a time; only the latest one waits.
+async function wonder(p, view) {
+  if (waiting) { wanted = [p, view]; return; }
+  waiting = true;
+  try {
+    const key = spot(p, view), reply = await fetch(`/pick?x=${p[0].toFixed(1)}&y=${p[1].toFixed(1)}&view=${view}&span=${span().toFixed(0)}`);
+    if (reply.status === 501) modelGone = true;
+    else if (reply.ok) { if (answers.size > 1500) answers.clear(); answers.set(key, (await reply.json()).readings); }
+  } catch {}  // the server is away; Select makes do with what was found in advance
+  waiting = false;
+  const next = wanted; wanted = null;
+  if (next && !answers.has(spot(...next))) wonder(...next);
+  if (tool === 'select' && pointer && !held) { shape = shapeAt(pointer); draw(); }
+}
+
+// Everything joined to a point that is about its colour, as one closed outline.
+// Like a magic wand. Null when there is no bounded patch there.
+function patchAt(p) {
+  const shot = shots[dayPlate && $('by-day').checked ? 'day' : 'night']; if (!shot) return null;
+  const {w, h, data} = shot, sx = Math.round(p[0]*w/W), sy = Math.round(p[1]*h/H);
+  if (sx < 1 || sy < 1 || sx >= w - 1 || sy >= h - 1) return null;
+  let r = 0, g = 0, b = 0;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const i = ((sy + dy)*w + sx + dx)*4; r += data[i]; g += data[i + 1]; b += data[i + 2]; }
+  r /= 9; g /= 9; b /= 9;
+  const alike = $('alike').value**2, mask = new Uint8Array(w*h), todo = new Int32Array(w*h);
+  let top = 0, size = 0; todo[top++] = sy*w + sx; mask[sy*w + sx] = 1;
+  while (top) {
+    const at = todo[--top], x = at % w;
+    if (++size > w*h*.12) return null;  // that is not a shape, that is the road
+    for (const next of [at - 1, at + 1, at - w, at + w]) {
+      if (next < 0 || next >= w*h || mask[next] || (next === at - 1 && x === 0) || (next === at + 1 && x === w - 1)) continue;
+      const i = next*4, dr = data[i] - r, dg = data[i + 1] - g, db = data[i + 2] - b;
+      if (dr*dr + dg*dg + db*db <= alike) { mask[next] = 1; todo[top++] = next; }
+    }
+  }
+  if (size < 12) return null;
+  // Walk once round the outside of it.
+  const stepX = [1, 1, 0, -1, -1, -1, 0, 1], stepY = [0, 1, 1, 1, 0, -1, -1, -1];
+  const first = mask.indexOf(1), rim = []; let x = first % w, y = (first - x)/w, heading = 0;
+  for (let guard = 0; guard < 60000; guard++) {
+    rim.push([(x + .5)*W/w, (y + .5)*H/h]);
+    let moved = false;
+    for (let k = 0; k < 8 && !moved; k++) {
+      const d = (heading + 5 + k) % 8, nx = x + stepX[d], ny = y + stepY[d];
+      if (nx >= 0 && ny >= 0 && nx < w && ny < h && mask[ny*w + nx]) { x = nx; y = ny; heading = d; moved = true; }
+    }
+    if (!moved || (x === first % w && y === (first - first % w)/w)) break;
+  }
+  if (rim.length < 6) return null;
+  // Round off the pixel staircase, then close the loop. A loop has no two ends to
+  // straighten between, so it is done as two halves, split at its far side.
+  let far = 0;
+  for (let i = 1; i < rim.length; i++) if (Math.hypot(rim[i][0] - rim[0][0], rim[i][1] - rim[0][1]) > Math.hypot(rim[far][0] - rim[0][0], rim[far][1] - rim[0][1])) far = i;
+  let outline = [...thin(rim.slice(0, far + 1), 2.4).slice(0, -1), ...thin([...rim.slice(far), rim[0]], 2.4).slice(0, -1)];
+  if (outline.length < 3) return null;
+  outline = outline.flatMap((q, i) => { const n = outline[(i + 1) % outline.length];
+    return [[q[0]*.75 + n[0]*.25, q[1]*.75 + n[1]*.25], [q[0]*.25 + n[0]*.75, q[1]*.25 + n[1]*.75]]; });
+  return [...outline, outline[0]].map(q => [Math.round(q[0]*10)/10, Math.round(q[1]*10)/10]);
+}
+
+// Before a stroke starts: the contour it would land on from here, if any is in reach.
+function grab(p, reach) {
+  if (!pull || reach < 1) return null;
+  const gap = Math.max(1, reach/16); let best = 60, at = null;
+  for (let dy = -reach; dy <= reach; dy += gap) for (let dx = -reach; dx <= reach; dx += gap) {
+    const far = Math.hypot(dx, dy); if (far > reach) continue;
+    const value = pullAt(p[0] + dx, p[1] + dy) - 40*far/reach;
+    if (value > best) { best = value; at = [p[0] + dx, p[1] + dy]; }
+  }
+  return at;
+}
+
+function thin(points, slack) {  // drop points a straight run does not need
+  if (points.length < 3) return points;
+  const keep = new Uint8Array(points.length); keep[0] = keep[points.length - 1] = 1;
+  const stack = [[0, points.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop(); let far = 0, at = -1;
+    const [ax, ay] = points[a], [bx, by] = points[b], length = Math.hypot(bx - ax, by - ay) || 1;
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs((points[i][0] - ax)*(by - ay) - (points[i][1] - ay)*(bx - ax))/length;
+      if (d > far) { far = d; at = i; }
+    }
+    if (far > slack) { keep[at] = 1; stack.push([a, at], [at, b]); }
+  }
+  return points.filter((_, i) => keep[i]);
+}
+
+// --- looking at it ------------------------------------------------------------------------
+
+function fit() {
+  const w = innerWidth, h = innerHeight, left = 200;
+  view.k = Math.min((w - left - 16)/W, (h - 24)/H);
+  view.x = left + (w - left - 16 - W*view.k)/2; view.y = (h - H*view.k)/2;
+  draw();
+}
+function toScene(e) { return [(e.clientX - view.x)/view.k, (e.clientY - view.y)/view.k]; }
+function reach() { return free ? 0 : $('reach').value/view.k; }
+
+function trace(points) {
+  ctx.beginPath(); ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+}
+function near(line, p, within) {
+  const pts = line.points;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1], [bx, by] = pts[i], dx = bx - ax, dy = by - ay;
+    const t = Math.max(0, Math.min(1, ((p[0] - ax)*dx + (p[1] - ay)*dy)/(dx*dx + dy*dy || 1)));
+    if (Math.hypot(ax + dx*t - p[0], ay + dy*t - p[1]) < within) return true;
+  }
+  return false;
+}
+
+function draw() {
+  const ratio = devicePixelRatio || 1;
+  if (board.width !== Math.round(innerWidth*ratio) || board.height !== Math.round(innerHeight*ratio)) {
+    board.width = Math.round(innerWidth*ratio); board.height = Math.round(innerHeight*ratio);
+  }
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  if (!loaded) return;
+  ctx.setTransform(ratio*view.k, 0, 0, ratio*view.k, ratio*view.x, ratio*view.y);
+  if (dayPlate && $('by-day').checked) ctx.drawImage(dayPlate, 0, 0, W, H);
+  else { ctx.filter = `brightness(${$('lighten').value}%)`; ctx.drawImage(plate, 0, 0, W, H); ctx.filter = 'none'; }
+  if ($('see-edges').checked && edgeLayer) {
+    ctx.globalAlpha = .75; ctx.globalCompositeOperation = 'screen'; ctx.drawImage(edgeLayer, 0, 0, W, H);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.lineJoin = ctx.lineCap = 'round';
+  const colour = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const rubbing = tool === 'erase' && pointer ? 10/view.k : 0;
+  for (const line of lines) {
+    const doomed = rubbing && near(line, pointer, rubbing);
+    trace(line.points); ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 5/view.k; ctx.stroke();
+    trace(line.points); ctx.strokeStyle = colour(doomed ? '--rub' : '--mine'); ctx.lineWidth = 2.6/view.k; ctx.stroke();
+  }
+  if (held && held.kind === 'stroke' && held.raw.length > 1) {
+    trace(held.raw); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1/view.k;
+    ctx.setLineDash([4/view.k, 4/view.k]); ctx.stroke(); ctx.setLineDash([]);
+    trace(held.settled); ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 5.5/view.k; ctx.stroke();
+    trace(held.settled); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.8/view.k; ctx.stroke();
+  }
+  if (tool === 'select' && shape && !space) {
+    trace(shape); ctx.fillStyle = 'rgba(88,200,245,.28)'; ctx.fill();
+    ctx.strokeStyle = colour('--grab'); ctx.lineWidth = 2.2/view.k; ctx.stroke();
+  }
+  const landing = tool === 'draw' && pointer && !held && !space ? grab(pointer, reach()) : null;
+  if (landing) {
+    ctx.beginPath(); ctx.moveTo(pointer[0], pointer[1]); ctx.lineTo(landing[0], landing[1]);
+    ctx.strokeStyle = colour('--grab'); ctx.lineWidth = 1/view.k; ctx.stroke();
+    ctx.beginPath(); ctx.arc(landing[0], landing[1], 3.5/view.k, 0, Math.PI*2); ctx.fillStyle = colour('--grab'); ctx.fill();
+  }
+  if (pointer && (tool === 'draw' || tool === 'erase') && !space) {  // how far the stroke reaches, or the eraser rubs
+    ctx.beginPath(); ctx.arc(pointer[0], pointer[1], tool === 'erase' ? rubbing : Math.max(reach(), 2/view.k), 0, Math.PI*2);
+    ctx.strokeStyle = tool === 'erase' ? colour('--rub') : 'rgba(255,255,255,.55)'; ctx.lineWidth = 1/view.k; ctx.stroke();
+  }
+}
+
+// --- the hand -----------------------------------------------------------------------------
+
+function pick(next) {
+  tool = next;
+  for (const name of ['select', 'draw', 'erase', 'move']) $('tool-' + name).setAttribute('aria-pressed', name === tool);
+  board.style.cursor = tool === 'move' ? 'grab' : 'crosshair'; shape = null; draw();
+}
+
+board.addEventListener('pointerdown', e => {
+  if (!loaded || e.button > 1) return;
+  board.setPointerCapture(e.pointerId); pointer = toScene(e); free = e.altKey;
+  if (tool === 'move' || space || e.button === 1) held = {kind: 'pan', x: e.clientX - view.x, y: e.clientY - view.y};
+  else if (tool === 'select') {
+    $('hint').hidden = true;
+    if (shape) { const outline = shape; shape = null; change([...lines, {points: outline}]); }
+  }
+  else if (tool === 'draw') { held = {kind: 'stroke', raw: [pointer], settled: [pointer]}; $('hint').hidden = true; }
+  else { held = {kind: 'rub', before: JSON.stringify(lines)}; rub(); }
+  draw();
+});
+board.addEventListener('pointermove', e => {
+  pointer = toScene(e); free = e.altKey;  // asked of each event, so a missed key-up cannot leave snapping off
+  if (held && held.kind === 'pan') { view.x = e.clientX - held.x; view.y = e.clientY - held.y; }
+  else if (held && held.kind === 'stroke') {
+    for (const sample of (e.getCoalescedEvents ? e.getCoalescedEvents() : [e])) {
+      const p = toScene(sample), last = held.raw[held.raw.length - 1];
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) >= 1.2/view.k) held.raw.push(p);
+    }
+    held.settled = settle(held.raw, reach());
+  } else if (held && held.kind === 'rub') rub();
+  else if (tool === 'select' && !held && !space) {
+    // Stepping bigger or smaller holds only while the pointer stays about where it was.
+    if (depth && depthAt && Math.hypot(pointer[0] - depthAt[0], pointer[1] - depthAt[1]) > 14/view.k) depth = 0;
+    shape = shapeAt(pointer);
+  }
+  draw();
+});
+function rub() {
+  const kept = lines.filter(line => !near(line, pointer, 10/view.k));
+  if (kept.length !== lines.length) { lines = kept; count(); }
+}
+function release() {
+  if (held && held.kind === 'stroke') {
+    const settled = held.settled, length = settled.slice(1).reduce((sum, p, i) => sum + Math.hypot(p[0] - settled[i][0], p[1] - settled[i][1]), 0);
+    held = null;
+    if (length > 10) change([...lines, {points: thin(settled, .7).map(p => [Math.round(p[0]*10)/10, Math.round(p[1]*10)/10])}]);
+  } else if (held && held.kind === 'rub') {
+    const before = held.before; held = null;
+    if (before !== JSON.stringify(lines)) { const after = lines; lines = JSON.parse(before); change(after); }
+  } else held = null;
+  draw();
+}
+board.addEventListener('pointerup', release);
+board.addEventListener('pointercancel', release);
+board.addEventListener('pointerleave', () => { if (!held) { pointer = null; draw(); } });
+board.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    const k = Math.max(.2, Math.min(12, view.k*Math.exp(-e.deltaY*.01)));
+    view.x = e.clientX - (e.clientX - view.x)*k/view.k; view.y = e.clientY - (e.clientY - view.y)*k/view.k; view.k = k;
+  } else { view.x -= e.deltaX; view.y -= e.deltaY; }
+  pointer = toScene(e); draw();
+}, {passive: false});
+
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox') return;
+  if (e.key === 'Alt') { free = true; draw(); }
+  else if (e.key === ' ') { space = true; e.preventDefault(); }
+  else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? step(ahead, past) : step(past, ahead); }
+  else if (e.metaKey || e.ctrlKey) return;
+  else if (e.key === 's') pick('select'); else if (e.key === 'd') pick('draw'); else if (e.key === 'e') pick('erase'); else if (e.key === 'h') pick('move');
+  else if (e.key === '0') fit();
+  else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && tool === 'select' && pointer) {
+    e.preventDefault();
+    const {list, base} = choices(pointer);
+    depth = Math.max(-base, Math.min(list.length - 1 - base, depth + (e.key === 'ArrowUp' ? 1 : -1)));
+    depthAt = pointer; shape = shapeAt(pointer); draw();
+  }
+  else if (e.key === 'v' && dayPlate) { $('by-day').checked = !$('by-day').checked; draw(); }
+});
+addEventListener('keyup', e => { if (e.key === 'Alt') { free = false; draw(); } if (e.key === ' ') space = false; });
+addEventListener('blur', () => { free = space = false; });
+addEventListener('resize', draw);
+$('tool-select').onclick = () => pick('select'); $('tool-draw').onclick = () => pick('draw'); $('tool-erase').onclick = () => pick('erase'); $('tool-move').onclick = () => pick('move');
+$('undo').onclick = () => step(past, ahead); $('redo').onclick = () => step(ahead, past);
+$('fit').onclick = fit; $('lighten').oninput = draw; $('reach').oninput = draw; $('see-edges').onchange = draw; $('by-day').onchange = draw; $('alike').oninput = () => { if (pointer && tool === 'select') shape = shapeAt(pointer); draw(); };
+load();
+</script>
+</body>
+</html>
