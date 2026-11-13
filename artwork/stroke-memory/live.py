@@ -412,10 +412,13 @@ class LoadedPainting:
         paint = self.raster.paint(np.concatenate([marks, retained]))
         t2 = time.perf_counter(); self.cost['raster'] = t2-t
         full_raster_ms = self.cost['raster']*1000.
-        if self.incremental or self.updates%3 == 0:
+        # With a look the finishing pass is topped up half as often, twice as much at
+        # a time: where marks keep being lost it never reaches its limit and rests.
+        often = 6 if self.look else 3
+        if self.incremental or self.updates%often == 0:
             for level, radius in enumerate([12., 6., 2.5]):
                 added = self.adaptive.propose(paint, radius*self.w/1920, level,
-                    [700, 1000, 1400][level] if self.updates == 0 else [140, 240, 600][level])
+                    [700, 1000, 1400][level] if self.updates == 0 else [140, 240, 600][level]*(often//3))
                 if len(added):
                     native_started = time.perf_counter()
                     paint = self.raster.paint(added, append=True)

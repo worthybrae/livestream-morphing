@@ -924,6 +924,12 @@ class Painting:
             # recoloring its marks, but defer placement work until space opens.
             if not remaining:
                 break
+            # Weighing every candidate is most of what an update costs, and is spent
+            # in full for one free place. Where marks keep being lost, as under
+            # headlights at night, that is every update. At a slower pace the coats
+            # are replanted on every third update only, three updates' worth at once.
+            if self.pace>1 and not first and self.turn%3:
+                break
             if coat == 3:
                 if self.detail=='people':
                     priority = sample(attention,pts*self.factor)[:,0]
@@ -963,6 +969,7 @@ class Painting:
             if not first:
                 # A fixed replenishment budget prevents a noisy frame from exploding count.
                 budget = 1200 if coat==3 and self.detail=='people' else max(24,int(len(pts)*(.015 if coat==3 else .035)))
+                budget *= 1 if self.pace==1 else 3
                 ids = ids[:budget]
             ids = ids[:remaining]
             remaining -= len(ids)

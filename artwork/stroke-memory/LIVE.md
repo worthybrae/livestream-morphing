@@ -332,6 +332,28 @@ candidate yet:
   day. Not checked on real dusk or dawn footage. Still open for a stream that
   runs through nightfall: the piles' tone steps are taken from the first frame
   and are not yet remixed as the light changes.
+- First trial on Railway (2026-11-13, a second service beside the stream, same
+  variables plus the look, the stream itself untouched). At about 22:00 London
+  time the look painted 4.3 times a second against 10 to 12 for the approved
+  look on that same service minutes later (about 150 ms a paint against 68).
+  The worker's stage log shows why, and it is not the borders or the drift.
+  The approved look sits at both mark limits and rests: base 15 ms, refine 4.
+  With the look the marks never reached their limits (base 12,651, fine
+  19,508), so every candidate was weighed at every update: base 64 ms, refine
+  35. Reproduced by looping a six-second segment of that night's camera: marks
+  were retired about ten times as fast as with the approved look, base 27 to 96
+  a paint against 1 to 10. The cause is car headlights sweeping a scene the
+  look now keeps bright; with part of the night dimming restored the loss fell
+  in step (70% of it: 5 to 23 a paint). By day, over 600 updates, both looks
+  lose marks at the same rate and stay full. Recordings of 150 updates had not
+  shown any of this.
+- The fix bounds the planning rather than the loss. At a pace above 1 the coats
+  are replanted on every third update, three updates' worth at once, and with a
+  look the finishing pass is topped up on every sixth update, twice as much.
+  On the looped night segment on an arm64 Mac the look's mean cost fell from
+  about 73 ms to about 50 to 59, against 48 to 51 for the approved look; by day
+  47.9 against 45.7, with the marks still full. Not yet measured on a server
+  processor, where weighing candidates costs far more, nor on Railway.
 - Tried and withdrawn in that round: finding things on every other round only.
   It saved under a millisecond and drew two dark strokes along a kerb that no
   earlier clip had, because lines were then laid against where moving things
