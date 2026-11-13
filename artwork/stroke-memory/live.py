@@ -277,8 +277,11 @@ class LoadedPainting:
             self.book.rate = 30000/1001/min(12., max(2., stride if np.isfinite(stride) else 3.))
             self.routes = []
             self.adaptive.error_filter = self.forgiving
-            self.across, self.down = np.meshgrid(np.arange(width, dtype=np.float32), np.arange(height, dtype=np.float32))
-            self.from_x, self.from_y = np.empty_like(self.across), np.empty_like(self.down)
+            # Where each cell of the motion grid sits in the picture: the drift is taken
+            # from it there and only then spread to every pixel.
+            self.home = np.stack(np.meshgrid((np.arange(self.fw, dtype=np.float32)+.5)*width/self.fw-.5,
+                                             (np.arange(self.fh, dtype=np.float32)+.5)*height/self.fh-.5), axis=2)
+            self.from_x, self.from_y = (np.empty((height, width), np.float32) for _ in range(2))
             self.moved = np.empty((height, width, 3), np.uint8)
         self.previous = None
         self.updates = 0
@@ -322,9 +325,9 @@ class LoadedPainting:
             return paint
         started = time.perf_counter()
         # Like the canvas, the picture returned is overwritten by the next update.
-        for shift, home, source in ((0, self.across, self.from_x), (1, self.down, self.from_y)):
-            cv2.resize(np.ascontiguousarray(self.book.towed[:,:,shift]), (self.w, self.h), dst=source, interpolation=cv2.INTER_LINEAR)
-            cv2.subtract(home, source, dst=source)
+        source = self.home-self.book.towed
+        for axis, spread in ((0, self.from_x), (1, self.from_y)):
+            cv2.resize(np.ascontiguousarray(source[:,:,axis]), (self.w, self.h), dst=spread, interpolation=cv2.INTER_LINEAR)
         cv2.remap(paint, self.from_x, self.from_y, cv2.INTER_LINEAR, dst=self.moved, borderMode=cv2.BORDER_REPLICATE)
         self.cost['drift'] = time.perf_counter()-started
         return self.moved

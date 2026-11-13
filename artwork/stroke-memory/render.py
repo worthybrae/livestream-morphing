@@ -397,6 +397,7 @@ class Painting:
         # crossing a line is still asked at every update.
         self.pace = max(1, int(pace))
         self.doubt = np.empty(0, bool)  # for each stroke, whether the last look found its footing gone
+        self.cut = {}  # for each pulsing line, the identity and width its brush mask was last cut at
         self.solid = self.off_outline = None
         self.picked_ids, self.picked_owner = (0, 0), None
         self.where = self.line_mask = self.present = self.give = None
@@ -460,7 +461,15 @@ class Painting:
         unit = image.shape[1]/960
         # Hard steps of tone and broad bands of hue: here the soft blends between piles
         # would only splinter every passage into slivers.
-        lab = cv2.cvtColor(cv2.medianBlur(image, 2*round(3*unit)+1).astype(np.float32)/255, cv2.COLOR_RGB2Lab)
+        wide = 2*round(3*unit)+1
+        if self.pace==1:
+            smooth = cv2.medianBlur(image, wide)
+        else:
+            # A median wider than five is slow on server processors (35 ms of this
+            # function's 57 there). Two passes of a narrower one clear much the same
+            # speckle and find much the same things.
+            smooth = cv2.medianBlur(cv2.medianBlur(image, min(wide, 5)), min(wide, 5))
+        lab = cv2.cvtColor(smooth.astype(np.float32)/255, cv2.COLOR_RGB2Lab)
         hue = np.round(lab[:,:,1:]/18).astype(np.int32)+8
         key = np.searchsorted(self.shapes.middle, lab[:,:,0]).astype(np.int32)<<16 | hue[:,:,0]<<8 | hue[:,:,1]
         seam = np.zeros(key.shape, bool)
@@ -485,8 +494,11 @@ class Painting:
                 if rim*rim>self.raggedness*area[i] or area[i]<300*unit*unit:
                     continue  # a border only goes round a clean, sizeable shape
             around = cv2.dilate(inside, ring)-inside
-            patch = image[y0:y1,x0:x1]
-            if np.abs(patch[inside>0].mean(axis=0)-patch[around>0].mean(axis=0)).max()>self.stand_out+(6 if self.hand=='border' else 0):
+            if not cv2.countNonZero(around):
+                continue
+            patch = np.ascontiguousarray(image[y0:y1,x0:x1])
+            differs = np.abs(np.subtract(cv2.mean(patch, mask=inside)[:3], cv2.mean(patch, mask=around)[:3])).max()
+            if differs>self.stand_out+(6 if self.hand=='border' else 0):
                 chosen.append(i)
         self.thing_counts.append(len(chosen))
         solid = cv2.dilate(np.isin(labels, chosen).astype(np.uint8), np.ones((3,3), np.uint8))
@@ -595,13 +607,30 @@ class Painting:
         if not self.drift or not lines.any():
             return marks
         marks = marks.copy()
+        own = marks[lines,0].copy()
         # Above every other identity, the live finishing marks' 2,000,000 to 8,000,000 included.
-        marks[lines,0] = 9_000_000+2*marks[lines,0]+self.turn%2
+        marks[lines,0] = 9_000_000+2*own+self.turn%2
         if self.pulse:
             # The line stays where it is and swells and thins instead. For a border, the
             # upper half of the coat's fraction tells the rasteriser to draw it as one.
             phase, reach = self.lively(marks[lines])
-            marks[lines,4] *= 1+np.clip(.3*reach, 0, self.swell)*np.sin(phase)
+            width = marks[lines,4]*(1+np.clip(.3*reach, 0, self.swell)*np.sin(phase))
+            if self.pace>1:
+                # Cutting a fresh brush mask for every line at every update is most of
+                # what lines cost the rasteriser. At a slower pace a line keeps its mask,
+                # and so its identity, until its width has moved a quarter of a pixel.
+                shown, cut = marks[lines,0].copy(), {}
+                for k, (identity, wide) in enumerate(zip(own.tolist(), width.tolist())):
+                    kept = self.cut.get(identity)
+                    if kept is not None and abs(wide-kept[1])<.25*self.scale:
+                        shown[k], width[k] = kept
+                    else:
+                        # The other of its two identities: the rasteriser must see a new one.
+                        shown[k] = 9_000_000+2*identity+(0 if kept is None else 1-int(kept[0])%2)
+                    cut[identity] = (float(shown[k]), float(width[k]))
+                self.cut = cut
+                marks[lines,0] = shown
+            marks[lines,4] = width
             marks[lines,11] += .5*(self.hand=='border')
         else:
             marks[lines,11] += (self.turn/self.rate/5%1)/2
@@ -1143,7 +1172,11 @@ class Painting:
                 # A drawn line may curve but not hook: it gives up at a corner.
                 path, valid = trace(pts[ids], heading(edge_way), alive, 6*self.scale, 36, onto, .96)
                 rv = self.line_variants[ids]
-                found = fit(path, valid, (rv[:,3]<.3) & (faces_in is None), 2.2*self.scale, .22)
+                # A line has to come out longer than sixty pixels. A walk of fewer than
+                # eleven points cannot, and most are: they are not worth fitting.
+                far = valid.sum(axis=1)>=11
+                path, valid, rv = path[far], valid[far], rv[far]
+                found = fit(path, valid, (rv[:,3]<.3) & (faces_in is None), 2.2*self.scale, .22) if len(path) else np.zeros((0,7), np.float32)
                 good = (found[:,6]<=2.2*self.scale) & (found[:,2]>30*self.scale)
                 found, rv = found[good], rv[good]
                 if faces_in is not None and len(found):

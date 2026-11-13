@@ -299,6 +299,29 @@ candidate yet:
   of 72 seconds, against 227). Over five alternating runs of 150 updates on a
   quieter machine: 54.8 ms median of means against 57.0 for the commit before
   and 47.9 for the approved look, so about 1.14 times against 1.19.
+- Measured on server processors (2026-11-13). The worker alone, built as
+  `Dockerfile.railway` builds it, in alternating fresh processes of 150 updates
+  with decode, wave and encode left out. All 42 Python and 12 native tests pass
+  on Linux. On an idle Intel i7-1165G7 (four rounds), commit `b841d17`: day
+  122.8 ms with the look against 97.7 without, night with the real night grade
+  109.5 against 95.8. On a rented Hetzner ccx33, eight dedicated AMD EPYC-Milan
+  vCPUs, whose figures without the look (median 66 to 70 ms) match the Railway
+  engine's own (66 to 76): day 90.8 against 79.8, about 1.14 times. The pieces
+  rank differently from an arm64 Mac there: a 7x7 median took 35 ms of the 57
+  spent finding things, a brush mask was cut for every line at every update,
+  and the drift cost 4 ms.
+- Three cuts aimed at that, the first two only at a pace above 1. A pulsing
+  line keeps its brush mask, and so its identity, until its width has moved a
+  quarter of a pixel. Things are smoothed with two passes of a 5-wide median
+  (things() 56 to 24 ms; 32 things found against 34, 86% overlap). The drift is
+  taken from the motion grid's own coordinates and spread once, with no
+  full-frame subtraction. Exact and for every pace: a walk too short to become
+  a line is not fitted, and things() takes its means with cv2.mean. On the same
+  ccx33 afterwards, four rounds: day 87.1 ms against 83.5 without the look
+  (its own runs ranged 79.4 to 89.5), about 1.04 times, medians 68.3 against
+  69.5; night 71.8 against 84.9, cheaper than the approved look, as it was
+  before the cuts (the piles leave the finishing pass less to do). Borders
+  showing after a minute: 231, as before. The approved look is unchanged.
 - Tried and withdrawn in that round: finding things on every other round only.
   It saved under a millisecond and drew two dark strokes along a kerb that no
   earlier clip had, because lines were then laid against where moving things
