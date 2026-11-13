@@ -322,6 +322,16 @@ candidate yet:
   69.5; night 71.8 against 84.9, cheaper than the approved look, as it was
   before the cuts (the piles leave the finishing pass less to do). Borders
   showing after a minute: 231, as before. The approved look is unchanged.
+- At night the look keeps the lamp light (the owner's choice between clips,
+  2026-11-13). The engine still sends London's hour, but with the look on the
+  worker grades with no night at all, and blends the night's blue tint back to
+  the plain day tint by the same curve the night would have followed, so
+  sunrise and sunset still warm the picture. With the look off the stream's own
+  day and night grade is untouched. Checked: at 00:01 on a night recording the
+  worker's output matches, frame for frame, the clip that had been graded as by
+  day. Not checked on real dusk or dawn footage. Still open for a stream that
+  runs through nightfall: the piles' tone steps are taken from the first frame
+  and are not yet remixed as the light changes.
 - Tried and withdrawn in that round: finding things on every other round only.
   It saved under a millisecond and drew two dark strokes along a kerb that no
   earlier clip had, because lines were then laid against where moving things

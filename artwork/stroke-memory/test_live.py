@@ -326,6 +326,31 @@ class LiveTests(unittest.TestCase):
         finally:
             raster.close()
 
+    def test_borders_look_keeps_the_lamp_light_at_night(self):
+        from render import palette
+        with mock.patch.dict(os.environ, {'LOADED_LOOK': 'borders'}):
+            os.environ.pop('LOADED_PAINT_MODE', None)
+            p = LoadedPainting(160, 90)
+        try:
+            for hour in (0.02, 3., 22.5):
+                night, tint = p.tones(hour)
+                self.assertEqual(night, 0.)
+                np.testing.assert_allclose(tint, [15, 12, -9], atol=1e-9)
+            # By day nothing differs from the stream's own colours.
+            for hour in (9., 12., 15., 17.9):
+                night, tint = p.tones(hour)
+                self.assertEqual((night, palette(hour)[0]), (0., 0.))
+                np.testing.assert_allclose(tint, palette(hour)[1], atol=1e-9)
+            # Sunset still warms the picture: its tint is mostly kept.
+            self.assertGreater(p.tones(18.5)[1][0], 30)
+        finally:
+            p.pool.shutdown(); p.raster.close()
+        plain = LoadedPainting(160, 90)
+        try:
+            self.assertIsNone(plain.tones(0.02))
+        finally:
+            plain.pool.shutdown(); plain.raster.close()
+
     def test_an_unknown_look_paints_the_approved_look(self):
         with mock.patch.dict(os.environ, {'LOADED_LOOK': 'nonesuch'}), mock.patch('sys.stderr'):
             p = LoadedPainting(160, 90)

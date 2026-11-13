@@ -21,6 +21,8 @@ import numpy as np
 from render import DRAWN, Painting, Piles, along, grade, grade_reference, palette
 from adaptive import AdaptiveBrushwork
 
+# The tint the stream gives the middle of the day (render.palette, 10:00 to 15:00).
+DAY_TINT = (15, 12, -9)
 # Looks beyond the approved one, chosen with LOADED_LOOK: the study options
 # (render.py) the live painter then runs with. Unset, nothing here is used.
 LOOKS = {
@@ -211,10 +213,10 @@ class Raster:
     def set_incremental_workers(self, workers):
         self.lib.paint_set_incremental_workers(self.handle, workers)
 
-    def grade(self, source, hour):
+    def grade(self, source, hour, tones=None):
         source = np.ascontiguousarray(source, dtype=np.uint8)
         result = np.empty_like(source)
-        night, tint = palette(hour%24)
+        night, tint = tones or palette(hour%24)
         tint = np.ascontiguousarray(tint, dtype=np.float64)
         self.lib.paint_grade(source.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), result.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), source.size//3, float(night), tint.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
         return result
@@ -302,6 +304,15 @@ class LoadedPainting:
         self.raster.clear()
         return True
 
+    def tones(self, hour):
+        # The stream darkens and greys its picture as night falls in London. This
+        # look keeps the lamp light instead: no night, and where night's blue cast
+        # would come in, the plain day tint. Sunrise and sunset still warm it.
+        if not self.look:
+            return None
+        night, tint = palette(hour%24)
+        return 0., tint*(1-night)+np.array(DAY_TINT)*night
+
     def forgiving(self, reference, working, error):
         # The finishing pass must not paint over a drawn line, nor "correct" the
         # lean each stroke takes from its pile.
@@ -376,17 +387,18 @@ class LoadedPainting:
                 (time.process_time()-cpu_started)*1000., full_ms, current_rss_bytes())
         aw = min(self.w, 960)
         analysis = cv2.resize(rgb, (aw, round(self.h*aw/self.w)), interpolation=cv2.INTER_AREA)
+        tones = self.tones(hour)
         if self.look and self.book.piles is None:
             # Mixed here, before the finishing pass reads them from its own thread.
-            self.book.piles = Piles(self.raster.grade(analysis, hour%24), self.book.pile_count)
+            self.book.piles = Piles(self.raster.grade(analysis, hour%24, tones), self.book.pile_count)
         def update_adaptive():
-            reference = self.raster.grade(rgb, hour%24)
+            reference = self.raster.grade(rgb, hour%24, tones)
             if self.look:
                 reference = self.raster.piles(reference, self.book.piles)
             return self.adaptive.begin(reference, forward, backward,
                 (prepared.previous_gray, prepared.gray))
         future = self.pool.submit(update_adaptive)
-        marks = self.book.update(self.raster.grade(analysis, hour%24), forward, backward,
+        marks = self.book.update(self.raster.grade(analysis, hour%24, tones), forward, backward,
             motion_grays=(prepared.previous_gray, prepared.gray))
         t2 = time.perf_counter(); self.cost['base'] = t2-t
         retained = future.result()
