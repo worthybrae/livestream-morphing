@@ -162,6 +162,9 @@ mounted only when `PUBLIC_MODE` is `false`.
   `fk1nlch4.up.railway.app`.
 - Serverless is enabled (`sleepApplication: true`). The pipeline releases its
   source work after five minutes without viewer requests.
+- Since 2026-11-14 the service runs commit `74d5ea0` with `LOADED_LOOK=borders`.
+  The deployments, what was checked and the way back are under "Borders look"
+  in `artwork/stroke-memory/LIVE.md`.
 - The shared workspace has a $5 soft usage alert and no hard limit. Railway
   rejected the planned $4 alert because its minimum nonzero threshold is $5.
   A soft alert sends email; it does not enforce a $5 service budget or stop the

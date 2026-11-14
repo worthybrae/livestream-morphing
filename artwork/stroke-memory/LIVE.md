@@ -222,7 +222,7 @@ python bench_paint_pair.py abbey.ts --baseline-dir BASELINE_SOURCE \
   --frames 300 --warmup 60
 ```
 
-## Borders look (2026-11-13, not deployed)
+## Borders look (in production since 2026-11-14)
 
 `LOADED_LOOK=borders` runs the worker with the look chosen in the brush studies:
 tone mixed in six piles, borders round still things in their own colour that
@@ -230,6 +230,51 @@ swell and thin, and the paint drifting and bending a little everywhere. Unset,
 the worker paints the approved look and none of this code runs; an unknown value
 is reported on stderr and ignored. The engine needs no change: the variable is
 inherited by the worker it starts.
+
+In production (2026-11-14). The stream service runs commit `74d5ea0`, uploaded
+with the CLI from a `git archive` of the brush studies branch, which was not on
+GitHub at the time. Two deployments, both checked at the address the portfolio
+uses, `https://livestream-morphing-production.up.railway.app`
+(`live.worthyrae.com` is attached to the service but has no DNS record; do not
+test against it):
+
+- `23c7ea5c-8243-4ba4-a37c-52b156f156fc` (00:47 UTC): the new build with no
+  variable changed, so the approved look. Five minutes awake at night: 10 to 12
+  paints a second, 68 to 70 ms a paint in the worker's log, no drift stage and
+  no errors there, the dark night grade and no borders in a frame, and asleep
+  again ten minutes after the last request. It replaced
+  `244cfea2-cc5a-4216-9cee-c660dc28c6e8` of 2026-09-22, which was the tree of
+  commit `cdfb2de`.
+- `4e978c38-300d-4099-bf88-d43c9faffc77` (01:30 UTC): the same build redeployed
+  after `LOADED_LOOK=borders` was set on the service, its only new variable. Six
+  minutes awake: 15 paints a second while the marks filled, then 12, never
+  fewer than 12 over 58 segments; 58 ms a paint, the drift stage in every
+  report, no errors; lamp light and borders in a frame; asleep again ten
+  minutes after the last request.
+
+To return to the approved look, delete the variable and redeploy (deleting a
+variable does not redeploy by itself):
+
+```bash
+railway variable delete -s livestream-morphing -e production LOADED_LOOK
+railway redeploy -s livestream-morphing -y
+```
+
+To return to the September build, upload that tree again (about five minutes).
+The CLI has no rollback, and `railway down` would leave the service with
+nothing running:
+
+```bash
+git archive cdfb2de | tar -x -C EMPTY_DIRECTORY
+cd EMPTY_DIRECTORY && railway link -p lavish-energy -e production
+railway up -s livestream-morphing -e production -d
+```
+
+Not yet seen in production: a busy evening. Both runs on Railway were after
+midnight on a quiet road. A second service, `livestream-look-trial`, is left
+in the project, stopped, with the stream's variables plus the look and
+`RAILWAY_DOCKERFILE_PATH=Dockerfile.railway`. It does not sleep by itself:
+`railway down -s livestream-look-trial -e production -y` after any use.
 
 It is a first port, measured only on an arm64 Mac, and not a production
 candidate yet:
@@ -418,5 +463,3 @@ candidate yet:
   transport-only frames.
 - Its slow motions count paint updates, at the rate `LOADED_PAINT_STRIDE` asks
   for. When the guard slows painting they slow with it.
-- The engine's night grade makes this look murky; the study's night clips were
-  painted with the day grade. Unresolved.
