@@ -347,13 +347,69 @@ candidate yet:
   in step (70% of it: 5 to 23 a paint). By day, over 600 updates, both looks
   lose marks at the same rate and stay full. Recordings of 150 updates had not
   shown any of this.
-- The fix bounds the planning rather than the loss. At a pace above 1 the coats
-  are replanted on every third update, three updates' worth at once, and with a
-  look the finishing pass is topped up on every sixth update, twice as much.
-  On the looped night segment on an arm64 Mac the look's mean cost fell from
-  about 73 ms to about 50 to 59, against 48 to 51 for the approved look; by day
-  47.9 against 45.7, with the marks still full. Not yet measured on a server
-  processor, where weighing candidates costs far more, nor on Railway.
+- The first fix bounded the planning rather than the loss: at a pace above 1
+  the coats were replanted on every third update, three updates' worth at
+  once, and with a look the finishing pass was topped up on every sixth update,
+  twice as much. On the looped night segment on an arm64 Mac the look's mean
+  cost fell from about 73 ms to about 50 to 59, against 48 to 51 for the
+  approved look; by day 47.9 against 45.7, with the marks still full.
+- Measured and cut further on a server processor (2026-11-13 to 14, eight
+  dedicated EPYC-Milan cores, the paint worker alone, the same looped night
+  segment, means over the later two thirds of 480 updates). What the engine
+  allows was worked out from the trial's own segment log: about 1.0 s of every
+  6 s segment goes to the wave, decoding and encoding, and the guard steps back
+  from stride 4 to stride 3 only below three quarters of real time, so ten
+  paints a second needs a paint of roughly 72 ms or less, at stride 4 as well
+  as at 3. The first fix cost 88 to 92 ms there. As it now stands the look
+  costs 69 ms painting every third frame, 71 every fourth, 70 every seventh;
+  by day 68. The approved look on the same footage, once its marks have filled
+  (about a thousand updates), costs 97 by night and 72 by day on that machine,
+  most of it the raster of a full population. What was changed:
+  - The coats are replanted on every sixth update, six updates' worth at once,
+    and the finishing pass is topped up on every twelfth, four times as much.
+    Every eighteenth saved another 3 ms but left the road markings bare for up
+    to two seconds behind passing headlights, so it was not taken.
+  - A batch of finishing marks is not seen to arrive: the picture returned on
+    that update is the one from before the batch, and its marks start at an
+    opacity of 0.1 and come up over the next few updates. Measured on painted
+    frames, the change from one update to the next is now the same on batch
+    updates as on any other (3.5 against 3.4 levels; it was 5.2 against 3.4).
+  - With a look the finishing pass reads each mark's colour from a half-size
+    picture and builds its full-size references only on updates that propose
+    marks (`AdaptiveBrushwork.light`). Its thread took 30 ms an update, and it
+    was that thread, not the planning beside it, that set the pace.
+  - At a pace above 1 the broad blur is made at half size and the wide field of
+    unrest at a quarter.
+  - In the native library the error between picture and canvas is shared
+    between four threads, and the grade and the piles between four instead of
+    two. These serve the approved look as well and do not change a pixel.
+  With the look off the worker still paints every pixel as the pre-work code
+  did (90 updates), and the study's frames are unchanged.
+- That machine does not stand in for Railway piece by piece. In the trial
+  Railway's flow, planning and raster were all about 1.45 times slower with the
+  look than the same pieces minutes later without it, which fits a painter
+  that had fallen behind and was sharing its processors with an engine catching
+  up. Its raster of a full population also cost about half what the test
+  machine's does. So the comparison to trust is the look against the approved
+  look on one machine and one recording, not either machine's milliseconds.
+- Tried there and dropped: replanting one coat on each update, and proposing
+  one size of finishing mark on each turn (no cheaper, and the second doubled
+  the marks lost); letting marks stand through more glare at night (fewer marks
+  lost, no more detail, and a fuller population costs its raster); dimming the
+  night (no cheaper once planting is batched).
+- Second trial on Railway (2026-11-14, 00:30 to 00:40 London time, the same
+  separate trial service with the stream's variables plus the look, stopped
+  afterwards; the stream itself untouched). Over 101 six-second segments the
+  look painted 15 times a second while its marks filled, then 12, with short
+  returns to 15, and never fewer than 12. The worker's own log over the second
+  half: 59 ms a paint (flow 5.9, base 23.1, raster 22.3, refine 3.8, drift
+  3.3), with about 10,500 base marks and 19,800 finishing marks; segments cost
+  5.0 s of their 6.0 at the median and 5.9 at worst. The first trial had given
+  4.3 paints a second at about 150 ms, and the approved look 10 to 12 at 68.
+  The road was quieter after midnight than at 22:00, so this is not yet the
+  heaviest traffic; on the test machine the heaviest recorded traffic cost
+  about 10 ms more than this. If it ever paints fewer than ten times a second,
+  topping up on every eighteenth update is the next 3 ms.
 - Tried and withdrawn in that round: finding things on every other round only.
   It saved under a millisecond and drew two dark strokes along a kerb that no
   earlier clip had, because lines were then laid against where moving things

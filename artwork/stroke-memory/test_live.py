@@ -313,6 +313,109 @@ class LiveTests(unittest.TestCase):
         self.assertGreater(int((seldom.strokes[:,11] >= 9).sum()), 0)
         self.assertEqual(int((seldom.strokes[:,11] >= 9).sum()), int((every.strokes[:,11] >= 9).sum()))
 
+    def test_native_rgb_max_error_is_the_same_shared_between_threads(self):
+        # A full-size picture is split between threads; a small one is not.
+        raster = Raster(64, 36)
+        try:
+            rng = np.random.default_rng(83)
+            source = rng.random((1080, 1920, 3), dtype=np.float32)*255
+            canvas = rng.random((1080, 1920, 3), dtype=np.float32)*255
+            actual = np.empty((1080, 1920), np.float32)
+            raster.rgb_max_error(source, canvas, actual)
+            np.testing.assert_array_equal(actual, np.max(cv2.absdiff(source, canvas), axis=2))
+        finally:
+            raster.close()
+
+    def test_light_brushwork_reads_colour_at_half_size_and_builds_references_only_on_demand(self):
+        rng = np.random.default_rng(84)
+        scene = cv2.GaussianBlur(rng.integers(0, 256, (360, 640, 3), dtype=np.uint8), (0, 0), 9)
+        zero = np.zeros((90, 160, 2), np.float32)
+        marks = np.zeros((300, 12), np.float32)
+        marks[:,0] = 2_000_000+np.arange(300)
+        marks[:,1], marks[:,2] = rng.uniform(20, 620, 300), rng.uniform(20, 340, 300)
+        marks[:,3], marks[:,4], marks[:,10], marks[:,11] = 6, 3, 1, 4+np.arange(300)%3
+        def after(light):
+            brush = AdaptiveBrushwork(640, 360, (160, 90))
+            brush.light = light
+            brush.begin(scene, zero, zero)
+            brush.strokes, brush.failures = marks.copy(), np.zeros(300, np.float32)
+            brush.strokes[:,7:10] = 128
+            built = []
+            source = brush.ensure_source
+            brush.ensure_source = lambda: built.append(brush.has_source) or source()
+            brush.begin(scene, zero, zero)
+            return brush, built
+        full, built = after(False)
+        self.assertTrue(built)
+        light, built = after(True)
+        # Nothing full-size was built to recolour the marks, and they were all kept.
+        self.assertEqual(built, [])
+        self.assertFalse(light.has_source)
+        self.assertEqual(len(light.strokes), 300)
+        # On a smooth picture both readings move a mark's colour the same way.
+        self.assertLess(float(np.abs(light.strokes[:,7:10]-full.strokes[:,7:10]).max()), 2.)
+        # Asking for a reference builds the source once, as the full reading would have.
+        np.testing.assert_array_equal(light.reference(6.), full.reference(6.))
+        self.assertTrue(light.has_source)
+
+    def test_borders_look_tops_up_seldom_and_brings_new_finishing_marks_up_slowly(self):
+        from live import ENTRANCE
+        rng = np.random.default_rng(85)
+        scene = cv2.GaussianBlur(rng.integers(0, 256, (360, 640, 3), dtype=np.uint8), (0, 0), 3)
+        other = cv2.GaussianBlur(rng.integers(0, 256, (360, 640, 3), dtype=np.uint8), (0, 0), 3)
+        with mock.patch.dict(os.environ, {'LOADED_LOOK': 'borders'}):
+            os.environ.pop('LOADED_PAINT_MODE', None)
+            p = LoadedPainting(640, 360)
+        try:
+            self.assertTrue(p.adaptive.light)
+            proposals = []
+            propose = p.adaptive.propose
+            p.adaptive.propose = lambda *a, **k: proposals.append(p.updates) or propose(*a, **k)
+            p.paint(scene, 15.)
+            self.assertTrue((p.adaptive.strokes[:,10] == 1).all())
+            # A changed picture loses marks; none is proposed until the twelfth update.
+            for _ in range(11):
+                p.paint(other, 15.)
+            self.assertEqual(sorted(set(proposals)), [0])
+            before = len(p.adaptive.strokes)
+            appended = []
+            native = p.raster.paint
+            def capture(marks, append=False):
+                if append:
+                    appended.append(len(marks))
+                return native(marks, append)
+            p.raster.paint = capture
+            p.paint(other, 15.)
+            self.assertEqual(sorted(set(proposals)), [0, 12])
+            new = p.adaptive.strokes[before:]
+            self.assertGreater(len(new), 0)
+            self.assertTrue(appended)
+            self.assertTrue((new[:,10] == np.float32(ENTRANCE)).all())
+        finally:
+            p.pool.shutdown(); p.raster.close()
+
+    def test_a_slower_pace_replants_its_coats_on_every_sixth_update(self):
+        rng = np.random.default_rng(86)
+        dark = (cv2.GaussianBlur(rng.integers(0, 256, (360, 640, 3), dtype=np.uint8), (0, 0), 4)*.4).astype(np.uint8)
+        # A picture so changed that every mark is lost and has to be laid again.
+        scenes = [dark, 255-dark]
+        zero = np.zeros((90, 160, 2), np.float32)
+        def births(pace):
+            p = Painting(640, 360, (160, 90), 'transported', pace=pace)
+            p.update(scenes[0], zero, zero)
+            seen = []
+            for _ in range(13):
+                turn, last = p.turn, p.next_id
+                p.update(scenes[1], zero, zero)
+                if p.next_id>last:
+                    seen.append(turn)
+            return seen
+        # The study replants whenever there is room; a slower pace only on its sixth turns.
+        self.assertGreater(len(births(1)), 3)
+        late = births(4)
+        self.assertTrue(late)
+        self.assertTrue(all(turn%6 == 0 for turn in late), late)
+
     def test_native_piles_match_the_python_repaint(self):
         from render import Piles
         rng = np.random.default_rng(5)

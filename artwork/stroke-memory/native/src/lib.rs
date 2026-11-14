@@ -363,10 +363,22 @@ pub unsafe extern "C" fn paint_rgb_max_error(source:*const f32,canvas:*const f32
     if source.is_null() || canvas.is_null() || output.is_null() || count>16_777_216 {return;}
     let source=std::slice::from_raw_parts(source,count*3);let canvas=std::slice::from_raw_parts(canvas,count*3);
     let output=std::slice::from_raw_parts_mut(output,count);
+    // Each pixel stands alone, so a full-size picture is shared between four
+    // threads, cut at whole groups of four pixels.
+    if count>=1_000_000 {
+        let size=count.div_ceil(16)*4;
+        std::thread::scope(|scope| {
+            for ((source,canvas),output) in source.chunks(size*3).zip(canvas.chunks(size*3)).zip(output.chunks_mut(size)) {
+                scope.spawn(move||rgb_max_error_part(source,canvas,output));
+            }
+        });
+    } else {rgb_max_error_part(source,canvas,output);}
+}
+fn rgb_max_error_part(source:&[f32],canvas:&[f32],output:&mut [f32]) {
     #[cfg(target_arch="aarch64")]
-    if std::arch::is_aarch64_feature_detected!("neon") {rgb_max_error_neon(source,canvas,output);return;}
+    if std::arch::is_aarch64_feature_detected!("neon") {unsafe {rgb_max_error_neon(source,canvas,output)};return;}
     #[cfg(target_arch="x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {rgb_max_error_avx2(source,canvas,output);return;}
+    if std::arch::is_x86_feature_detected!("avx2") {unsafe {rgb_max_error_avx2(source,canvas,output)};return;}
     rgb_max_error_scalar(source,canvas,output);
 }
 
@@ -407,6 +419,18 @@ pub unsafe extern "C" fn paint_rgb_max_error(source:*const f32,canvas:*const f32
                     assert_eq!(mismatch,None,"count={count}, night={night}");
                 }
             }
+        }
+    }
+    #[test] fn shared_rgb_max_error_matches_one_thread_on_small_and_split_frames() {
+        for count in [0usize,1,5,65539,1_000_003] {
+            let values=|seed:u32|->Vec<f32> {(0..count*3).map(|i| {
+                ((i as u32).wrapping_mul(1664525).wrapping_add(seed)>>8) as f32/65536.
+            }).collect()};
+            let (source,canvas)=(values(1013904223),values(12345));
+            let mut expected=vec![0f32;count];rgb_max_error_scalar(&source,&canvas,&mut expected);
+            let mut actual=vec![-1f32;count];
+            unsafe {paint_rgb_max_error(source.as_ptr(),canvas.as_ptr(),actual.as_mut_ptr(),count);}
+            assert_eq!(actual,expected,"count={count}");
         }
     }
     #[test] fn piles_lookup_matches_its_index_on_small_and_split_frames() {
@@ -521,7 +545,7 @@ pub unsafe extern "C" fn paint_grade(src:*const u8,dst:*mut u8,count:usize,night
     // The full-resolution target is independent per pixel. Split only large
     // targets so the small analysis image doesn't pay thread startup overhead.
     if count>=1_000_000 {
-        let size=count.div_ceil(2)*3;
+        let size=count.div_ceil(4)*3;
         std::thread::scope(|scope| {
             for (source,dest) in input.chunks(size).zip(output.chunks_mut(size)) {
                 scope.spawn(move||grade_pixels(source,dest,night,color));
@@ -538,7 +562,7 @@ pub unsafe extern "C" fn paint_piles(src:*const u8,dst:*mut u8,count:usize,table
     let output=std::slice::from_raw_parts_mut(dst,count*3);
     let piles=std::slice::from_raw_parts(table,32768*3);
     if count>=1_000_000 {
-        let size=count.div_ceil(2)*3;
+        let size=count.div_ceil(4)*3;
         std::thread::scope(|scope| {
             for (source,dest) in input.chunks(size).zip(output.chunks_mut(size)) {
                 scope.spawn(move||pile_pixels(source,dest,piles));

@@ -23,6 +23,8 @@ from adaptive import AdaptiveBrushwork
 
 # The tint the stream gives the middle of the day (render.palette, 10:00 to 15:00).
 DAY_TINT = (15, 12, -9)
+# With a look, how opaque a finishing mark is when it is laid: it comes up from there.
+ENTRANCE = .1
 # Looks beyond the approved one, chosen with LOADED_LOOK: the study options
 # (render.py) the live painter then runs with. Unset, nothing here is used.
 LOOKS = {
@@ -279,6 +281,7 @@ class LoadedPainting:
             self.book.rate = 30000/1001/min(12., max(2., stride if np.isfinite(stride) else 3.))
             self.routes = []
             self.adaptive.error_filter = self.forgiving
+            self.adaptive.light = True
             # Where each cell of the motion grid sits in the picture: the drift is taken
             # from it there and only then spread to every pixel.
             self.home = np.stack(np.meshgrid((np.arange(self.fw, dtype=np.float32)+.5)*width/self.fw-.5,
@@ -412,9 +415,14 @@ class LoadedPainting:
         paint = self.raster.paint(np.concatenate([marks, retained]))
         t2 = time.perf_counter(); self.cost['raster'] = t2-t
         full_raster_ms = self.cost['raster']*1000.
-        # With a look the finishing pass is topped up half as often, twice as much at
-        # a time: where marks keep being lost it never reaches its limit and rests.
-        often = 6 if self.look else 3
+        # With a look the finishing pass is topped up a quarter as often, four times
+        # as much at a time: where marks keep being lost it never reaches its limit
+        # and rests. So that a batch is not seen to arrive, the picture shown is the
+        # one from before it, and its marks come up over the next few updates.
+        often = 12 if self.look else 3
+        before = self.shown(paint) if self.look and self.updates else None
+        present = len(self.adaptive.strokes)
+        t2 = time.perf_counter()
         if self.incremental or self.updates%often == 0:
             for level, radius in enumerate([12., 6., 2.5]):
                 added = self.adaptive.propose(paint, radius*self.w/1920, level,
@@ -423,6 +431,8 @@ class LoadedPainting:
                     native_started = time.perf_counter()
                     paint = self.raster.paint(added, append=True)
                     full_raster_ms += (time.perf_counter()-native_started)*1000.
+        if before is not None:
+            self.adaptive.strokes[present:, 10] = ENTRANCE
         self.cost['refine'] = time.perf_counter()-t2
         if self.incremental:
             marks = np.concatenate([marks, self.adaptive.strokes])
@@ -436,6 +446,8 @@ class LoadedPainting:
                 max(0., planner_ms), self.raster.incremental_dirty_ms,
                 (time.process_time()-cpu_started)*1000., full_raster_ms, current_rss_bytes())
         self.updates += 1
+        if before is not None:
+            return before
         return self.shown(paint) if self.look else paint
 
 

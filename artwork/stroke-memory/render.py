@@ -695,7 +695,13 @@ class Painting:
             return values
         fine = cv2.GaussianBlur(rgb, (0,0), .7*brush_scale)
         medium = cv2.GaussianBlur(rgb, (0,0), 2.5*brush_scale)
-        broad = cv2.GaussianBlur(rgb, (0,0), 6*brush_scale)
+        if self.pace>1:
+            # So wide a blur is the same thing made at half the size, for a third of the work.
+            half = cv2.resize(rgb, (rgb.shape[1]//2, rgb.shape[0]//2), interpolation=cv2.INTER_AREA)
+            broad = cv2.resize(cv2.GaussianBlur(half, (0,0), float(np.sqrt((6*brush_scale)**2-.25))/2),
+                               (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
+        else:
+            broad = cv2.GaussianBlur(rgb, (0,0), 6*brush_scale)
         feature = None
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype(np.float32)
         current_gray=cv2.resize(gray,(self.fw,self.fh),interpolation=cv2.INTER_AREA)
@@ -770,7 +776,12 @@ class Painting:
                 moved = cv2.GaussianBlur(cv2.absdiff(current_gray, self.previous_gray), (0,0), 1.5)
                 self.unrest = moved if self.unrest is None else np.maximum(self.unrest*.85, moved)
                 # A wider, slower sense of where things are passing: lines nearby get livelier.
-                wide = cv2.GaussianBlur(self.unrest, (0,0), 12)
+                if self.pace>1:
+                    # So smooth a field is the same thing made at a quarter of the size.
+                    quarter = cv2.resize(self.unrest, (self.fw//4, self.fh//4), interpolation=cv2.INTER_AREA)
+                    wide = cv2.resize(cv2.GaussianBlur(quarter, (0,0), 3), (self.fw, self.fh), interpolation=cv2.INTER_LINEAR)
+                else:
+                    wide = cv2.GaussianBlur(self.unrest, (0,0), 12)
                 self.stirred = wide if self.stirred is None else self.stirred*.8+wide*.2
             def showing(marks):
                 # A picked line is painted only while the frame shows its thing there.
@@ -927,8 +938,9 @@ class Painting:
             # Weighing every candidate is most of what an update costs, and is spent
             # in full for one free place. Where marks keep being lost, as under
             # headlights at night, that is every update. At a slower pace the coats
-            # are replanted on every third update only, three updates' worth at once.
-            if self.pace>1 and not first and self.turn%3:
+            # are replanted on every sixth update only, six updates' worth at once.
+            # New marks come up slowly, so a batch is not seen to arrive.
+            if self.pace>1 and not first and self.turn%6:
                 break
             if coat == 3:
                 if self.detail=='people':
@@ -969,7 +981,7 @@ class Painting:
             if not first:
                 # A fixed replenishment budget prevents a noisy frame from exploding count.
                 budget = 1200 if coat==3 and self.detail=='people' else max(24,int(len(pts)*(.015 if coat==3 else .035)))
-                budget *= 1 if self.pace==1 else 3
+                budget *= 1 if self.pace==1 else 6
                 ids = ids[:budget]
             ids = ids[:remaining]
             remaining -= len(ids)

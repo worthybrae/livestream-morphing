@@ -54,6 +54,9 @@ class AdaptiveBrushwork:
         self.checks=[]
         self.accept_filter=None
         self.error_filter=None
+        # Read each mark's colour from a half-size picture, and build the full-size
+        # references only on the updates that propose new marks.
+        self.light=False
         self.buffers={}
         self.references={}
         self.valid_references=set()
@@ -76,9 +79,10 @@ class AdaptiveBrushwork:
     def begin(self,graded_source,forward,backward,motion_grays=None):
         self.first=self.previous is None
         self.valid_references.clear()
-        pixels=self.buffer('source_input',graded_source.shape)
-        np.copyto(pixels,graded_source,casting='unsafe')
-        self.source=cv2.GaussianBlur(pixels,(0,0),max(.35,.65*self.scale),dst=self.buffer('source',pixels.shape))
+        self.graded=graded_source
+        self.has_source=False
+        if not self.light:
+            self.ensure_source()
         gray=cv2.cvtColor(graded_source,cv2.COLOR_RGB2GRAY,dst=self.buffer('gray',(self.h,self.w),np.uint8))
         current=cv2.resize(gray,(self.fw,self.fh),interpolation=cv2.INTER_AREA)
         # Existing marks only need motion and pigment. Build the orientation
@@ -90,10 +94,13 @@ class AdaptiveBrushwork:
             self.transport_only(forward,backward,previous_motion,current_motion)
             trusted=self._transport_trusted
             target=np.empty((len(self.strokes),3),np.float32)
-            for level,radius in enumerate([12.,6.,2.5]):
-                selected=self.strokes[:,11]==4+level
-                if selected.any():
-                    target[selected]=at(self.reference(radius*self.scale),self.strokes[selected,1:3])
+            if self.light:
+                self.light_targets(target)
+            else:
+                for level,radius in enumerate([12.,6.,2.5]):
+                    selected=self.strokes[:,11]==4+level
+                    if selected.any():
+                        target[selected]=at(self.reference(radius*self.scale),self.strokes[selected,1:3])
             delta=target-self.strokes[:,7:10]
             mismatch=np.max(np.abs(delta),axis=1)
             bad=(mismatch>45)|(~trusted & (mismatch>24))
@@ -108,12 +115,38 @@ class AdaptiveBrushwork:
         self.previous=current
         return self.strokes
 
+    def ensure_source(self):
+        if not self.has_source:
+            pixels=self.buffer('source_input',self.graded.shape)
+            np.copyto(pixels,self.graded,casting='unsafe')
+            self.source=cv2.GaussianBlur(pixels,(0,0),max(.35,.65*self.scale),dst=self.buffer('source',pixels.shape))
+            self.has_source=True
+
+    def light_targets(self,target):
+        # Four full-size blurs of a float picture are most of an update that proposes
+        # nothing. A mark's colour only needs the picture near it, smoothed about as
+        # its reference would be, and that is read at half size: halving is itself a
+        # blur of half a pixel, reading between half-size pixels another of about .8,
+        # and whatever is still owed is made up there.
+        half=cv2.resize(self.graded,(self.w//2,self.h//2),interpolation=cv2.INTER_AREA)
+        pixels=self.buffer('half',half.shape)
+        np.copyto(pixels,half,casting='unsafe')
+        inner=max(.35,.65*self.scale)
+        for level,radius in enumerate([12.,6.,2.5]):
+            selected=self.strokes[:,11]==4+level
+            if selected.any():
+                full=float(np.hypot(inner,max(.45,radius*self.scale*.20)))
+                owed=full*full-.92
+                blurred=pixels if owed<.04 else cv2.GaussianBlur(pixels,(0,0),float(np.sqrt(owed))/2,dst=self.buffer(f'half_{level}',half.shape))
+                target[selected]=at(blurred,(self.strokes[selected,1:3]+.5)*.5-.5)
+
     def buffer(self,name,shape,dtype=np.float32):
         if name not in self.buffers:
             self.buffers[name]=np.empty(shape,dtype)
         return self.buffers[name]
 
     def reference(self,radius):
+        self.ensure_source()
         if radius not in self.valid_references:
             if radius not in self.references:
                 self.references[radius]=np.empty_like(self.source)
